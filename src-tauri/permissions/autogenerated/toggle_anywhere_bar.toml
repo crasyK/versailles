@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-toggle-anywhere-bar"
+description = "Enables the toggle_anywhere_bar command without any pre-configured scope."
+commands.allow = ["toggle_anywhere_bar"]
+
+[[permission]]
+identifier = "deny-toggle-anywhere-bar"
+description = "Denies the toggle_anywhere_bar command without any pre-configured scope."
+commands.deny = ["toggle_anywhere_bar"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-cli-open"
+description = "Enables the cli_open command without any pre-configured scope."
+commands.allow = ["cli_open"]
+
+[[permission]]
+identifier = "deny-cli-open"
+description = "Denies the cli_open command without any pre-configured scope."
+commands.deny = ["cli_open"]

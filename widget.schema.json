@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DeckWidgetManifest",
+  "type": "object",
+  "required": ["id", "title", "width", "height"],
+  "properties": {
+    "id": { "type": "string" },
+    "title": { "type": "string" },
+    "entry": { "type": "string", "default": "index.html" },
+    "width": { "type": "integer", "minimum": 1 },
+    "height": { "type": "integer", "minimum": 1 },
+    "defaultPosition": {
+      "type": "object",
+      "properties": {
+        "x": { "type": "integer" },
+        "y": { "type": "integer" }
+      },
+      "required": ["x", "y"]
+    },
+    "alwaysOnTop": { "type": "boolean", "default": false },
+    "opacity": { "type": "number", "default": 1 },
+    "borderRadius": { "type": "integer", "default": 0 },
+    "permissions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["media", "mouse", "hotkeys", "layout", "shell"]
+      }
+    }
+  }
+}

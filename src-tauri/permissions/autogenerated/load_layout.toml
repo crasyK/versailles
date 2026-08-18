@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-load-layout"
+description = "Enables the load_layout command without any pre-configured scope."
+commands.allow = ["load_layout"]
+
+[[permission]]
+identifier = "deny-load-layout"
+description = "Denies the load_layout command without any pre-configured scope."
+commands.deny = ["load_layout"]

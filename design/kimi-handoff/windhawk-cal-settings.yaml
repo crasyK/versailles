@@ -1,0 +1,22 @@
+# Import: Windhawk → Windows 11 Settings Styler → Settings → Textual mode → paste → Save.
+theme: ""
+styleConstants:
+  - paper=#f9fafb
+  - canvas=#f4f4f4
+  - ink=#141414
+  - muted=#6b7280
+  - chip=#e5e7eb
+  - paperBrush=<SolidColorBrush Color="#f9fafb"/>
+  - canvasBrush=<SolidColorBrush Color="#f4f4f4"/>
+  - inkBrush=<SolidColorBrush Color="#141414"/>
+  - mutedBrush=<SolidColorBrush Color="#6b7280"/>
+  - chipBrush=<SolidColorBrush Color="#e5e7eb"/>
+  - card=16
+controlStyles:
+  - target: SplitView#RootSplitView > Grid > Grid#ContentRoot > Border > Grid#ContentGrid
+    styles:
+      - Background:=$canvasBrush
+  - target: Microsoft.UI.Xaml.Controls.NavigationView#PermanentNavigationView > Grid#RootGrid
+    styles:
+      - Background:=$paperBrush
+xamlDiagnosticsHandling: alert

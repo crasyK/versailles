@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-open-anywhere-bar"
+description = "Enables the open_anywhere_bar command without any pre-configured scope."
+commands.allow = ["open_anywhere_bar"]
+
+[[permission]]
+identifier = "deny-open-anywhere-bar"
+description = "Denies the open_anywhere_bar command without any pre-configured scope."
+commands.deny = ["open_anywhere_bar"]

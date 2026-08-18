@@ -1,0 +1,31 @@
+---
+description: Cal.com 2024 is Deck's only visual language. Tokens, do/don't, and where the full rulebook lives.
+alwaysApply: true
+---
+
+# Cal.com 2024 — Deck design
+
+Full language, Windhawk catalog, and unification plan: `design/CAL-COM-RULEBOOK.md`.
+
+## Tokens
+
+- Canvas `#f4f4f4` + 28px faint grid. Paper `#f9fafb`. Ink `#141414`. Muted `#6b7280`. Chip `#e5e7eb`.
+- Stroke `2px solid #141414`. Inactive pills `2px dashed #141414`.
+- Radius: pills `32px`, cards `16–20px`, chips `9999px`.
+- Shadow `0 4px 0 0 #141414` (hard offset). No glass, acrylic, mica, or soft drop shadows.
+- Type: Inter. UI labels uppercase, semibold, ~11–12px, tracking `0.08em`.
+- Active control: ink fill, paper text. Idle: paper fill, ink dashed stroke.
+
+## Do
+
+- Native taskbar is top chrome. Desktop page is wallpaper + widgets only.
+- Slide-outs (`calc`, `calendar`, `notes`) live in Alt+Space, not a second HUD.
+- Action Bar is Cal paper; only the nested xterm is dark-card.
+- Windhawk YAML lives in `design/kimi-handoff/windhawk-cal-*.yaml`. Keep `theme: ""`.
+
+## Don't
+
+- Do not add a SaaS / Aetherfield / second theme switcher.
+- Do not use serif display, canary yellow chips, 1px hairlines, or 6–8px rectangles as the system look.
+- Do not introduce gradients (except the dark-card inner fade from the Figma source).
+- Do not glass the Action Bar. Cal paper for the bar chrome (head, prompt, suggestions, footer); nested xterm may stay dark-card (`#131212`).

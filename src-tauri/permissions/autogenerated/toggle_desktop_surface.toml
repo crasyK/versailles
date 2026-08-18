@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-toggle-desktop-surface"
+description = "Enables the toggle_desktop_surface command without any pre-configured scope."
+commands.allow = ["toggle_desktop_surface"]
+
+[[permission]]
+identifier = "deny-toggle-desktop-surface"
+description = "Denies the toggle_desktop_surface command without any pre-configured scope."
+commands.deny = ["toggle_desktop_surface"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-cli-exec"
+description = "Enables the cli_exec command without any pre-configured scope."
+commands.allow = ["cli_exec"]
+
+[[permission]]
+identifier = "deny-cli-exec"
+description = "Denies the cli_exec command without any pre-configured scope."
+commands.deny = ["cli_exec"]

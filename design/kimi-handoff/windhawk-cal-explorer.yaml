@@ -1,0 +1,46 @@
+# Import: Windhawk → Windows 11 File Explorer Styler → Settings → Textual mode → paste → Save.
+theme: ""
+styleConstants:
+  - paper=#f9fafb
+  - canvas=#f4f4f4
+  - ink=#141414
+  - muted=#6b7280
+  - chip=#e5e7eb
+  - paperBrush=<SolidColorBrush Color="#f9fafb"/>
+  - canvasBrush=<SolidColorBrush Color="#f4f4f4"/>
+  - inkBrush=<SolidColorBrush Color="#141414"/>
+  - mutedBrush=<SolidColorBrush Color="#6b7280"/>
+  - chipBrush=<SolidColorBrush Color="#e5e7eb"/>
+  - card=16
+controlStyles:
+  - target: Grid#CommandBarControlRootGrid
+    styles:
+      - Background:=$paperBrush
+      - BorderBrush:=$inkBrush
+      - BorderThickness=0,0,0,2
+  - target: CommandBar#FileExplorerCommandBar
+    styles:
+      - Background:=$paperBrush
+  - target: Grid#NavigationBarControlGrid
+    styles:
+      - Background:=$paperBrush
+      - BorderBrush:=$inkBrush
+      - BorderThickness=0,0,0,2
+  - target: Grid#TabContainer > ContentPresenter > StackPanel > TextBlock
+    styles:
+      - Foreground:=$inkBrush
+      - FontWeight=SemiBold
+  - target: Grid#DetailsViewControlRootGrid
+    styles:
+      - Background:=$canvasBrush
+  - target: Grid#HomeViewRootGrid
+    styles:
+      - Background:=$canvasBrush
+  - target: CommandBarOverflowPresenter#SecondaryItemsControl > Grid#LayoutRoot > Border
+    styles:
+      - Background:=$paperBrush
+      - BorderBrush:=$inkBrush
+      - BorderThickness=2
+      - CornerRadius=$card
+      - Shadow:=
+xamlDiagnosticsHandling: alert

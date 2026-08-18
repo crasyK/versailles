@@ -1,0 +1,86 @@
+# Import: Windhawk → Windows 11 Start Menu Styler → Settings → Textual mode → paste → Save.
+theme: ""
+styleConstants:
+  - paper=#f9fafb
+  - canvas=#f4f4f4
+  - ink=#141414
+  - muted=#6b7280
+  - chip=#e5e7eb
+  - paperBrush=<SolidColorBrush Color="#f9fafb"/>
+  - canvasBrush=<SolidColorBrush Color="#f4f4f4"/>
+  - inkBrush=<SolidColorBrush Color="#141414"/>
+  - mutedBrush=<SolidColorBrush Color="#6b7280"/>
+  - chipBrush=<SolidColorBrush Color="#e5e7eb"/>
+  - pill=32
+  - card=16
+controlStyles:
+  - target: Border#AcrylicBorder
+    styles:
+      - Background:=$paperBrush
+      - BorderBrush:=$inkBrush
+      - BorderThickness=2
+      - CornerRadius=$card
+      - Shadow:=
+  - target: Border#AcrylicOverlay
+    styles:
+      - Visibility=Collapsed
+  - target: Border#StartDropShadow
+    styles:
+      - Visibility=Collapsed
+  - target: Border#BorderElement
+    styles:
+      - Background:=$paperBrush
+      - BorderBrush:=$inkBrush
+      - BorderThickness=2
+      - CornerRadius=$card
+      - Shadow:=
+  - target: Border#AppBorder
+    styles:
+      - Background:=$paperBrush
+      - BorderBrush:=$inkBrush
+      - BorderThickness=2
+      - CornerRadius=$card
+  - target: Border#AccentAppBorder
+    styles:
+      - Background:=$paperBrush
+      - BorderBrush:=$inkBrush
+      - BorderThickness=2
+      - CornerRadius=$card
+  - target: Border#LayerBorder
+    styles:
+      - Visibility=Collapsed
+  - target: Grid#ShowMoreSuggestions
+    styles:
+      - Visibility=Collapsed
+  - target: Grid#TopLevelSuggestionsListHeader
+    styles:
+      - Visibility=Collapsed
+  - target: Grid#TopLevelSuggestionsContainer
+    styles:
+      - Visibility=Collapsed
+  - target: Grid#NoTopLevelSuggestionsText
+    styles:
+      - Visibility=Collapsed
+  - target: StartDocked.SearchBoxToggleButton#StartMenuSearchBox > Grid
+    styles:
+      - Background:=$paperBrush
+      - BorderBrush:=$inkBrush
+      - BorderThickness=2
+      - CornerRadius=$pill
+  - target: TextBlock#PlaceholderText
+    styles:
+      - Foreground:=$mutedBrush
+  - target: MenuFlyoutPresenter > Border
+    styles:
+      - Background:=$paperBrush
+      - BorderBrush:=$inkBrush
+      - BorderThickness=2
+      - CornerRadius=$card
+      - Shadow:=
+  - target: Border#TaskbarSearchBackground
+    styles:
+      - Background:=$paperBrush
+      - BorderBrush:=$inkBrush
+      - BorderThickness=2
+      - CornerRadius=$pill
+xamlDiagnosticsHandling: alert

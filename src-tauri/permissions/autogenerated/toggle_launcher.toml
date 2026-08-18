@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-toggle-launcher"
+description = "Enables the toggle_launcher command without any pre-configured scope."
+commands.allow = ["toggle_launcher"]
+
+[[permission]]
+identifier = "deny-toggle-launcher"
+description = "Denies the toggle_launcher command without any pre-configured scope."
+commands.deny = ["toggle_launcher"]

@@ -1,0 +1,97 @@
+# Import: Windhawk → Windows 11 Notification Center Styler → Settings → Textual mode → paste → Save.
+theme: ""
+styleConstants:
+  - paper=#f9fafb
+  - canvas=#f4f4f4
+  - ink=#141414
+  - muted=#6b7280
+  - chip=#e5e7eb
+  - paperBrush=<SolidColorBrush Color="#f9fafb"/>
+  - canvasBrush=<SolidColorBrush Color="#f4f4f4"/>
+  - inkBrush=<SolidColorBrush Color="#141414"/>
+  - mutedBrush=<SolidColorBrush Color="#6b7280"/>
+  - chipBrush=<SolidColorBrush Color="#e5e7eb"/>
+  - card=16
+controlStyles:
+  - target: Grid#NotificationCenterGrid
+    styles:
+      - Background:=$paperBrush
+      - BorderBrush:=$inkBrush
+      - BorderThickness=2
+      - CornerRadius=$card
+      - Shadow:=
+  - target: Grid#CalendarCenterGrid
+    styles:
+      - Background:=$paperBrush
+      - BorderBrush:=$inkBrush
+      - BorderThickness=2
+      - CornerRadius=$card
+      - Shadow:=
+  - target: ScrollViewer#CalendarControlScrollViewer
+    styles:
+      - Background=Transparent
+  - target: Border#CalendarHeaderMinimizedOverlay
+    styles:
+      - Background=Transparent
+  - target: ActionCenter.FocusSessionControl#FocusSessionControl > Grid#FocusGrid
+    styles:
+      - Background=Transparent
+  - target: Grid#ControlCenterRegion
+    styles:
+      - Background:=$paperBrush
+      - BorderBrush:=$inkBrush
+      - BorderThickness=2
+      - CornerRadius=$card
+      - Shadow:=
+  - target: Windows.UI.Xaml.Controls.Grid#MediaTransportControlsRegion
+    styles:
+      - Background:=$paperBrush
+      - BorderBrush:=$inkBrush
+      - BorderThickness=2
+      - CornerRadius=$card
+      - Shadow:=
+  - target: Grid#MediaTransportControlsRoot
+    styles:
+      - Background=Transparent
+  - target: ContentPresenter#PageContent
+    styles:
+      - Background=Transparent
+  - target: Border#ToastBackgroundBorder
+    styles:
+      - Background:=$paperBrush
+      - BorderBrush:=$inkBrush
+      - BorderThickness=2
+      - CornerRadius=$card
+      - Shadow:=
+  - target: Border#ToastBackgroundBorder2
+    styles:
+      - Background:=$paperBrush
+      - BorderBrush:=$inkBrush
+      - BorderThickness=2
+      - CornerRadius=$card
+      - Shadow:=
+  - target: MenuFlyoutPresenter > Border
+    styles:
+      - Background:=$paperBrush
+      - BorderBrush:=$inkBrush
+      - BorderThickness=2
+      - CornerRadius=$card
+      - Shadow:=
+      - Padding=2,4,2,4
+  - target: Border#JumpListRestyledAcrylic
+    styles:
+      - Background:=$paperBrush
+      - BorderBrush:=$inkBrush
+      - BorderThickness=2
+      - CornerRadius=$card
+      - Shadow:=
+  - target: ActionCenter.FlexibleItemView
+    styles:
+      - CornerRadius=$card
+  - target: Rectangle#HorizontalDecreaseRect
+    styles:
+      - Fill:=$inkBrush
+  - target: Rectangle#HorizontalTrackRect
+    styles:
+      - Fill:=$chipBrush
+xamlDiagnosticsHandling: alert

@@ -1,0 +1,103 @@
+# Import: Windhawk → Taskbar Clock Customization → Settings → Textual mode → paste this file → Save settings.
+#
+# Keys from mods/taskbar-clock-customization.wh.cpp v1.8 (local:
+# C:\ProgramData\Windhawk\ModsSource\taskbar-clock-customization.wh.cpp).
+# Do not paste into Taskbar Styler. This mod has no theme: key.
+#
+# Form-field equivalent (if you stay in the visual Settings tab):
+#  1. Show seconds → Off
+#  2. Time format → HH':'mm
+#  3. Date format → d MMM
+#  4. Date locale → (empty)
+#  5. Week day format → Abbreviated day of the week
+#  6. Top line → %time%
+#  7. Bottom line → %web1%   (Deck weather, NOT %weather% / wttr.in)
+#  8. Middle line (Windows 10 only) → -
+#  9. Tooltip extra line → %weekday% %date%%newline%%web1%
+# 10. Tooltip line mode → Append to default tooltip
+# 11. Clock max width (Windows 11) → 0
+# 12. Line spacing → 0
+# 13. Weather location → leave empty (unused when bottom line is %web1%)
+# 14. Weather format → unused
+# 15. Weather units → Auto
+# 16. Web content item 1 URL → http://127.0.0.1:47831/weather/text
+#     Content mode → plainText. Leave Block/Start/End empty.
+# 17. Top line style → color #141414, size 12, FontFamily Inter, Semi bold, Center
+# 18. Bottom line style → color #6b7280, size 11, FontFamily Inter, Semi bold, Center
+# Leave CPU/RAM/GPU, network speeds, media, and %weather% off every line.
+# %weather% is wttr.in IP geolocation (Hadamar / VPN POP). Deck uses the same
+# Windows.Devices.Geolocation stack as OS weather, then a saved city.
+#
+# FontFamily must be the single installed name `Inter` (XAML has no CSS fallbacks).
+# No uppercase / tracking control exists on this mod (CharacterSpacing left 0).
+
+ShowSeconds: 0
+TimeFormat: "HH':'mm"
+DateFormat: d MMM
+DateLocale: ""
+WeekdayFormat: ddd
+WeekdayFormatCustom: Sun, Mon, Tue, Wed, Thu, Fri, Sat
+TopLine: '%time%'
+BottomLine: '%web1%'
+MiddleLine: '-'
+TooltipLine: '%weekday% %date%%newline%%web1%'
+TooltipLineMode: append
+Width: 180
+Height: 60
+MaxWidth: 0
+TextSpacing: 0
+DataCollection:
+  NetworkMetricsFormat: mbs
+  NetworkMetricsFixedDecimals: -1
+  DiskMetricsFormat: sameAsNetwork
+  DiskMetricsFixedDecimals: -1
+  PercentageFormat: spacePaddingAndSymbol
+  UpdateInterval: 1
+  NetworkAdapterName: ""
+  GpuAdapterName: ""
+MediaPlayer:
+  IgnoredPlayers:
+    - ""
+  MaxLength: 28
+  MediaInfoFormat: "%media_artist% - %media_title%"
+  NoMediaText: No media
+  RemoveBrackets: 0
+WebContentWeatherLocation: ""
+WebContentWeatherFormat: '%c %t'
+WebContentWeatherUnits: autoDetect
+WebContentsItems:
+  - Url: http://127.0.0.1:47831/weather/text
+    BlockStart: ""
+    Start: ""
+    End: ""
+    ContentMode: plainText
+    SearchReplace:
+      - Search: ""
+        Replace: ""
+    MaxLength: 0
+WebContentsUpdateInterval: 10
+TimeZones:
+  - ""
+TimeStyle:
+  Hidden: 0
+  TextColor: "#141414"
+  TextAlignment: Center
+  FontSize: 12
+  FontFamily: Inter
+  FontWeight: SemiBold
+  FontStyle: Normal
+  FontStretch: Normal
+  CharacterSpacing: 0
+  LineHeight: 0
+DateStyle:
+  Hidden: 0
+  TextColor: "#6b7280"
+  TextAlignment: Center
+  FontSize: 11
+  FontFamily: Inter
+  FontWeight: SemiBold
+  FontStyle: Normal
+  FontStretch: Normal
+  CharacterSpacing: 0
+  LineHeight: 0
+oldTaskbarOnWin11: 0

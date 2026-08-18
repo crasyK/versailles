@@ -1,0 +1,305 @@
+# Import: Windhawk → Windows 11 Taskbar Styler → Settings → Textual mode → paste → Save.
+theme: ""
+styleConstants:
+  - paper=#f9fafb
+  - canvas=#f4f4f4
+  - ink=#141414
+  - muted=#6b7280
+  - chip=#e5e7eb
+  - white=#ffffff
+  - paperBrush=<SolidColorBrush Color="#f9fafb"/>
+  - canvasBrush=<SolidColorBrush Color="#f4f4f4"/>
+  - inkBrush=<SolidColorBrush Color="#141414"/>
+  - mutedBrush=<SolidColorBrush Color="#6b7280"/>
+  - chipBrush=<SolidColorBrush Color="#e5e7eb"/>
+  - whiteBrush=<SolidColorBrush Color="#ffffff"/>
+  - pill=32
+  - card=16
+controlStyles:
+  - target: Taskbar.TaskbarFrame > Grid#RootGrid > Taskbar.TaskbarBackground > Grid > Rectangle#BackgroundFill
+    styles:
+      - Fill:=$canvasBrush
+  - target: Taskbar.TaskbarBackground#HoverFlyoutBackgroundControl > Grid > Rectangle#BackgroundFill
+    styles:
+      - Fill:=$paperBrush
+  - target: Rectangle#BackgroundStroke
+    styles:
+      - Fill:=$inkBrush
+      - Height=2
+      - VerticalAlignment=Top
+  - target: Taskbar.TaskbarExtensionElement
+    styles:
+      - Visibility=Collapsed
+  - target: Taskbar.AugmentedEntryPointButton#AugmentedEntryPointButton
+    styles:
+      - Visibility=Collapsed
+  - target: Taskbar.ExperienceToggleButton#LaunchListButton[AutomationProperties.AutomationId=TaskViewButton]
+    styles:
+      - Visibility=Collapsed
+  - target: Taskbar.TaskListButton#TaskListButton[AutomationProperties.Name=Copilot]
+    styles:
+      - Visibility=Collapsed
+  - target: SystemTray.CopilotIcon#CopilotIcon
+    styles:
+      - Visibility=Collapsed
+  - target: Taskbar.SearchBoxButton#SearchBoxButton[AutomationProperties.AutomationId=SearchButton] > Taskbar.TaskListButtonPanel
+    styles:
+      - Visibility=Collapsed
+  - target: SearchUx.SearchUI.SearchPillButton
+    styles:
+      - Visibility=Collapsed
+  - target: SearchUx.SearchUI.SearchBoxButton
+    styles:
+      - Visibility=Collapsed
+  - target: SearchUx.SearchUI.SearchIconButton
+    styles:
+      - Visibility=Collapsed
+  - target: SearchUx.SearchUI.SearchV2Button
+    styles:
+      - Visibility=Collapsed
+  - target: Grid#DynamicSearchBoxGleamContainer
+    styles:
+      - Visibility=Collapsed
+  - target: Taskbar.TaskListLabeledButtonPanel@CommonStates > Border#BackgroundElement
+    styles:
+      - CornerRadius=$pill
+      - BorderThickness=2
+      - BorderBrush:=$inkBrush
+      - Background@InactiveNormal:=$paperBrush
+      - Background@InactivePointerOver:=$chipBrush
+      - Background@InactivePressed:=$chipBrush
+      - Background@ActiveNormal:=$inkBrush
+      - Background@ActivePointerOver:=$inkBrush
+      - Background@ActivePressed:=$inkBrush
+      - Background@MultiWindowNormal:=$paperBrush
+      - Background@MultiWindowPointerOver:=$chipBrush
+      - Background@MultiWindowActive:=$inkBrush
+      - Background@MultiWindowPressed:=$chipBrush
+      - Margin=3,4,3,4
+      - MinHeight=32
+  - target: Taskbar.TaskListButtonPanel@CommonStates > Border#BackgroundElement
+    styles:
+      - CornerRadius=$pill
+      - BorderThickness=2
+      - BorderBrush:=$inkBrush
+      - Background@InactiveNormal:=$paperBrush
+      - Background@InactivePointerOver:=$chipBrush
+      - Background@InactivePressed:=$chipBrush
+      - Background@ActiveNormal:=$inkBrush
+      - Background@ActivePointerOver:=$inkBrush
+      - Background@ActivePressed:=$inkBrush
+      - Margin=3,4,3,4
+      - MinHeight=32
+  - target: Taskbar.TaskListLabeledButtonPanel@RunningIndicatorStates > Border#BackgroundElement
+    styles:
+      - Background@NoRunningIndicator:=Transparent
+      - Background@InactiveRunningIndicator:=Transparent
+      - Background@ActiveRunningIndicator:=Transparent
+      - Background@RequestingAttentionRunningIndicator:=Transparent
+      - BorderBrush@NoRunningIndicator:=Transparent
+      - BorderThickness@NoRunningIndicator=0
+  - target: Border#MultiWindowElement
+    styles:
+      - Height=0
+  - target: Taskbar.ExperienceToggleButton#LaunchListButton[AutomationProperties.AutomationId=StartButton] > Taskbar.TaskListButtonPanel@CommonStates > Border#BackgroundElement
+    styles:
+      - CornerRadius=$pill
+      - BorderThickness=2
+      - BorderBrush:=$inkBrush
+      - Background@InactiveNormal:=$paperBrush
+      - Background@InactivePointerOver:=$chipBrush
+      - Background@InactivePressed:=$chipBrush
+      - Background@ActiveNormal:=$inkBrush
+      - Background@ActivePointerOver:=$inkBrush
+      - Background@ActivePressed:=$inkBrush
+      - Margin=4,4,4,4
+      - MinHeight=32
+  - target: Taskbar.ExperienceToggleButton#LaunchListButton[AutomationProperties.AutomationId=StartButton] > Taskbar.TaskListButtonPanel
+    styles:
+      - MinWidth=40
+      - Padding=2,0,2,0
+  - target: Taskbar.OverflowToggleButton > Taskbar.TaskListButtonPanel@CommonStates > Border#BackgroundElement
+    styles:
+      - CornerRadius=$pill
+      - BorderThickness=2
+      - BorderBrush:=$inkBrush
+      - Background@InactiveNormal:=$paperBrush
+      - Background@InactivePointerOver:=$chipBrush
+      - Background@InactivePressed:=$chipBrush
+      - Margin=3,4,3,4
+  - target: Taskbar.TaskListLabeledButtonPanel@CommonStates > TextBlock#LabelControl
+    styles:
+      - Foreground:=$inkBrush
+      - Foreground@ActiveNormal:=$whiteBrush
+      - Foreground@ActivePointerOver:=$whiteBrush
+      - Foreground@ActivePressed:=$whiteBrush
+      - Foreground@MultiWindowActive:=$whiteBrush
+      - FontWeight=SemiBold
+      - FontSize=12
+      - Margin=4,0,8,0
+  - target: Taskbar.TaskListLabeledButtonPanel@RunningIndicatorStates > Rectangle#RunningIndicator
+    styles:
+      - Fill:=$inkBrush
+      - Fill@ActiveRunningIndicator:=$inkBrush
+      - Fill@InactiveRunningIndicator:=$inkBrush
+      - Fill@RequestingAttentionRunningIndicator:=$inkBrush
+      - Height=2
+      - Width=10
+      - Width@ActiveRunningIndicator=18
+      - RadiusX=1
+      - RadiusY=1
+      - VerticalAlignment=Bottom
+      - Margin=0,0,0,5
+  - target: Grid#SystemTrayFrameGrid
+    styles:
+      - Background:=$paperBrush
+      - BorderBrush:=$inkBrush
+      - BorderThickness=2
+      - CornerRadius=$pill
+      - Margin=6,4,10,4
+      - Padding=8,2,10,2
+  - target: SystemTray.OmniButton#ControlCenterButton > Grid@CommonStates > Border#BackgroundBorder
+    styles:
+      - Background=Transparent
+      - Background@PointerOver:=$chipBrush
+      - Background@Pressed:=$chipBrush
+      - BorderThickness=0
+      - CornerRadius=8
+  - target: SystemTray.OmniButton#NotificationCenterButton > Grid@CommonStates > Border#BackgroundBorder
+    styles:
+      - Background=Transparent
+      - Background@PointerOver:=$chipBrush
+      - Background@Pressed:=$chipBrush
+      - BorderThickness=0
+      - CornerRadius=8
+  - target: SystemTray.NotifyIconView > Grid#ContainerGrid > Border#BackgroundBorder
+    styles:
+      - Background=Transparent
+      - Background@PointerOver:=$chipBrush
+      - BorderThickness=0
+      - CornerRadius=8
+  - target: SystemTray.ChevronIconView > Grid#ContainerGrid > Border#BackgroundBorder
+    styles:
+      - Background=Transparent
+      - Background@PointerOver:=$chipBrush
+      - BorderThickness=0
+      - CornerRadius=8
+  - target: SystemTray.IconView#SystemTrayIcon > Grid#ContainerGrid > Border#BackgroundBorder
+    styles:
+      - Background=Transparent
+      - Background@PointerOver:=$chipBrush
+      - BorderThickness=0
+      - CornerRadius=8
+  - target: TextBlock#TimeInnerTextBlock
+    styles:
+      - Foreground:=$inkBrush
+      - FontWeight=SemiBold
+      - FontSize=12
+  - target: TextBlock#DateInnerTextBlock
+    styles:
+      - Foreground:=$mutedBrush
+      - FontSize=11
+  - target: SystemTray.AdaptiveTextBlock
+    styles:
+      - Foreground:=$inkBrush
+  - target: SystemTray.TextIconContent > Grid > SystemTray.AdaptiveTextBlock#Base > TextBlock
+    styles:
+      - Foreground:=$inkBrush
+  - target: Rectangle#ShowDesktopPipe
+    styles:
+      - Fill:=$inkBrush
+      - Width=2
+      - Height=16
+      - RadiusX=1
+      - RadiusY=1
+      - Margin=4,0,0,0
+  - target: Grid#OverflowRootGrid > Border
+    styles:
+      - Background:=$paperBrush
+      - BorderBrush:=$inkBrush
+      - BorderThickness=2
+      - CornerRadius=$card
+      - Shadow:=
+  - target: Border#OverflowFlyoutBackgroundBorder
+    styles:
+      - Background:=$paperBrush
+      - BorderBrush:=$inkBrush
+      - BorderThickness=2
+      - CornerRadius=$card
+      - Shadow:=
+  - target: Canvas#HoverFlyoutCanvas > Grid#HoverFlyoutGrid > Border#HoverFlyoutBackground
+    styles:
+      - Background:=$paperBrush
+      - BorderBrush:=$inkBrush
+      - BorderThickness=2
+      - CornerRadius=$card
+      - Shadow:=
+  - target: Taskbar.TaskItemThumbnailView > Grid > Border
+    styles:
+      - Background:=$paperBrush
+      - BorderBrush:=$inkBrush
+      - BorderThickness=2
+      - CornerRadius=$card
+      - Shadow:=
+  - target: MenuFlyoutPresenter
+    styles:
+      - Background:=$paperBrush
+      - BorderBrush:=$inkBrush
+      - BorderThickness=2
+      - CornerRadius=$card
+      - Shadow:=
+  - target: MenuFlyoutPresenter > Border
+    styles:
+      - Background:=$paperBrush
+      - BorderBrush:=$inkBrush
+      - BorderThickness=2
+      - CornerRadius=$card
+      - Shadow:=
+  - target: Grid#ConfirmatorMainGrid
+    styles:
+      - Background:=$paperBrush
+      - BorderBrush:=$inkBrush
+      - BorderThickness=2
+      - CornerRadius=$card
+      - Shadow:=
+  - target: Rectangle#HorizontalTrackRect
+    styles:
+      - Fill:=$chipBrush
+      - Height=6
+      - RadiusX=3
+      - RadiusY=3
+  - target: Rectangle#HorizontalDecreaseRect
+    styles:
+      - Fill:=$inkBrush
+      - Height=6
+      - RadiusX=3
+      - RadiusY=3
+  - target: Taskbar.Badge#BadgeControl
+    styles:
+      - Background:=$inkBrush
+      - CornerRadius=999
+      - Height=14
+      - MinWidth=14
+  - target: Taskbar.TaskListLabeledButtonPanel#IconPanel > Taskbar.Badge > Grid > TextBlock
+    styles:
+      - Foreground:=$whiteBrush
+  - target: Border#ProgressBarRoot > Border > Grid > Rectangle#DeterminateProgressBarIndicator
+    styles:
+      - Fill:=$inkBrush
+  - target: Rectangle#ProgressBarTrack
+    styles:
+      - Fill:=$chipBrush
+  - target: Taskbar.TaskListLabeledButtonPanel#IconPanel > Image#OverlayIcon
+    styles:
+      - Visibility=Collapsed
+  - target: SystemTray.ChevronIconView > Grid#ContainerGrid > ContentPresenter > Grid > Path
+    styles:
+      - Fill:=$inkBrush
+  - target: SystemTray.Stack#ShowDesktopStack
+    styles:
+      - Width=4
+themeResourceVariables:
+  - MediumTaskbarButtonExtent=44
+  - TaskbarContextMenuMargin=8
+  - ContextMenuMargin=8
+xamlDiagnosticsHandling: alert

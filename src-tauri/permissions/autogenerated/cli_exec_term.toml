@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-cli-exec-term"
+description = "Enables the cli_exec_term command without any pre-configured scope."
+commands.allow = ["cli_exec_term"]
+
+[[permission]]
+identifier = "deny-cli-exec-term"
+description = "Denies the cli_exec_term command without any pre-configured scope."
+commands.deny = ["cli_exec_term"]

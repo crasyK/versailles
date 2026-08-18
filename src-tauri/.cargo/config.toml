@@ -1,0 +1,3 @@
+# Windows debug + Tauri ACL context needs more than the default 1–8MiB stack.
+[env]
+RUST_MIN_STACK = "33554432"

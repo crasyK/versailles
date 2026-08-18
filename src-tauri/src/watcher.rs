@@ -1,7 +1,6 @@
 //! Lightweight directory watcher that reloads open widget webviews on save.
 use crate::registry::widgets_root;
 use crate::state::AppState;
-use crate::window_manager::widget_label;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::sync::mpsc::channel;
 use std::time::{Duration, Instant};
@@ -11,6 +10,7 @@ fn should_ignore(path: &std::path::Path) -> bool {
     let s = path.to_string_lossy().replace('\\', "/").to_lowercase();
     s.contains("/app/")
         || s.ends_with("/app")
+        || s.contains("/.versailles/")
         || s.contains("/.deck/")
         || s.contains("/.git/")
         || s.contains("/node_modules/")
@@ -80,22 +80,10 @@ pub fn start_widget_watcher(app: AppHandle) {
                     let _ = app.emit("desktop://reload", true);
 
                     if let Some(window) = app.get_webview_window("desktop") {
-                        // Cross-origin iframe (Vite shell vs :47831 page) — set src, do not touch contentWindow.
+                        // Cross-origin iframe (shell vs localhost page) — set src, do not touch contentWindow.
                         let _ = window.eval(
-                            r#"var p=document.getElementById("page"); if(p&&p.src){var u=new URL(p.src); u.searchParams.set("_deck", String(Date.now())); p.src=u.toString();}"#,
+                            r#"var p=document.getElementById("page"); if(p&&p.src){var u=new URL(p.src); u.searchParams.set("_versailles", String(Date.now())); p.src=u.toString();}"#,
                         );
-                    }
-
-                    // Reload open widget windows
-                    let open_ids: Vec<String> = {
-                        let state = app.state::<AppState>();
-                        let mgr = state.window_manager.lock().unwrap();
-                        mgr.open_widgets().into_iter().map(|w| w.id).collect()
-                    };
-                    for id in open_ids {
-                        if let Some(window) = app.get_webview_window(&widget_label(&id)) {
-                            let _ = window.eval("location.reload()");
-                        }
                     }
                 }
                 Ok(Err(err)) => tracing::debug!("watch event error: {err}"),

@@ -5,7 +5,7 @@
 //!   1. `?location=` typed by the user
 //!   2. WinRT Geolocator (Wi‑Fi / GNSS via `lfsvc`)
 //!   3. Settings → Privacy → Location → Default location
-//!   4. Saved city in `.deck/weather-location.txt`
+//!   4. Saved city in `.versailles/weather-location.txt`
 //!
 //! ISP IP geolocation is never used. On this machine it resolves to the
 //! Vodafone POP (Hadamar), not the actual city. Forecast is Open-Meteo.
@@ -21,7 +21,7 @@ static LIVE_FAIL_UNTIL: Mutex<Option<Instant>> = Mutex::new(None);
 fn location_file() -> Option<std::path::PathBuf> {
     crate::registry::widgets_root()
         .ok()
-        .map(|root| root.join(".deck").join("weather-location.txt"))
+        .map(|root| root.join(".versailles").join("weather-location.txt"))
 }
 
 fn read_saved_location() -> Option<String> {
@@ -65,7 +65,7 @@ pub struct WeatherPayload {
 
 fn http() -> reqwest::Client {
     reqwest::Client::builder()
-        .user_agent("Deck/0.1 (local weather widget; mark@localhost)")
+        .user_agent("Versailles/0.1 (local weather widget; mark@localhost)")
         .timeout(Duration::from_secs(10))
         .build()
         .unwrap_or_else(|_| reqwest::Client::new())

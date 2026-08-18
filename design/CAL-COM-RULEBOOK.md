@@ -1,6 +1,6 @@
-# Cal.com 2024 — Deck design rulebook
+# Cal.com 2024 — Versailles design rulebook
 
-Cal.com 2024 is the **only** visual language for Deck: desktop wallpaper, widgets, and native Windows chrome (taskbar, Start, notification center, Explorer, Settings). Aetherfield / SaaS is archived in `design/kimi-handoff/DESIGN-BRIEF.md` and must not ship.
+Cal.com 2024 is the **only** visual language for Versailles: desktop wallpaper, widgets, and native Windows chrome (taskbar, Start, notification center, Explorer, Settings). Aetherfield / SaaS is archived in `design/kimi-handoff/DESIGN-BRIEF.md` and must not ship.
 
 Source: [cal.com 2024 Awwwards Figma](https://www.figma.com/design/rMNeQYt5PqqHY1gOW0Pa50/Top-16-Websites-of-2024---Awwwards--Community-?node-id=27-6378) (`cal.com` frame `27:6378`).
 

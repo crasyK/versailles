@@ -6,7 +6,6 @@ mod config;
 mod desktop;
 mod error;
 mod hotkeys;
-mod layout;
 mod media;
 mod protocol;
 mod quote;
@@ -18,23 +17,19 @@ mod watcher;
 mod weather;
 mod window_manager;
 
-use api::start_api_server;
+use api::start_runtime_server;
 use config::ConfigStore;
 use hotkeys::register_launcher_hotkey;
 use media::{start_media_listener, MediaState};
 use registry::{widgets_root, WidgetRegistry};
 use state::AppState;
-use std::sync::{Arc, Mutex};
-use tokio::sync::Semaphore;
-use tokio::task::JoinSet;
+use std::sync::Mutex;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Manager,
 };
-use window_manager::{
-    ensure_manager_window, open_widget_window, spawn_webview_prewarm, WindowManager,
-};
+use window_manager::spawn_webview_prewarm;
 use tauri_plugin_log::{Target, TargetKind};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -55,7 +50,7 @@ pub fn run() {
             b = b.targets([
                 Target::new(TargetKind::Stdout),
                 Target::new(TargetKind::LogDir {
-                    file_name: Some("Deck".into()),
+                    file_name: Some("Versailles".into()),
                 }),
             ]);
         }
@@ -63,7 +58,7 @@ pub fn run() {
         {
             // File only — Stdout on a GUI app can still surface a console via Windows Terminal.
             b = b.targets([Target::new(TargetKind::LogDir {
-                file_name: Some("Deck".into()),
+                file_name: Some("Versailles".into()),
             })]);
         }
         b
@@ -78,7 +73,18 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            let _ = ensure_manager_window(app);
+            let desktop_enabled = app
+                .try_state::<AppState>()
+                .map(|state| state.config.lock().unwrap().desktop.enabled)
+                .unwrap_or(true);
+            if desktop_enabled {
+                if let Err(err) = desktop::reveal_desktop_window(app) {
+                    tracing::warn!("single-instance desktop reveal failed: {err}");
+                    let _ = window_manager::show_launcher(app);
+                }
+            } else {
+                let _ = window_manager::show_launcher(app);
+            }
         }))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .register_uri_scheme_protocol("widget", |_ctx, request| {
@@ -95,15 +101,15 @@ pub fn run() {
             start_media_listener(app.handle().clone(), media.clone());
 
             let mut config = config;
-            // Bind file/API server BEFORE session restore so widget URLs work.
-            match start_api_server(app.handle().clone(), &mut config) {
+            // Bind localhost runtime BEFORE desktop restore so widget URLs work.
+            match start_runtime_server(app.handle().clone(), &mut config) {
                 Ok(port) => {
                     if let Err(err) = store.save(&config) {
-                        tracing::warn!("Failed to persist API port {port}: {err}");
+                        tracing::warn!("Failed to persist runtime port {port}: {err}");
                     }
                 }
                 Err(err) => {
-                    tracing::error!("Deck HTTP server failed to start: {err}");
+                    tracing::error!("Versailles localhost runtime failed to start: {err}");
                 }
             }
 
@@ -111,34 +117,18 @@ pub fn run() {
                 store: Mutex::new(store),
                 config: Mutex::new(config.clone()),
                 registry: Mutex::new(registry),
-                window_manager: Mutex::new(WindowManager::default()),
                 media,
             });
             app.manage(pty::PtyState::default());
 
             spawn_webview_prewarm(app.handle());
 
-            // Tray — only visible UI on boot unless restoring session widgets.
-            let show_item = MenuItem::with_id(app, "show", "Open Deck", true, None::<&str>)?;
-            let launcher_item =
-                MenuItem::with_id(app, "launcher", "Launcher", true, None::<&str>)?;
             let desktop_item =
                 MenuItem::with_id(app, "desktop", "Desktop page", true, None::<&str>)?;
-            let anywhere_item =
-                MenuItem::with_id(app, "anywhere", "Anywhere bar (covers apps)", true, None::<&str>)?;
-            let canvas_item = MenuItem::with_id(app, "canvas", "Toggle Canvas", true, None::<&str>)?;
+            let launcher_item =
+                MenuItem::with_id(app, "launcher", "Launcher", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(
-                app,
-                &[
-                    &show_item,
-                    &launcher_item,
-                    &anywhere_item,
-                    &desktop_item,
-                    &canvas_item,
-                    &quit_item,
-                ],
-            )?;
+            let menu = Menu::with_items(app, &[&desktop_item, &launcher_item, &quit_item])?;
 
             let _tray = TrayIconBuilder::new()
                 .icon(
@@ -147,32 +137,14 @@ pub fn run() {
                         .ok_or_else(|| "missing tray icon".to_string())?,
                 )
                 .menu(&menu)
-                .tooltip("Deck")
+                .tooltip("Versailles")
                 .on_menu_event(|app, event| match event.id.as_ref() {
-                    "show" => {
-                        let _ = ensure_manager_window(app);
-                    }
                     "launcher" => {
                         let _ = window_manager::show_launcher(app);
-                    }
-                    "anywhere" => {
-                        let enable = app.get_webview_window("anywhere").is_none();
-                        if enable {
-                            let _ = window_manager::ensure_anywhere_window(app);
-                        } else {
-                            let _ = window_manager::close_anywhere_window(app);
-                        }
-                        let state = app.state::<AppState>();
-                        let mut config = state.config.lock().unwrap();
-                        if config.desktop.anywhere_bar != enable {
-                            config.desktop.anywhere_bar = enable;
-                            let _ = state.store.lock().unwrap().save(&config);
-                        }
                     }
                     "desktop" => {
                         let enable = app.get_webview_window("desktop").is_none();
                         if enable {
-                            let _ = window_manager::close_anywhere_window(app);
                             if let Err(err) = desktop::reveal_desktop_window(app) {
                                 tracing::error!("desktop page failed to open: {err}");
                             }
@@ -184,13 +156,6 @@ pub fn run() {
                         if config.desktop.enabled != enable {
                             config.desktop.enabled = enable;
                             let _ = state.store.lock().unwrap().save(&config);
-                        }
-                    }
-                    "canvas" => {
-                        if app.get_webview_window("canvas").is_some() {
-                            let _ = window_manager::close_canvas_window(app);
-                        } else {
-                            let _ = window_manager::ensure_canvas_window(app);
                         }
                     }
                     "quit" => {
@@ -206,7 +171,22 @@ pub fn run() {
                     } = event
                     {
                         let app = tray.app_handle();
-                        let _ = ensure_manager_window(app);
+                        let enable = app.get_webview_window("desktop").is_none();
+                        if enable {
+                            if let Err(err) = desktop::reveal_desktop_window(app) {
+                                tracing::error!("desktop page failed to open: {err}");
+                                let _ = window_manager::show_launcher(app);
+                            }
+                        } else {
+                            let _ = window_manager::close_desktop_window(app);
+                        }
+                        if let Some(state) = app.try_state::<AppState>() {
+                            let mut config = state.config.lock().unwrap();
+                            if config.desktop.enabled != enable {
+                                config.desktop.enabled = enable;
+                                let _ = state.store.lock().unwrap().save(&config);
+                            }
+                        }
                     }
                 })
                 .build(app)?;
@@ -271,118 +251,9 @@ pub fn run() {
 
             watcher::start_widget_watcher(app.handle().clone());
 
-            // Session restore off the setup path; bounded to 2 concurrent WebView2
-            // creations to avoid the documented deadlock risk.
-            let open_manager = config.open_manager_on_startup;
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                // Brief settle delay: the file server is already bound in setup,
-                // so only wait for monitors so clamp/restore use real geometry.
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                let (session, page_html) = {
-                    let state = handle.state::<AppState>();
-                    let html = crate::desktop::read_desktop_html(&state);
-                    let session = state.config.lock().unwrap().session_widgets.clone();
-                    (session, html)
-                };
-
-                let semaphore = Arc::new(Semaphore::new(2));
-                let mut join_set = JoinSet::new();
-                for widget in session {
-                    if crate::desktop::html_embeds_widget(&page_html, &widget.id) {
-                        continue;
-                    }
-                    let app_handle = handle.clone();
-                    let semaphore = Arc::clone(&semaphore);
-                    let id = widget.id.clone();
-                    let position = widget.position.clone();
-                    let always_on_top = widget.always_on_top;
-
-                    join_set.spawn(async move {
-                        let _permit = semaphore
-                            .acquire_owned()
-                            .await
-                            .expect("session restore semaphore closed");
-
-                        let (tx, rx) = tokio::sync::oneshot::channel();
-                        let app = app_handle.clone();
-                        let id_for_thread = id.clone();
-                        if let Err(err) = app_handle.run_on_main_thread(move || {
-                            let result = {
-                                let state = app.state::<AppState>();
-                                open_widget_window(
-                                    &app,
-                                    &state.window_manager,
-                                    &id_for_thread,
-                                    Some(position),
-                                    Some(always_on_top),
-                                )
-                            };
-                            let _ = tx.send(result);
-                        }) {
-                            tracing::warn!("Restore schedule failed for {id}: {err}");
-                            return;
-                        }
-
-                        match rx.await {
-                            Ok(Err(err)) => tracing::warn!("Failed to restore {id}: {err}"),
-                            Err(_) => tracing::warn!("Restore result channel closed for {id}"),
-                            Ok(Ok(_)) => {}
-                        }
-                    });
-                }
-
-                while join_set.join_next().await.is_some() {}
-
-                // Final pass: re-apply saved physical positions after all windows exist
-                // (creation/show can nudge them once).
-                tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-                let session = {
-                    let state = handle.state::<AppState>();
-                    let config = state.config.lock().unwrap();
-                    config.session_widgets.clone()
-                };
-                for widget in session {
-                    if crate::desktop::html_embeds_widget(&page_html, &widget.id) {
-                        continue;
-                    }
-                    let app = handle.clone();
-                    let id = widget.id.clone();
-                    let x = widget.position.x;
-                    let y = widget.position.y;
-                    let _ = handle.run_on_main_thread(move || {
-                        let state = app.state::<AppState>();
-                        let _ = crate::window_manager::apply_position(
-                            &app,
-                            &state.window_manager,
-                            &id,
-                            x,
-                            y,
-                        );
-                    });
-                }
-
-                if open_manager {
-                    let app = handle.clone();
-                    let _ = handle.run_on_main_thread(move || {
-                        let _ = ensure_manager_window(&app);
-                    });
-                }
-
-                let anywhere_bar = {
-                    let state = handle.state::<AppState>();
-                    let config = state.config.lock().unwrap();
-                    config.desktop.anywhere_bar && !config.desktop.enabled
-                };
-                if anywhere_bar {
-                    let app = handle.clone();
-                    let _ = handle.run_on_main_thread(move || {
-                        if let Err(err) = window_manager::ensure_anywhere_window(&app) {
-                            tracing::warn!("anywhere bar restore failed: {err}");
-                        }
-                    });
-                }
-
                 let desktop_enabled = {
                     let state = handle.state::<AppState>();
                     let enabled = state.config.lock().unwrap().desktop.enabled;
@@ -401,46 +272,23 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            commands::list_widgets,
             commands::get_config,
             commands::save_config,
-            commands::open_widget,
-            commands::close_widget,
-            commands::list_open_widgets,
-            commands::move_widget_cmd,
-            commands::set_widget_always_on_top,
-            commands::set_widget_opacity,
-            commands::get_mouse_position_cmd,
-            commands::get_monitors,
-            commands::show_manager,
             commands::toggle_launcher,
             commands::dismiss_launcher,
-            commands::open_canvas,
-            commands::close_canvas,
-            commands::list_layouts,
-            commands::save_layout,
-            commands::apply_layout,
-            commands::load_layout,
             commands::media_now,
             commands::media_play_pause_cmd,
             commands::media_next_cmd,
             commands::media_previous_cmd,
-            commands::clear_guides,
-            commands::popup_widget_menu,
-            commands::get_api_info,
             commands::get_runtime_status,
             commands::open_log_folder,
             apps::list_catalog,
             apps::ack_catalog,
             apps::hide_catalog_entry,
-            commands::toggle_slideout,
             desktop::get_desktop_layout,
             desktop::toggle_desktop_surface,
             desktop::open_desktop_surface,
             desktop::close_desktop_surface,
-            desktop::toggle_anywhere_bar,
-            desktop::open_anywhere_bar,
-            desktop::close_anywhere_bar,
             desktop::show_launcher_seeded,
             desktop::shell_show_desktop,
             cli::cli_exec,
@@ -456,5 +304,5 @@ pub fn run() {
             pty::pty_close,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running Deck");
+        .expect("error while running Versailles");
 }

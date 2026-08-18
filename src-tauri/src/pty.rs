@@ -1,4 +1,4 @@
-//! Embedded ConPTY session for the Deck Action Bar terminal mode.
+//! Embedded ConPTY session for the Versailles Action Bar terminal mode.
 
 use crate::cli;
 use base64::{engine::general_purpose::STANDARD, Engine as _};

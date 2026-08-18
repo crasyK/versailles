@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "DeckWidgetManifest",
+  "title": "VersaillesWidgetManifest",
   "type": "object",
   "required": ["id", "title", "width", "height"],
   "properties": {

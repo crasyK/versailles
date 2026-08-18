@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Deck",
+  "productName": "Versailles",
   "version": "0.1.0",
-  "identifier": "com.deck.widgets",
+  "identifier": "com.versailles.desktop",
   "build": {
     "beforeDevCommand": "npm run verify:acl && npm run dev",
     "devUrl": "http://localhost:1420",

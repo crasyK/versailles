@@ -1,12 +1,12 @@
 [package]
-name = "deck"
+name = "versailles"
 version = "0.1.0"
-description = "Deck — lightweight HTML desktop widget host"
+description = "Versailles — HTML desktop you command"
 authors = ["you"]
 edition = "2021"
 
 [lib]
-name = "deck_lib"
+name = "versailles_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -25,7 +25,6 @@ thiserror = "2"
 tracing = "0.1"
 log = "0.4"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
-uuid = { version = "1", features = ["v4"] }
 axum = "0.8"
 tower-http = { version = "0.6", features = ["cors"] }
 base64 = "0.22"

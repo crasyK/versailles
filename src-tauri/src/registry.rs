@@ -99,10 +99,12 @@ impl WidgetRegistry {
         }
     }
 
+    #[allow(dead_code)]
     pub fn get(&self, id: &str) -> Option<&RegisteredWidget> {
         self.widgets.iter().find(|w| w.manifest.id == id)
     }
 
+    #[allow(dead_code)]
     pub fn list(&self) -> &[RegisteredWidget] {
         &self.widgets
     }
@@ -131,9 +133,10 @@ fn scan_dir(
             continue;
         }
 
-        // Never scan the Deck app, the desktop HTML page, or internal state.
+        // Never scan the Versailles/Deck apps, the desktop HTML page, or internal state.
         if name.eq_ignore_ascii_case("app")
             || name.eq_ignore_ascii_case("desktop")
+            || name.eq_ignore_ascii_case(".versailles")
             || name.eq_ignore_ascii_case(".deck")
             || name.eq_ignore_ascii_case("WinWidgets-REPO-DOCS")
             || name.starts_with('.')

@@ -21,4 +21,4 @@ src-tauri/gen
 .env
 .env.*
 
-# Deck local (lives under Documents/Widgets/.deck, not in app)
+# Runtime config lives under Documents/Widgets/.versailles, not in this repo

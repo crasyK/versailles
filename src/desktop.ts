@@ -10,7 +10,7 @@ let pageUrl = "";
 
 function bust(url: string) {
   const u = new URL(url);
-  u.searchParams.set("_deck", String(Date.now()));
+  u.searchParams.set("_v", String(Date.now()));
   return u.toString();
 }
 

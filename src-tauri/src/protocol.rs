@@ -55,7 +55,7 @@ fn canonical_root() -> AppResult<PathBuf> {
 
 /// Cache of canonical file paths keyed by `root.join(decoded)` so repeated
 /// requests for the same asset skip the per-request `canonicalize()` syscall.
-/// The `starts_with(root)` / `.deck` security checks still run on the cached value.
+/// The `starts_with(root)` / `.versailles` security checks still run on the cached value.
 fn canonical_file(full: &Path, decoded: &str) -> AppResult<PathBuf> {
     static FILE_CACHE: OnceLock<Mutex<HashMap<PathBuf, PathBuf>>> = OnceLock::new();
     let cache = FILE_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
@@ -94,9 +94,9 @@ fn resolve_and_read(uri_path: &str) -> AppResult<(Vec<u8>, &'static str)> {
     }
     let decoded = urlencoding_decode(trimmed);
 
-    // Never expose Deck private state (contains API bearer token).
+    // Never expose Versailles private state.
     let first = decoded.split(['/', '\\']).next().unwrap_or("");
-    if first.eq_ignore_ascii_case(".deck") {
+    if first.eq_ignore_ascii_case(".versailles") || first.eq_ignore_ascii_case(".deck") {
         return Err(AppError::msg("Forbidden path"));
     }
 
@@ -108,12 +108,15 @@ fn resolve_and_read(uri_path: &str) -> AppResult<(Vec<u8>, &'static str)> {
     if !canonical.starts_with(&root_canon) {
         return Err(AppError::msg("Path escapes widgets root"));
     }
-    // Defense in depth: block anything that resolves into .deck.
+    // Defense in depth: block anything that resolves into .versailles (or leftover .deck).
     if canonical
         .strip_prefix(&root_canon)
         .ok()
         .and_then(|rel| rel.components().next())
-        .map(|c| c.as_os_str().to_string_lossy().eq_ignore_ascii_case(".deck"))
+        .map(|c| {
+            let name = c.as_os_str().to_string_lossy();
+            name.eq_ignore_ascii_case(".versailles") || name.eq_ignore_ascii_case(".deck")
+        })
         .unwrap_or(false)
     {
         return Err(AppError::msg("Forbidden path"));
@@ -178,7 +181,7 @@ fn urlencoding_decode(input: &str) -> String {
     out
 }
 
-/// Reliable widget URL for WebView2: plain localhost HTTP from Deck's API.
+/// Reliable widget URL for WebView2: plain localhost HTTP from the Versailles runtime.
 pub fn widget_http_url(entry_path: &PathBuf, port: u16) -> AppResult<url::Url> {
     let root = widgets_root()?;
     let root_canon = root.canonicalize().unwrap_or(root.clone());

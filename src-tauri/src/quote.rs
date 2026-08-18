@@ -34,7 +34,7 @@ fn utc_day() -> String {
 
 fn http() -> reqwest::Client {
     reqwest::Client::builder()
-        .user_agent("Deck/0.1 (local quote widget; https://zenquotes.io)")
+        .user_agent("Versailles/0.1 (local quote widget; https://zenquotes.io)")
         .timeout(Duration::from_secs(10))
         .build()
         .unwrap_or_else(|_| reqwest::Client::new())

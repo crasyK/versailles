@@ -23,13 +23,9 @@ export default defineConfig({
   build: {
     rollupOptions: {
       input: {
-        main: resolve(__dirname, "index.html"),
         launcher: resolve(__dirname, "launcher.html"),
         "launcher-dim": resolve(__dirname, "launcher-dim.html"),
-        canvas: resolve(__dirname, "canvas.html"),
         desktop: resolve(__dirname, "desktop.html"),
-        anywhere: resolve(__dirname, "anywhere.html"),
-        guides: resolve(__dirname, "guides.html"),
       },
     },
   },

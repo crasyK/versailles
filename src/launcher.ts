@@ -325,7 +325,6 @@ function suggestions(raw: string): Row[] {
   const m = raw.match(/^\s*(?:open|o|presets?)(?:\s+(.*))?$/i);
   if (m) {
     const p = (m[1] || "").toLowerCase();
-    if (!p || "deck".startsWith(p)) out.push({ c: "deck", d: "open Deck manager" });
     PRESETS.filter((x) => !p || presetMatches(x, p) || x.cat.toLowerCase().startsWith(p))
       .slice(0, 8)
       .forEach((x) => out.push({ c: commandForQuery(x, p), d: `${x.cat} · ${x.d}`, cc: x.n }));
@@ -348,9 +347,6 @@ function suggestions(raw: string): Row[] {
   if (low && !s.includes(" ")) {
     if (sessionAlive && ("continue".startsWith(low) || "attach".startsWith(low))) {
       out.push({ c: "continue", d: "reattach background terminal" });
-    }
-    if ("deck".startsWith(low) || "manager".startsWith(low)) {
-      out.push({ c: "deck", d: "open Deck manager" });
     }
     if ("term".startsWith(low) || "shell".startsWith(low)) {
       out.push({
@@ -468,14 +464,14 @@ function clearPtyWriteBuf() {
 function applyChrome(next: LauncherMode) {
   root.dataset.mode = next;
   if (next === "terminal") {
-    titleEl.textContent = "deck · pwsh";
+    titleEl.textContent = "versailles · pwsh";
     modeLabel.textContent = "terminal";
     footL.textContent = "esc detach";
     footM.textContent = "ctrl+c";
     footHint.textContent = "paste ok";
     footR.textContent = sessionAlive ? "background live" : "";
   } else {
-    titleEl.textContent = "deck";
+    titleEl.textContent = "versailles";
     modeLabel.textContent = sessionAlive ? "actions · live" : "actions";
     footL.textContent = "enter run";
     footM.textContent = "↑↓ history";
@@ -576,7 +572,7 @@ function ensureTerm(): Terminal {
 
 async function resizeLauncher(next: LauncherMode) {
   const win = getCurrentWindow();
-  // Resize from the webview side — avoids IPC→main-thread deadlock that hangs deck.exe.
+  // Resize from the webview side — avoids IPC→main-thread deadlock that hangs versailles.exe.
   try {
     const monitor = await currentMonitor();
     const scale = monitor?.scaleFactor ?? 1;
@@ -855,24 +851,9 @@ function presetRows(filter?: string) {
   showRows(list.map((x) => ({ c: x.n, d: `${x.cat} · ${x.d}`, cc: x.n })));
 }
 
-async function openDeck() {
-  await withBusy(async () => {
-    try {
-      // Do not await — show_manager focuses another window and deadlocks WebView2 IPC
-      // when the launcher invoke is waiting on the same runtime.
-      void invoke("show_manager");
-      setRes("ok", "&rarr; opened Deck manager");
-      await hideLauncherWindow("openDeck");
-    } catch (e) {
-      setRes("err", esc(String(e)));
-    }
-  }, { focusSteals: false });
-}
-
 async function openPreset(arg: string) {
   const p = arg.toLowerCase().trim();
   if (!p) return presetRows();
-  if (p === "deck" || p === "manager") return void openDeck();
   // Category browse: `open mail` already exact; `presets uni` / `open uni` for uni mail name.
   const hit = findPreset(p);
   if (!hit) {
@@ -1092,9 +1073,6 @@ function run(c: string) {
   const cmd = sp[0].toLowerCase();
   const arg = sp.slice(1).join(" ");
   switch (cmd) {
-    case "deck":
-    case "manager":
-      return void openDeck();
     case "open":
     case "o":
       return void openPreset(arg);
@@ -1187,7 +1165,6 @@ function run(c: string) {
           ? [{ c: "continue", d: "reattach background terminal", cc: "continue" }]
           : []),
         { c: "term", d: "open / reattach terminal", cc: "term" },
-        { c: "deck", d: "open Deck manager", cc: "deck" },
         { c: "? <query>", d: "Google search", cc: "? " },
         { c: "?? <query>", d: "search files", cc: "?? " },
         { c: "= <expr>", d: "quick calculator", cc: "= " },

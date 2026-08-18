@@ -65,7 +65,7 @@ pub fn hide_single_instance_helper() {
 
     unsafe {
         // Single-instance IPC target - safe to fully hide; WM_COPYDATA still works.
-        match FindWindowW(w!("com.deck.widgets-sic"), w!("com.deck.widgets-siw")) {
+        match FindWindowW(w!("com.versailles.desktop-sic"), w!("com.versailles.desktop-siw")) {
             Ok(hwnd) => {
                 let mut rect = RECT::default();
                 let _ = GetWindowRect(hwnd, &mut rect);

@@ -1,40 +1,52 @@
-# Deck
+# Versailles
 
-Lightweight HTML desktop for Windows — a Tauri v2 (Rust + TypeScript) host.
+The HTML desktop you command — a sophisticated castle you furnish yourself.
 
-The desktop is one file: `Documents\Widgets\desktop\index.html`. Edit that page (wallpaper, HUD, iframes). Apps cover it. Calc / calendar / notes stay overlay slide-outs.
+Versailles is a Windows **runtime** for `index.html` widgets. You write (or keep) pages under `Documents\Widgets`. The app pins that desktop under your windows, serves the files, and gives you an Alt+Space action bar. It is not a widget editor, not a manager, not a second HUD.
 
-## Features
+Deck still exists at `Documents\Widgets\app` if you want the old floating windows, manager, canvas, or control API. This repo is the cleaned product.
 
-- Fullscreen HTML desktop page (`desktop/index.html`)
-- Reuse widgets by iframing them from that page (`/files/clock/index.html`)
-- Overlay slide-outs: calculator, calendar, notes
-- GSMTC now-playing media info and controls
-- Alt+Space launcher bar
-- Silent tray startup
-- Localhost API for AI / automation
-- Legacy floating widgets parked under `Documents\Widgets\legacy`
+## What you get
 
-## Develop / Launch
+- **Desktop** — always-on-bottom fullscreen shell. The page is `Documents\Widgets\desktop\index.html`. Iframe widgets from `/files/{id}/index.html`.
+- **Action bar** — Alt+Space. Apps, search, `= expr`, terminal, `desk` to toggle the surface. Cal.com 2024 paper chrome; nested xterm may stay dark.
+- **Tray** — Desktop, Launcher, Quit. Left-click toggles the desktop.
+- **Localhost runtime** (not a public API) on `127.0.0.1:47841` — `/files`, `/weather`, `/quote`, `/media/*`. No Bearer token. No remote widget control.
 
-Close and reopen your terminal if you just installed Rust (so `cargo` is on PATH), then:
+## What this is not
 
-```bash
-cd C:\Users\NediM\Documents\Widgets\app
+- No manager window
+- No canvas / anywhere HUD
+- No floating OS widget windows
+- No calc/calendar/notes slide-outs (use the action bar and desktop notes)
+- No second visual theme
+
+## Develop
+
+```bat
+cd C:\Users\NediM\Documents\Versailles
 npm install
 npm run tauri:dev
 ```
 
-Or double-click / run [`dev.cmd`](dev.cmd) — it prepends `%USERPROFILE%\.cargo\bin` automatically.
+Or `dev.cmd`. After start: tray icon, **Alt+Space**, type `desk` if the desktop is hidden.
 
-After start: look for the **Deck tray icon** (system tray). Left-click opens the manager. **Alt+Space** opens the launcher. Type `desk` to show the HTML desktop.
+Widgets used on the desktop are iframes in `Documents\Widgets\desktop\index.html`. Edit those HTML files on disk; the watcher reloads the page.
 
-Widgets used on the desktop are iframes in `desktop/index.html`. Overlay slide-outs live next to that folder (`calculator`, `calendar`, `notes`). Old movable windows are under `legacy\`.
+## Install / release
 
-## Local API
-
-Enabled by default on `http://127.0.0.1:47831`. Token is in Settings → API (or `.deck/config.json`).
-
-```bash
-curl -H "Authorization: Bearer <token>" http://127.0.0.1:47831/widgets
+```bat
+npm run tauri:build
 ```
+
+NSIS installer lands in `src-tauri\target\release\bundle\nsis\`.
+
+## Design
+
+Cal.com 2024 paper-brutalism only. Rulebook: [`design/CAL-COM-RULEBOOK.md`](design/CAL-COM-RULEBOOK.md). Cursor rule: `.cursor/rules/cal-com-design.mdc`.
+
+## Docs
+
+- [Runtime](docs/RUNTIME.md) — windows, ports, config
+- [Widgets](docs/WIDGETS.md) — how to add a card
+- [Contributing](CONTRIBUTING.md)

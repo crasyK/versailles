@@ -1,9 +1,9 @@
 ---
-description: Cal.com 2024 is Deck's only visual language. Tokens, do/don't, and where the full rulebook lives.
+description: Cal.com 2024 is Versailles' only visual language. Tokens, do/don't, and where the full rulebook lives.
 alwaysApply: true
 ---
 
-# Cal.com 2024 — Deck design
+# Cal.com 2024 — Versailles design
 
 Full language, Windhawk catalog, and unification plan: `design/CAL-COM-RULEBOOK.md`.
 
@@ -19,13 +19,14 @@ Full language, Windhawk catalog, and unification plan: `design/CAL-COM-RULEBOOK.
 ## Do
 
 - Native taskbar is top chrome. Desktop page is wallpaper + widgets only.
-- Slide-outs (`calc`, `calendar`, `notes`) live in Alt+Space, not a second HUD.
-- Action Bar is Cal paper; only the nested xterm is dark-card.
+- Action Bar (Alt+Space) is Cal paper; only the nested xterm is dark-card.
 - Windhawk YAML lives in `design/kimi-handoff/windhawk-cal-*.yaml`. Keep `theme: ""`.
+- Widgets are HTML files under `Documents\Widgets`. Versailles is the runtime, not the page editor.
 
 ## Don't
 
 - Do not add a SaaS / Aetherfield / second theme switcher.
+- Do not add a manager window, canvas overlay, anywhere HUD, or floating OS widget windows.
 - Do not use serif display, canary yellow chips, 1px hairlines, or 6–8px rectangles as the system look.
 - Do not introduce gradients (except the dark-card inner fade from the Figma source).
 - Do not glass the Action Bar. Cal paper for the bar chrome (head, prompt, suggestions, footer); nested xterm may stay dark-card (`#131212`).

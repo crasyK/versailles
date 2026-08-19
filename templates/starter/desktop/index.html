@@ -5,20 +5,102 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light" />
     <title>Versailles</title>
+    <script type="application/json" id="versailles">
+    {
+      "autostart": true,
+      "snapThreshold": 12,
+      "launcher": {
+        "hotkey": "Alt+Space"
+      },
+      "api": {
+        "enabled": true,
+        "port": 47831
+      },
+      "shortcuts": [
+        {
+          "n": "github",
+          "t": "web",
+          "d": "GitHub",
+          "target": "https://github.com/",
+          "cat": "dev",
+          "aliases": [
+            "gh"
+          ]
+        },
+        {
+          "n": "stackoverflow",
+          "t": "web",
+          "d": "Stack Overflow",
+          "target": "https://stackoverflow.com/",
+          "cat": "dev",
+          "aliases": [
+            "so"
+          ]
+        },
+        {
+          "n": "npm",
+          "t": "web",
+          "d": "npm registry",
+          "target": "https://www.npmjs.com/",
+          "cat": "dev"
+        },
+        {
+          "n": "youtube",
+          "t": "web",
+          "d": "YouTube",
+          "target": "https://youtube.com",
+          "cat": "fun"
+        },
+        {
+          "n": "reddit",
+          "t": "web",
+          "d": "Reddit",
+          "target": "https://www.reddit.com/",
+          "cat": "fun"
+        },
+        {
+          "n": "downloads",
+          "t": "folder",
+          "d": "Downloads",
+          "target": "%HOME%\\Downloads",
+          "cat": "folders"
+        },
+        {
+          "n": "documents",
+          "t": "folder",
+          "d": "Documents",
+          "target": "%HOME%\\Documents",
+          "cat": "folders"
+        },
+        {
+          "n": "desktop",
+          "t": "folder",
+          "d": "Desktop folder",
+          "target": "%HOME%\\Desktop",
+          "cat": "folders"
+        },
+        {
+          "n": "pictures",
+          "t": "folder",
+          "d": "Pictures",
+          "target": "%HOME%\\Pictures",
+          "cat": "folders"
+        }
+      ]
+    }
+    </script>
     <!--
       Single-file desktop dialect
       .widget              static tile on the canvas
-      .spawnable           overlay template (native window via host)
-      .action-bar          spawnable with a larger data-hooks list
+      .spawnable           template; host opens a native always-on-top window
+      .action-bar          optional example class on a spawnable
       data-id              catalog id (calc aliases calculator)
       data-w / data-h      overlay size
-      data-anchor          spawn dock hint (tr = top-right)
+      data-anchor          c/center/overlay = centered overlay; tr = docked slide-out
+      data-hotkey          global accelerator when data-hooks includes hotkey
       data-hooks           allowlist: media, mouse, layout, spawn, shell, hotkey, pty
 
-      Preview: ?m=desktop (default) | widgets | spawn | spawn&id=calculator | action_bar
-      Action bar required ids: cli-root, cli-title, cli-mode-label, cli-term-wrap,
-      cli-term, cli-foot-l, cli-foot-m, cli-foot-r-hint, cli-foot-r, cli-in, cli-ps,
-      cli-echo, cli-sug, cli-res
+      Preview: ?m=desktop (default) | widgets | spawn | spawn&id=draw | action_bar
     -->
     <style>
       :root {
@@ -120,22 +202,30 @@
       }
       .spawn-surface.solo { width: 100%; height: 100%; box-shadow: none; border: 0; background: var(--paper); }
       html.overlay .spawn-surface.solo { box-shadow: var(--shadow); border: var(--stroke); }
+      html.overlay .spawn-surface.solo:has(.cli) {
+        padding: 0; border: 0; box-shadow: none; background: transparent;
+      }
       .unknown-spawn {
         font: 600 12px/1.4 var(--font-sans); letter-spacing: 0.08em; text-transform: uppercase;
         color: var(--ink); border: var(--stroke-dashed); border-radius: 16px; padding: 18px;
       }
 
-      .calc-display { text-align: right; font-size: 34px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -.01em; padding: 10px 6px 12px; min-height: 56px; overflow: hidden; white-space: nowrap; }
-      .calc-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
-      .calc-key {
-        height: 46px; border-radius: 12px; font-size: 16px; font-weight: 600;
-        background: var(--paper); color: var(--ink); border: var(--stroke-dashed);
+      .draw-pad { display: flex; flex-direction: column; gap: 10px; height: 100%; min-height: 240px; }
+      .spawn-surface:not(.solo) .draw-pad { width: 448px; height: 328px; }
+      .spawn-surface.solo:has(.draw-pad) { display: flex; flex-direction: column; }
+      .draw-tools { display: flex; flex-wrap: wrap; gap: 8px; flex: none; }
+      .draw-tools button {
+        height: 32px; padding: 0 12px; border-radius: var(--radius-pill);
+        border: var(--stroke-dashed); background: var(--paper); color: var(--ink);
+        font: 600 11px/1 var(--font-sans); letter-spacing: 0.08em; text-transform: uppercase;
       }
-      .calc-key:hover { background: var(--chip); }
-      .calc-key.fn { color: var(--ink-mut); }
-      .calc-key.op { border-style: solid; }
-      .calc-key.eq { background: #141414; color: #f9fafb; border-style: solid; }
-      .calc-key.wide { grid-column: span 2; }
+      .draw-tools button:hover { background: var(--chip); }
+      .draw-tools button.on { background: #141414; color: #f9fafb; border-style: solid; }
+      .draw-board-wrap {
+        flex: 1; min-height: 0; border: var(--stroke); border-radius: 12px;
+        background: var(--white); overflow: hidden; position: relative;
+      }
+      .draw-board-wrap canvas { display: block; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
 
       .cli {
         width: 100%; height: 100%; overflow: hidden; background: var(--paper);
@@ -178,69 +268,145 @@
       </article>
     </section>
 
-    <template class="spawnable" data-id="calculator" data-w="280" data-h="420" data-anchor="tr" data-hooks="layout">
-      <div class="calc-display" id="calc-out">0</div>
-      <div class="calc-grid">
-        <button class="calc-key fn" data-k="C">AC</button>
-        <button class="calc-key fn" data-k="±">±</button>
-        <button class="calc-key fn" data-k="%">%</button>
-        <button class="calc-key op" data-k="/">÷</button>
-        <button class="calc-key" data-k="7">7</button>
-        <button class="calc-key" data-k="8">8</button>
-        <button class="calc-key" data-k="9">9</button>
-        <button class="calc-key op" data-k="*">×</button>
-        <button class="calc-key" data-k="4">4</button>
-        <button class="calc-key" data-k="5">5</button>
-        <button class="calc-key" data-k="6">6</button>
-        <button class="calc-key op" data-k="-">−</button>
-        <button class="calc-key" data-k="1">1</button>
-        <button class="calc-key" data-k="2">2</button>
-        <button class="calc-key" data-k="3">3</button>
-        <button class="calc-key op" data-k="+">+</button>
-        <button class="calc-key wide" data-k="0">0</button>
-        <button class="calc-key" data-k=".">.</button>
-        <button class="calc-key eq" data-k="=">=</button>
+    <template class="spawnable" data-id="draw" data-w="480" data-h="360" data-anchor="tr" data-hooks="layout">
+      <div class="draw-pad">
+        <div class="draw-tools" data-no-drag>
+          <button type="button" class="on" data-tool="pen">Pen</button>
+          <button type="button" data-tool="highlighter">Highlight</button>
+          <button type="button" data-tool="eraser">Eraser</button>
+          <button type="button" data-action="clear">Clear</button>
+        </div>
+        <div class="draw-board-wrap" data-no-drag>
+          <canvas id="draw-board"></canvas>
+        </div>
       </div>
       <script>
         (function () {
-          const root = document.querySelector('.spawn-surface[data-id="calculator"], .spawn-surface[data-id="calc"]');
+          const root = document.querySelector('.spawn-surface[data-id="draw"]');
           if (!root) return;
-          const out = root.querySelector('#calc-out');
-          let cur = '0', prev = null, op = null, fresh = true;
-          const fmt = function (v) {
-            if (!isFinite(v)) return 'Error';
-            return String(Math.round(v * 1e10) / 1e10).slice(0, 12);
-          };
-          const apply = function (a, b, o) {
-            return o === '+' ? a + b : o === '-' ? a - b : o === '*' ? a * b : b === 0 ? NaN : a / b;
-          };
-          root.querySelectorAll('.calc-key').forEach(function (k) {
-            k.onclick = function () {
-              const v = k.dataset.k;
-              if (/[0-9]/.test(v)) { cur = fresh || cur === '0' ? v : cur + v; fresh = false; }
-              else if (v === '.') { if (fresh) { cur = '0.'; fresh = false; } else if (cur.indexOf('.') < 0) cur += '.'; }
-              else if (v === 'C') { cur = '0'; prev = null; op = null; fresh = true; }
-              else if (v === '±') { cur = fmt(-parseFloat(cur)); }
-              else if (v === '%') { cur = fmt(parseFloat(cur) / 100); }
-              else if (v === '=') {
-                if (op && prev !== null) { cur = fmt(apply(prev, parseFloat(cur), op)); prev = null; op = null; fresh = true; }
-              } else {
-                if (op && prev !== null && !fresh) cur = fmt(apply(prev, parseFloat(cur), op));
-                prev = parseFloat(cur); op = v; fresh = true;
-              }
-              out.textContent = cur;
+          const KEY = 'deck-draw';
+          const board = root.querySelector('#draw-board');
+          const ctx = board.getContext('2d');
+          const wrap = board.parentElement;
+          const tools = root.querySelector('.draw-tools');
+          let tool = 'pen';
+          let drawing = false;
+          let lastX = 0;
+          let lastY = 0;
+          let saveTimer = null;
+
+          function dpr() { return window.devicePixelRatio || 1; }
+          function stroke() {
+            if (tool === 'pen') {
+              ctx.globalCompositeOperation = 'source-over';
+              ctx.strokeStyle = '#141414';
+              ctx.lineWidth = 2.5;
+              ctx.globalAlpha = 1;
+            } else if (tool === 'highlighter') {
+              ctx.globalCompositeOperation = 'source-over';
+              ctx.strokeStyle = '#141414';
+              ctx.lineWidth = 16;
+              ctx.globalAlpha = 0.16;
+            } else {
+              ctx.globalCompositeOperation = 'destination-out';
+              ctx.lineWidth = 22;
+              ctx.globalAlpha = 1;
+            }
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+          }
+          function fit(keep) {
+            const w = Math.max(1, wrap.clientWidth);
+            const h = Math.max(1, wrap.clientHeight);
+            const scale = dpr();
+            let prev = null;
+            if (keep && board.width && board.height) {
+              prev = document.createElement('canvas');
+              prev.width = board.width;
+              prev.height = board.height;
+              prev.getContext('2d').drawImage(board, 0, 0);
+            }
+            board.width = Math.floor(w * scale);
+            board.height = Math.floor(h * scale);
+            board.style.width = w + 'px';
+            board.style.height = h + 'px';
+            ctx.setTransform(scale, 0, 0, scale, 0, 0);
+            if (prev) ctx.drawImage(prev, 0, 0, w, h);
+          }
+          function persist() {
+            clearTimeout(saveTimer);
+            saveTimer = setTimeout(function () {
+              try { localStorage.setItem(KEY, board.toDataURL('image/png')); } catch (_) {}
+            }, 300);
+          }
+          function restore() {
+            let saved = null;
+            try { saved = localStorage.getItem(KEY); } catch (_) {}
+            if (!saved) return;
+            const img = new Image();
+            img.onload = function () {
+              ctx.globalCompositeOperation = 'source-over';
+              ctx.globalAlpha = 1;
+              ctx.drawImage(img, 0, 0, wrap.clientWidth, wrap.clientHeight);
+            };
+            img.src = saved;
+          }
+          tools.querySelectorAll('[data-tool]').forEach(function (btn) {
+            btn.onclick = function () {
+              tool = btn.getAttribute('data-tool');
+              tools.querySelectorAll('[data-tool]').forEach(function (b) {
+                b.classList.toggle('on', b === btn);
+              });
             };
           });
+          tools.querySelector('[data-action="clear"]').onclick = function () {
+            ctx.save();
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.clearRect(0, 0, board.width, board.height);
+            ctx.restore();
+            try { localStorage.removeItem(KEY); } catch (_) {}
+          };
+          function pos(e) {
+            const r = board.getBoundingClientRect();
+            return { x: e.clientX - r.left, y: e.clientY - r.top };
+          }
+          board.addEventListener('pointerdown', function (e) {
+            drawing = true;
+            board.setPointerCapture(e.pointerId);
+            const p = pos(e);
+            lastX = p.x;
+            lastY = p.y;
+          });
+          board.addEventListener('pointerup', function () { drawing = false; persist(); });
+          board.addEventListener('pointercancel', function () { drawing = false; persist(); });
+          board.addEventListener('pointermove', function (e) {
+            if (!drawing) return;
+            const p = pos(e);
+            stroke();
+            ctx.beginPath();
+            ctx.moveTo(lastX, lastY);
+            ctx.lineTo(p.x, p.y);
+            ctx.stroke();
+            lastX = p.x;
+            lastY = p.y;
+          });
+          fit(false);
+          restore();
+          if (window.ResizeObserver) {
+            new ResizeObserver(function () { fit(true); }).observe(wrap);
+          }
         })();
       </script>
     </template>
 
     <template class="spawnable action-bar"
               data-id="action-bar"
-              data-hooks="shell,hotkey,spawn,media,mouse,pty,layout"
+              data-hooks="shell,hotkey,pty"
+              data-hotkey="Alt+Space"
+              data-anchor="c"
               data-w="640"
               data-h="420">
-      <div class="cli" id="cli-root" data-mode="action">
+      <div class="cli" id="cli-root" data-mode="action" data-search-hf="https://huggingface.co/models?search={q}">
         <div class="cli-head">
           <i></i><span id="cli-title">versailles actions · pwsh</span>
           <span class="pid" id="cli-mode-label">actions</span>
@@ -261,9 +427,37 @@
         </div>
         <div class="cli-foot" id="cli-foot">
           <span id="cli-foot-l">enter run</span><span id="cli-foot-m">↑↓ history</span><span id="cli-foot-r-hint">tab complete</span>
-          <span class="r" id="cli-foot-r">term · config · desktopfile · ? web · !! paste ok in terminal</span>
+          <span class="r" id="cli-foot-r">! pwsh · !! term · ? help</span>
         </div>
       </div>
+      <script>
+        (function loadBar() {
+          var sdk = location.protocol === 'file:' ? '../.sdk/' : '/files/.sdk/';
+          var desk = location.protocol === 'file:' ? '' : '/files/desktop/';
+          if (!document.querySelector('link[data-xterm]')) {
+            var css = document.createElement('link');
+            css.rel = 'stylesheet';
+            css.href = sdk + 'xterm.css';
+            css.setAttribute('data-xterm', '1');
+            document.head.appendChild(css);
+          }
+          function load(src) {
+            return new Promise(function (resolve, reject) {
+              var s = document.createElement('script');
+              s.src = src;
+              s.onload = resolve;
+              s.onerror = reject;
+              document.head.appendChild(s);
+            });
+          }
+          var chain = Promise.resolve();
+          if (!window.Terminal) chain = chain.then(function () { return load(sdk + 'xterm.js'); });
+          if (!window.FitAddon) chain = chain.then(function () { return load(sdk + 'xterm-addon-fit.js'); });
+          chain.then(function () { return load(desk + 'bar.js'); }).catch(function (err) {
+            console.error('bar engine failed to load', err);
+          });
+        })();
+      </script>
     </template>
 
     <div id="preview-root" hidden></div>
@@ -286,6 +480,9 @@
         function runScripts(root) {
           root.querySelectorAll('script').forEach(function (old) {
             const s = document.createElement('script');
+            Array.prototype.slice.call(old.attributes || []).forEach(function (a) {
+              s.setAttribute(a.name, a.value);
+            });
             s.textContent = old.textContent;
             old.replaceWith(s);
           });

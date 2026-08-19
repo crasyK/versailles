@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capabilities for Versailles widgets, launcher, canvas, desktop, and guides",
-  "windows": ["launcher", "launcher-dim", "canvas", "desktop", "guides", "widget-*"],
+  "description": "Default capabilities for Versailles widgets, launcher, desktop, and guides",
+  "windows": ["launcher", "launcher-dim", "desktop", "guides", "widget-*"],
   "remote": {
     "urls": [
       "http://localhost:1420/*",
@@ -91,8 +91,6 @@
     "allow-pty-resize",
     "allow-pty-is-alive",
     "allow-pty-close",
-    "allow-open-canvas",
-    "allow-close-canvas",
     "allow-list-layouts",
     "allow-save-layout",
     "allow-apply-layout",

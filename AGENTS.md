@@ -17,22 +17,24 @@ First-time user setup: copy [`templates/starter/`](templates/starter) onto `Docu
 
 ## Product rules
 
-- One HTML document. Widgets are `article.widget`. Overlays are `template.spawnable`. The launcher is `template.spawnable.action-bar`.
+- One HTML document. Widgets are `article.widget`. Overlays are `template.spawnable`. An example command bar may use `template.spawnable.action-bar` plus page JS (`desktop/bar.js`).
 - Do not iframe per-widget HTML. Do not restore floating OS widget windows for desktop tiles.
 - Paper theme only. Tokens: [`design/PAPER-THEME.md`](design/PAPER-THEME.md). No second theme, no glass launcher chrome.
-- Customization is files: `versailles.json`, `shortcuts.json`, `desktop/index.html`. Do not add a settings UI to the action bar.
-- Slide-outs (calculator, calendar, notes) are spawn windows from Alt+Space / `versailles.spawn(id)`, not DOM overlays on the wallpaper.
+- Customization is `desktop/index.html` (`#versailles` JSON) plus `.versailles/` runtime. Do not add a settings UI to the action bar.
+- Slide-outs are spawn windows from Alt+Space / `versailles.spawn(id)`, not DOM overlays on the wallpaper. A spawnable with `data-anchor="c"` is a centered overlay (covers apps).
 - Keep `npm run verify:acl` green. A new Tauri command needs `lib.rs`, `build.rs`, and `capabilities/default.json` together.
 
 ## Dialect (short)
 
 See [`docs/DIALECT.md`](docs/DIALECT.md).
 
-- `.widget` / `.spawnable` / `.action-bar`
+- `.widget` / `.spawnable` (optional `.action-bar` class)
 - `data-id` (required). `calc` aliases `calculator`.
-- `data-w` / `data-h` overlay size. `data-anchor` dock hint (`tr` = top-right).
+- `data-w` / `data-h` overlay size. `data-anchor` `c` = centered overlay; `tr` = docked slide-out.
+- `data-hotkey` with the `hotkey` hook — Alt+Space fallback is `#versailles` / sidecar `versailles.json`.
 - `data-hooks` allowlist: `media`, `mouse`, `layout`, `spawn`, `shell`, `hotkey`, `pty`
-- Action bar required ids: `#cli-root`, `#cli-title`, `#cli-mode-label`, `#cli-term-wrap`, `#cli-term`, `#cli-foot-l`, `#cli-foot-m`, `#cli-foot-r-hint`, `#cli-foot-r`, `#cli-in`, `#cli-ps`, `#cli-echo`, `#cli-sug`, `#cli-res`. Missing ids → built-in `launcher.html` chrome.
+
+Example command-bar ids (`#cli-*`) belong to `desktop/bar.js`, not the host.
 
 ## Preview
 

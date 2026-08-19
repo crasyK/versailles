@@ -1,7 +1,7 @@
 //! Desktop shell layers (bottom → top):
 //!   0 wallpaper / 1 surface  — opt-in HTML page (`Documents\\Widgets\\desktop\\index.html`)
 //!   2 apps                   — native windows cover the page (including its HUD)
-//!   3 overlay                — action bar (Alt+Space)
+//!   3 overlay                — hotkey spawnable (Alt+Space)
 
 use crate::error::AppResult;
 use crate::protocol::widget_http_url;
@@ -51,12 +51,35 @@ pub fn page_catalog(state: &AppState) -> crate::page::PageCatalog {
     crate::page::parse_page(&read_desktop_html(state))
 }
 
+pub fn desktop_tray_label(visible: bool) -> &'static str {
+    if visible {
+        "Hide desktop page"
+    } else {
+        "Show desktop page"
+    }
+}
+
+pub fn set_desktop_tray_label(app: &AppHandle, visible: bool) {
+    let state = app.state::<AppState>();
+    let guard = state.tray_desktop_item.lock().unwrap();
+    if let Some(item) = guard.as_ref() {
+        let _ = item.set_text(desktop_tray_label(visible));
+    }
+}
+
 /// Load the user HTML page in the always-on-bottom desktop window.
 pub fn reveal_desktop_window(app: &AppHandle) -> AppResult<()> {
     let url = page_url(&app.state::<AppState>());
     ensure_desktop_window(app, url)?;
     close_page_embedded_windows(app);
     emit_layout(app);
+    set_desktop_tray_label(app, true);
+    Ok(())
+}
+
+pub fn hide_desktop_window(app: &AppHandle) -> AppResult<()> {
+    close_desktop_window(app)?;
+    set_desktop_tray_label(app, false);
     Ok(())
 }
 
@@ -103,7 +126,7 @@ fn persist_desktop_enabled(state: &State<'_, AppState>, enabled: bool) -> AppRes
         return Ok(());
     }
     config.desktop.enabled = enabled;
-    state.store.lock().unwrap().save_user_from_app(&config)
+    state.store.lock().unwrap().save_runtime_from_app(&config)
 }
 
 fn emit_layout(app: &AppHandle) {
@@ -132,7 +155,7 @@ pub fn toggle_desktop_surface(app: AppHandle, state: State<'_, AppState>) -> App
             if enable {
                 let _ = reveal_desktop_window(&handle);
             } else {
-                let _ = close_desktop_window(&handle);
+                let _ = hide_desktop_window(&handle);
             }
             emit_layout(&handle);
         });
@@ -160,7 +183,7 @@ pub fn close_desktop_surface(app: AppHandle, state: State<'_, AppState>) -> AppR
     std::thread::spawn(move || {
         let handle = app2.clone();
         let _ = app2.run_on_main_thread(move || {
-            let _ = close_desktop_window(&handle);
+            let _ = hide_desktop_window(&handle);
             emit_layout(&handle);
         });
     });

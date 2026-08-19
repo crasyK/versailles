@@ -119,7 +119,8 @@ fn spawn_shell(script: &str, cwd: &Option<String>) -> Result<Child, String> {
 }
 
 #[tauri::command]
-pub fn cli_exec(cmd: String, cwd: Option<String>) -> Result<CliOutput, String> {
+pub fn cli_exec(cmd: String, cwd: Option<String>, caller: Option<String>) -> Result<CliOutput, String> {
+    crate::page::enforce_hook_from_disk(caller.as_deref(), "shell")?;
     let mut child = spawn_shell(&cmd, &cwd)?;
     let stdout_pipe = child
         .stdout
@@ -326,7 +327,8 @@ pub fn cli_open(target: String, caller: Option<String>) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn cli_search_files(query: String) -> Result<Vec<String>, String> {
+pub fn cli_search_files(query: String, caller: Option<String>) -> Result<Vec<String>, String> {
+    crate::page::enforce_hook_from_disk(caller.as_deref(), "shell")?;
     let q = query.trim().to_lowercase();
     if q.is_empty() {
         return Ok(Vec::new());

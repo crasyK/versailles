@@ -59,7 +59,7 @@ Monochrome, high-contrast visual language for Versailles widgets and desktop sur
 
 **Cards.** Paper fill, 2px ink border, 16–20px radius, optional 4px offset shadow. Widgets (clock, todo, now-playing) are cards.
 
-**Launcher.** Paper card: paper fill, 2px ink stroke, 16–20px radius, Inter chrome. The nested terminal is the only dark-card (`#131212`) surface — an inverted panel inside paper, not a second theme. Chrome lives in `desktop/index.html` (`template.action-bar`); the host engine binds required ids.
+**Launcher / overlay.** Paper card: paper fill, 2px ink stroke, 16–20px radius, Inter chrome. The nested terminal is the only dark-card (`#131212`) surface — an inverted panel inside paper, not a second theme. Chrome and engine for the example bar live in `desktop/index.html` + `desktop/bar.js`.
 
 ---
 

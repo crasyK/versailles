@@ -1,5 +1,5 @@
 ---
-description: Single-file desktop dialect. Widgets, spawnables, and the action bar live in one HTML document.
+description: Single-file desktop dialect. Widgets and spawnables live in one HTML document.
 alwaysApply: true
 ---
 
@@ -10,16 +10,18 @@ The UI source of truth is `%USERPROFILE%\Documents\Widgets\desktop\index.html` (
 ## Pieces
 
 - `.widget` — static tile on the canvas (`article`)
-- `.spawnable` — overlay template; host opens a native always-on-top window
-- `.action-bar` — spawnable whose chrome the launcher engine binds
+- `.spawnable` — template; host opens a native always-on-top window
+- `.action-bar` — optional class on a spawnable (example command bar, not a host window type)
 
-Required on the opening tag: `data-id`. Optional: `data-w`, `data-h`, `data-anchor`, `data-hooks`.
+Required on the opening tag: `data-id`. Optional: `data-w`, `data-h`, `data-anchor`, `data-hooks`, `data-hotkey`.
 
 `data-hooks` is a comma list from: `media`, `mouse`, `layout`, `spawn`, `shell`, `hotkey`, `pty`. The host never grants more than that list. `calc` aliases `calculator`.
 
-## Action bar ids
+`data-anchor="c"` (or `center` / `overlay`) = centered overlay with dim. `tr` = docked slide-out.
 
-`#cli-root`, `#cli-title`, `#cli-mode-label`, `#cli-term-wrap`, `#cli-term`, `#cli-foot-l`, `#cli-foot-m`, `#cli-foot-r-hint`, `#cli-foot-r`, `#cli-in`, `#cli-ps`, `#cli-echo`, `#cli-sug`, `#cli-res`. Missing → built-in chrome.
+The first spawnable with the `hotkey` hook is what Alt+Space toggles. Engine/JS for an example bar lives in the page (`desktop/bar.js`), not the host.
+
+Host knobs and shortcuts: `<script type="application/json" id="versailles">` in the same HTML file. Runtime (token, session, desktop shown) stays in `.versailles/`.
 
 ## Do not
 

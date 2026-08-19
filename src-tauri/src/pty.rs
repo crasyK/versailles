@@ -53,7 +53,9 @@ pub fn pty_open(
     cwd: Option<String>,
     cols: u16,
     rows: u16,
+    caller: Option<String>,
 ) -> Result<(), String> {
+    crate::page::enforce_hook_from_disk(caller.as_deref(), "pty")?;
     let mut guard = state.session.lock().map_err(|e| e.to_string())?;
     close_inner(&mut guard);
 
@@ -165,7 +167,12 @@ pub fn pty_open(
 }
 
 #[tauri::command]
-pub fn pty_write(state: State<'_, PtyState>, data: String) -> Result<(), String> {
+pub fn pty_write(
+    state: State<'_, PtyState>,
+    data: String,
+    caller: Option<String>,
+) -> Result<(), String> {
+    crate::page::enforce_hook_from_disk(caller.as_deref(), "pty")?;
     // Clone writer Arc under a short session lock, then write outside it.
     let writer = {
         let guard = state.session.lock().map_err(|e| e.to_string())?;
@@ -180,7 +187,13 @@ pub fn pty_write(state: State<'_, PtyState>, data: String) -> Result<(), String>
 }
 
 #[tauri::command]
-pub fn pty_resize(state: State<'_, PtyState>, cols: u16, rows: u16) -> Result<(), String> {
+pub fn pty_resize(
+    state: State<'_, PtyState>,
+    cols: u16,
+    rows: u16,
+    caller: Option<String>,
+) -> Result<(), String> {
+    crate::page::enforce_hook_from_disk(caller.as_deref(), "pty")?;
     let guard = state.session.lock().map_err(|e| e.to_string())?;
     let session = guard.as_ref().ok_or_else(|| "no pty session".to_string())?;
     session
@@ -195,7 +208,11 @@ pub fn pty_resize(state: State<'_, PtyState>, cols: u16, rows: u16) -> Result<()
 }
 
 #[tauri::command]
-pub fn pty_is_alive(state: State<'_, PtyState>) -> Result<bool, String> {
+pub fn pty_is_alive(
+    state: State<'_, PtyState>,
+    caller: Option<String>,
+) -> Result<bool, String> {
+    crate::page::enforce_hook_from_disk(caller.as_deref(), "pty")?;
     let guard = state.session.lock().map_err(|e| e.to_string())?;
     Ok(guard
         .as_ref()
@@ -204,7 +221,8 @@ pub fn pty_is_alive(state: State<'_, PtyState>) -> Result<bool, String> {
 }
 
 #[tauri::command]
-pub fn pty_close(state: State<'_, PtyState>) -> Result<(), String> {
+pub fn pty_close(state: State<'_, PtyState>, caller: Option<String>) -> Result<(), String> {
+    crate::page::enforce_hook_from_disk(caller.as_deref(), "pty")?;
     close_pty_session(&state);
     Ok(())
 }

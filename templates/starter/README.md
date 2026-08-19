@@ -16,9 +16,9 @@ Do not overwrite an existing `desktop/index.html` unless you mean to. The host d
 
 | File | Purpose |
 | ---- | ------- |
-| `desktop/index.html` | One clock widget, a calculator spawnable, action-bar chrome |
-| `versailles.json` | Paper theme, desktop on, port 47831, Alt+Space |
-| `shortcuts.json` | Generic web + `%HOME%` folder shortcuts |
+| `desktop/index.html` | Widgets, spawnables, example command bar, `#versailles` config |
+| `desktop/bar.js` | Example command-bar engine |
 | `.sdk/versailles.js` | Named-hook SDK |
+| `.sdk/xterm.js` | Nested terminal for `!!` |
 
-Then start Versailles and type `desk` in the action bar. Add more tiles from [`../../examples/`](../../examples).
+Host knobs and shortcuts live in `<script type="application/json" id="versailles">` in the page. Then start Versailles and type `desk` in the overlay (Alt+Space). Add more tiles from [`../../examples/`](../../examples).

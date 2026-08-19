@@ -2,23 +2,23 @@
 
 Lightweight HTML desktop for Windows — a Tauri v2 (Rust + TypeScript) widget host.
 
-Versailles runs in the system tray and serves **one HTML document** from `%USERPROFILE%\Documents\Widgets\desktop\index.html`. That file is the UI for desktop tiles, spawnable overlays, and the action bar. Apps cover the wallpaper. Calculator, calendar, and notes open as always-on-top spawn windows from the same document.
+Versailles runs in the system tray and serves **one HTML document** from `%USERPROFILE%\Documents\Widgets\desktop\index.html`. That file is the UI for desktop tiles and spawnable overlays. A command bar on the page is an example of the dialect, not a host feature. Apps cover the wallpaper. Spawnables open as always-on-top windows from the same document (`data-anchor="c"` centers over apps; `tr` docks).
 
 ## Features
 
 - One editable page (`desktop/index.html`) with a shared paper stylesheet
 - `.widget` tiles on the canvas
-- `.spawnable` overlays as native always-on-top windows
-- Action bar chrome in the same file (`template.action-bar`); the engine stays in the host
+- `.spawnable` overlays as native always-on-top windows (`data-anchor="c"` covers apps)
+- Example command bar in the same file + `desktop/bar.js` (delete it and the host still works)
 - Named hooks (`data-hooks`) — the host never grants more than the list
 - GSMTC now-playing
-- Alt+Space action bar
+- Alt+Space overlay (the page’s `hotkey` spawnable)
 - Silent tray startup
 - Localhost API for automation
 
 ## Install
 
-Download a release installer, or build from source (below). After install, look for the **Versailles tray icon**. Left-click opens the action bar. **Alt+Space** also opens it. Type `desk` to show the HTML desktop.
+After install, look for the **Versailles tray icon**. Left-click toggles the page’s hotkey spawnable (the example command bar). **Alt+Space** also toggles it when that piece declares `data-hooks="hotkey"`. The tray menu is **Show desktop page** / **Hide desktop page** and **Quit**. Type `desk` in the example bar to toggle the HTML desktop.
 
 Copy [`templates/starter/`](templates/starter) onto `%USERPROFILE%\Documents\Widgets` if that folder is empty. The host does not seed HTML for you.
 
@@ -59,31 +59,27 @@ See [`docs/RUNTIME.md`](docs/RUNTIME.md).
 
 ## Config
 
-User-facing setup lives at `Documents\Widgets`:
+Customization is `desktop/index.html` plus `.versailles/` runtime. Host knobs and shortcuts live in a JSON blob:
 
-| File | Purpose |
-| ---- | ------- |
-| `versailles.json` | Theme, startup, desktop, shortcuts, hotkey, API, snap |
-| `shortcuts.json` | Action bar shortcuts (web links, folders, apps) |
-| `desktop/index.html` | Desktop, spawnables, and action-bar chrome |
-| `.sdk/versailles.js` | Widget SDK |
-| `.versailles/config.json` | Runtime state only (token, layouts) |
-
-Example `versailles.json`:
-
-```json
+```html
+<script type="application/json" id="versailles">
 {
-  "theme": "paper",
-  "shortcuts": "shortcuts.json",
   "autostart": true,
   "snapThreshold": 12,
   "launcher": { "hotkey": "Alt+Space" },
   "api": { "enabled": true, "port": 47831 },
-  "desktop": { "enabled": true, "page": "desktop/index.html" }
+  "shortcuts": [ { "n": "github", "t": "web", "d": "GitHub", "target": "https://github.com/", "cat": "dev" } ]
 }
+</script>
 ```
 
-Use `%HOME%` for folder paths in shortcuts. Reload the action bar after changes.
+| File | Purpose |
+| ---- | ------- |
+| `desktop/index.html` | UI + `#versailles` config/shortcuts |
+| `.sdk/versailles.js` | Widget SDK |
+| `.versailles/config.json` | Runtime only (token, layouts, desktop shown, session) |
+
+Sidecar `versailles.json` / `shortcuts.json` still work if `#versailles` is missing. The host never rewrites `index.html`. Use `%HOME%` in folder targets. Reload the overlay after edits.
 
 ## License
 

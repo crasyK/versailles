@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{
     menu::{Menu, MenuItem},
     AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow,
@@ -197,7 +197,7 @@ fn ensure_widget_menu_handler(app: &AppHandle, window: &WebviewWindow, id: &str)
     window.on_menu_event(move |_window, event| {
         let eid = event.id().as_ref();
         if eid == "wlauncher" {
-            let _ = show_launcher(&app_handle);
+            let _ = toggle_hotkey_overlay(&app_handle);
             return;
         }
         if let Some(rest) = eid.strip_prefix("wclose::") {
@@ -221,10 +221,19 @@ fn ensure_widget_menu_handler(app: &AppHandle, window: &WebviewWindow, id: &str)
     });
 }
 
+pub(crate) fn persistable_session(app: &AppHandle) -> Vec<SessionWidget> {
+    let state = app.state::<AppState>();
+    let cat = crate::desktop::page_catalog(&state);
+    let snap = state.window_manager.lock().unwrap().session_snapshot();
+    snap.into_iter()
+        .filter(|w| cat.spawnable(&w.id).is_none())
+        .collect()
+}
+
 fn persist_session(app: &AppHandle) {
     let state = app.state::<AppState>();
     let mut config = state.config.lock().unwrap();
-    config.session_widgets = state.window_manager.lock().unwrap().session_snapshot();
+    config.session_widgets = persistable_session(app);
     let _ = state.store.lock().unwrap().save_runtime_from_app(&config);
 }
 
@@ -484,11 +493,6 @@ fn resolve_open_spec(
     }
 
     if let Some(piece) = cat.spawnable(id) {
-        if piece.kind == crate::page::PageKind::ActionBar {
-            return Err(AppError::msg(
-                "The action bar is the Alt+Space overlay, not a spawn window.",
-            ));
-        }
         let url_str = crate::desktop::surface_url(&state, "spawn", Some(&piece.id))
             .ok_or_else(|| AppError::msg("Desktop page URL unavailable"))?;
         let mut url = url::Url::parse(&url_str).map_err(|e| AppError::msg(e.to_string()))?;
@@ -671,6 +675,10 @@ pub fn open_widget_window(
         let _ = window.set_always_on_top(true);
     }
 
+    let overlay = {
+        let state = app.state::<AppState>();
+        crate::desktop::page_catalog(&state).is_overlay(id)
+    };
     let sync_id = id.to_string();
     let sync_app = app.clone();
     window.on_window_event(move |event| {
@@ -686,8 +694,20 @@ pub fn open_widget_window(
                 }
                 // Ignore snap while restoring / applying programmatic moves —
                 // otherwise startup Moved events rearrange the whole layout.
-                if !snap_is_suppressed(&sync_id) {
+                if !overlay && !snap_is_suppressed(&sync_id) {
                     schedule_snap_after_drag(sync_app.clone(), sync_id.clone());
+                }
+            }
+            tauri::WindowEvent::Resized(_) => {
+                if overlay {
+                    if let Some(w) = sync_app.get_webview_window(&widget_label(&sync_id)) {
+                        clip_round_window(&w);
+                    }
+                }
+            }
+            tauri::WindowEvent::Focused(focused) => {
+                if overlay && !*focused && !overlay_focus_is_guarded() {
+                    let _ = hide_launcher(&sync_app);
                 }
             }
             tauri::WindowEvent::Destroyed => {
@@ -753,7 +773,7 @@ pub fn popup_widget_context_menu(app: &AppHandle, id: &str) -> AppResult<()> {
         None::<&str>,
     )?;
     let launcher_item =
-        MenuItem::with_id(app, "wlauncher", "Open Versailles launcher", true, None::<&str>)?;
+        MenuItem::with_id(app, "wlauncher", "Open overlay", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&close, &aot, &launcher_item])?;
 
     window
@@ -888,39 +908,172 @@ pub fn set_always_on_top(
     Ok(())
 }
 
-pub fn ensure_launcher_window(app: &AppHandle) -> AppResult<()> {
-    if app.get_webview_window("launcher").is_some() {
+const LAUNCHER_DIM_LABEL: &str = "launcher-dim";
+
+/// Host no longer clones bar chrome into `launcher.html`. Alt+Space opens the
+/// spawnable that declared `data-hooks="hotkey"`.
+pub fn ensure_launcher_window(_app: &AppHandle) -> AppResult<()> {
+    Ok(())
+}
+
+fn overlay_focus_until() -> &'static Mutex<Instant> {
+    static SLOT: OnceLock<Mutex<Instant>> = OnceLock::new();
+    SLOT.get_or_init(|| Mutex::new(Instant::now()))
+}
+
+fn arm_overlay_focus_guard() {
+    *overlay_focus_until().lock().unwrap() = Instant::now() + Duration::from_millis(500);
+}
+
+fn overlay_focus_is_guarded() -> bool {
+    Instant::now() < *overlay_focus_until().lock().unwrap()
+}
+
+pub fn hotkey_piece_id(app: &AppHandle) -> Option<String> {
+    let state = app.state::<AppState>();
+    crate::desktop::page_catalog(&state)
+        .hotkey_piece()
+        .map(|p| p.id.clone())
+}
+
+pub fn hotkey_overlay_visible(app: &AppHandle) -> bool {
+    let Some(id) = hotkey_piece_id(app) else {
+        return false;
+    };
+    app.get_webview_window(&widget_label(&id))
+        .and_then(|w| w.is_visible().ok())
+        .unwrap_or(false)
+}
+
+pub fn overlay_hotkey_accel(app: &AppHandle) -> String {
+    let state = app.state::<AppState>();
+    let cat = crate::desktop::page_catalog(&state);
+    if let Some(hk) = cat
+        .hotkey_piece()
+        .and_then(|p| p.hotkey.as_deref())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        return hk.to_string();
+    }
+    let fallback = state.config.lock().unwrap().launcher_hotkey.clone();
+    fallback
+}
+
+fn overlay_center_position(app: &AppHandle, width: u32, _height: u32) -> Position {
+    let window = app.webview_windows().into_values().next();
+    let Some(window) = window else {
+        return Position { x: 40, y: 80 };
+    };
+    let (left, top, mon_w, _mon_h, scale) = launcher_monitor_bounds(&window);
+    let bar_w = (width as f64 * scale) as i32;
+    let x = left + (mon_w as i32 - bar_w) / 2;
+    let y = top + (120.0 * scale) as i32;
+    Position { x, y }
+}
+
+fn show_overlay_dim(app: &AppHandle, anchor: &WebviewWindow) {
+    let (left, top, width, height, _scale) = launcher_monitor_bounds(anchor);
+    let _ = ensure_launcher_dim(app);
+    if let Some(dim) = app.get_webview_window(LAUNCHER_DIM_LABEL) {
+        let _ = dim.set_position(tauri::Position::Physical(PhysicalPosition { x: left, y: top }));
+        let _ = dim.set_size(tauri::Size::Physical(PhysicalSize { width, height }));
+        let _ = dim.show();
+    }
+}
+
+fn hide_overlay_dim(app: &AppHandle) {
+    if let Some(dim) = app.get_webview_window(LAUNCHER_DIM_LABEL) {
+        let _ = dim.hide();
+    }
+}
+
+fn emit_overlay_shown(app: &AppHandle, id: &str) {
+    let seed = take_launcher_seed().unwrap_or_default();
+    let _ = app.emit("overlay://shown", &seed);
+    let _ = app.emit("launcher://shown", seed);
+    let _ = app.emit("overlay://id", id);
+}
+
+fn emit_overlay_hidden(app: &AppHandle) {
+    let _ = app.emit("overlay://hidden", true);
+    let _ = app.emit("launcher://hidden", true);
+}
+
+fn reveal_overlay(
+    app: &AppHandle,
+    manager: &Mutex<WindowManager>,
+    id: &str,
+) -> AppResult<()> {
+    let state = app.state::<AppState>();
+    let cat = crate::desktop::page_catalog(&state);
+    let piece = cat
+        .spawnable(id)
+        .ok_or_else(|| crate::page::unknown_spawn(id))?;
+    let pos = if crate::page::piece_is_overlay(piece) {
+        overlay_center_position(app, piece.width, piece.height)
+    } else {
+        dock_slideout_position(app, piece.width, piece.height)
+    };
+    let overlay = crate::page::piece_is_overlay(piece);
+    let label = widget_label(id);
+    arm_overlay_focus_guard();
+
+    if let Some(window) = app.get_webview_window(&label) {
+        suppress_snap_for(id, 1200);
+        let _ = window.set_position(tauri::Position::Physical(PhysicalPosition {
+            x: pos.x,
+            y: pos.y,
+        }));
+        if overlay {
+            show_overlay_dim(app, &window);
+            clip_round_window(&window);
+        }
+        let _ = window.set_always_on_top(true);
+        force_borderless(&window);
+        defer_raise_widget(window.clone(), Some(pos.clone()));
+        if overlay {
+            emit_overlay_shown(app, id);
+        }
         return Ok(());
     }
 
-    // CSS expects a transparent native window so .cli's 18px card radius isn't boxed.
-    let window = WebviewWindowBuilder::new(app, "launcher", WebviewUrl::App("launcher.html".into()))
-        .title("Versailles Launcher")
-        .inner_size(640.0, 420.0)
-        .decorations(false)
-        .transparent(true)
-        .always_on_top(true)
-        .skip_taskbar(true)
-        .resizable(false)
-        .visible(false)
-        .focused(false)
-        .shadow(false)
-        .build()?;
-    let _ = window.set_decorations(false);
-    let _ = window.set_skip_taskbar(true);
-    force_borderless(&window);
-    clip_round_window(&window);
-    // Keep the rounded clip in sync when the front-end grows into full terminal mode.
-    let clip_win = window.clone();
-    window.on_window_event(move |event| {
-        if let tauri::WindowEvent::Resized(_) = event {
-            clip_round_window(&clip_win);
+    open_widget_window(app, manager, id, Some(pos.clone()), Some(true))?;
+    if overlay {
+        if let Some(window) = app.get_webview_window(&label) {
+            show_overlay_dim(app, &window);
+            clip_round_window(&window);
         }
+        emit_overlay_shown(app, id);
+    }
+    Ok(())
+}
+
+fn conceal_overlay(app: &AppHandle, id: &str) -> AppResult<()> {
+    let app = app.clone();
+    let id = id.to_string();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(10));
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            hide_overlay_dim(&handle);
+            if let Some(window) = handle.get_webview_window(&widget_label(&id)) {
+                let _ = window.hide();
+            }
+            emit_overlay_hidden(&handle);
+        });
     });
     Ok(())
 }
 
-const LAUNCHER_DIM_LABEL: &str = "launcher-dim";
+pub fn toggle_hotkey_overlay(app: &AppHandle) -> AppResult<bool> {
+    let Some(id) = hotkey_piece_id(app) else {
+        tracing::warn!("no spawnable declared data-hooks=hotkey; overlay hotkey is idle");
+        return Ok(false);
+    };
+    let state = app.state::<AppState>();
+    toggle_slideout_widget(app, &state.window_manager, &id)
+}
 
 pub fn ensure_launcher_dim(app: &AppHandle) -> AppResult<()> {
     if app.get_webview_window(LAUNCHER_DIM_LABEL).is_some() {
@@ -1084,32 +1237,6 @@ pub fn ensure_guides_window(app: &AppHandle) -> AppResult<()> {
         .build()?;
     let _ = window.set_ignore_cursor_events(true);
     force_borderless(&window);
-    Ok(())
-}
-
-pub fn ensure_canvas_window(app: &AppHandle) -> AppResult<()> {
-    if let Some(window) = app.get_webview_window("canvas") {
-        window.show()?;
-        return Ok(());
-    }
-    let window = WebviewWindowBuilder::new(app, "canvas", WebviewUrl::App("canvas.html".into()))
-        .title("Versailles Canvas")
-        .fullscreen(true)
-        .decorations(false)
-        .transparent(true)
-        .always_on_bottom(true)
-        .skip_taskbar(true)
-        .visible(false)
-        .shadow(false)
-        .build()?;
-    window.show()?;
-    Ok(())
-}
-
-pub fn close_canvas_window(app: &AppHandle) -> AppResult<()> {
-    if let Some(window) = app.get_webview_window("canvas") {
-        window.close()?;
-    }
     Ok(())
 }
 
@@ -1326,39 +1453,46 @@ pub fn toggle_slideout_widget(
     id: &str,
 ) -> AppResult<bool> {
     let key = id.trim();
-    if key.eq_ignore_ascii_case("action-bar") || key.eq_ignore_ascii_case("action_bar") {
+    let cat = {
+        let state = app.state::<AppState>();
+        crate::desktop::page_catalog(&state)
+    };
+    let resolved = cat
+        .spawnable(key)
+        .map(|p| p.id.clone())
+        .unwrap_or_else(|| key.to_string());
+
+    if cat.is_overlay(&resolved) {
+        let label = widget_label(&resolved);
         let visible = app
-            .get_webview_window("launcher")
+            .get_webview_window(&label)
             .and_then(|w| w.is_visible().ok())
             .unwrap_or(false);
         if visible {
-            hide_launcher(app)?;
+            conceal_overlay(app, &resolved)?;
             return Ok(false);
         }
-        show_launcher(app)?;
+        reveal_overlay(app, manager, &resolved)?;
         return Ok(true);
     }
 
-    let label = widget_label(id);
+    let label = widget_label(&resolved);
     if app.get_webview_window(&label).is_some() {
-        close_widget_window(app, manager, id)?;
+        close_widget_window(app, manager, &resolved)?;
         return Ok(false);
     }
-    let (width, height) = {
+    let (width, height) = if let Some(piece) = cat.spawnable(&resolved) {
+        (piece.width, piece.height)
+    } else {
         let state = app.state::<AppState>();
-        let cat = crate::desktop::page_catalog(&state);
-        if let Some(piece) = cat.spawnable(id) {
-            (piece.width, piece.height)
-        } else {
-            let registry = state.registry.lock().unwrap();
-            let widget = registry
-                .get(id)
-                .ok_or_else(|| crate::page::unknown_spawn(id))?;
-            (widget.manifest.width, widget.manifest.height)
-        }
+        let registry = state.registry.lock().unwrap();
+        let widget = registry
+            .get(&resolved)
+            .ok_or_else(|| crate::page::unknown_spawn(&resolved))?;
+        (widget.manifest.width, widget.manifest.height)
     };
     let pos = dock_slideout_position(app, width, height);
-    open_widget_window(app, manager, id, Some(pos), Some(true))?;
+    open_widget_window(app, manager, &resolved, Some(pos), Some(true))?;
     Ok(true)
 }
 

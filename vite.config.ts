@@ -25,7 +25,6 @@ export default defineConfig({
       input: {
         launcher: resolve(__dirname, "launcher.html"),
         "launcher-dim": resolve(__dirname, "launcher-dim.html"),
-        canvas: resolve(__dirname, "canvas.html"),
         desktop: resolve(__dirname, "desktop.html"),
         guides: resolve(__dirname, "guides.html"),
       },

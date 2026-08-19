@@ -115,29 +115,24 @@ pub fn run() {
                 registry: Mutex::new(registry),
                 window_manager: Mutex::new(WindowManager::default()),
                 media,
+                tray_desktop_item: Mutex::new(None),
             });
             app.manage(pty::PtyState::default());
 
             spawn_webview_prewarm(app.handle());
 
             // Tray — only visible UI on boot unless restoring session widgets.
-            let show_item = MenuItem::with_id(app, "show", "Open launcher", true, None::<&str>)?;
-            let launcher_item =
-                MenuItem::with_id(app, "launcher", "Launcher", true, None::<&str>)?;
-            let desktop_item =
-                MenuItem::with_id(app, "desktop", "Desktop page", true, None::<&str>)?;
-            let canvas_item = MenuItem::with_id(app, "canvas", "Toggle Canvas", true, None::<&str>)?;
-            let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(
+            // Left-click still opens the action bar; the menu is desktop page + quit.
+            let desktop_item = MenuItem::with_id(
                 app,
-                &[
-                    &show_item,
-                    &launcher_item,
-                    &desktop_item,
-                    &canvas_item,
-                    &quit_item,
-                ],
+                "desktop",
+                desktop::desktop_tray_label(false),
+                true,
+                None::<&str>,
             )?;
+            let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&desktop_item, &quit_item])?;
+            *app.state::<AppState>().tray_desktop_item.lock().unwrap() = Some(desktop_item);
 
             let _tray = TrayIconBuilder::new()
                 .icon(
@@ -148,33 +143,20 @@ pub fn run() {
                 .menu(&menu)
                 .tooltip("Versailles")
                 .on_menu_event(|app, event| match event.id.as_ref() {
-                    "show" => {
-                        let _ = window_manager::show_launcher(app);
-                    }
-                    "launcher" => {
-                        let _ = window_manager::show_launcher(app);
-                    }
                     "desktop" => {
                         let enable = app.get_webview_window("desktop").is_none();
                         if enable {
                             if let Err(err) = desktop::reveal_desktop_window(app) {
                                 tracing::error!("desktop page failed to open: {err}");
                             }
-                        } else {
-                            let _ = window_manager::close_desktop_window(app);
+                        } else if let Err(err) = desktop::hide_desktop_window(app) {
+                            tracing::error!("desktop page failed to close: {err}");
                         }
                         let state = app.state::<AppState>();
                         let mut config = state.config.lock().unwrap();
                         if config.desktop.enabled != enable {
                             config.desktop.enabled = enable;
-                            let _ = state.store.lock().unwrap().save_user_from_app(&config);
-                        }
-                    }
-                    "canvas" => {
-                        if app.get_webview_window("canvas").is_some() {
-                            let _ = window_manager::close_canvas_window(app);
-                        } else {
-                            let _ = window_manager::ensure_canvas_window(app);
+                            let _ = state.store.lock().unwrap().save_runtime_from_app(&config);
                         }
                     }
                     "quit" => {
@@ -196,56 +178,36 @@ pub fn run() {
                 .build(app)?;
 
             // Launcher is created lazily on first Alt+Space / tray action.
-            let _ = register_launcher_hotkey(app.handle(), &config.launcher_hotkey);
+            let _ = register_launcher_hotkey(
+                app.handle(),
+                &window_manager::overlay_hotkey_accel(app.handle()),
+            );
             let _ = crate::commands::apply_autostart(app.handle(), config.autostart);
 
-            // Pre-create launcher + dim off the hotkey path so Alt+Space only shows
-            // existing windows (creating two WebView2s on the UI thread hangs Windows).
+            // Pre-create the dim window off the hotkey path so Alt+Space only
+            // shows existing surfaces (creating WebView2 on the UI thread hangs Windows).
             let prewarm = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                // Boot is busy — give WebView2 / compositor a moment before creating more windows.
                 tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
-                for attempt in 1..=4u32 {
-                    let app = prewarm.clone();
-                    if let Err(err) = prewarm.run_on_main_thread(move || {
-                        if let Err(err) = window_manager::ensure_launcher_window(&app) {
-                            tracing::warn!("launcher prewarm attempt {attempt}: {err}");
-                        }
-                    }) {
-                        tracing::warn!("launcher prewarm schedule failed: {err}");
-                    }
-                    tokio::time::sleep(std::time::Duration::from_millis(350)).await;
-                    if prewarm.get_webview_window("launcher").is_some() {
-                        break;
-                    }
-                    tokio::time::sleep(std::time::Duration::from_millis(400 * attempt as u64)).await;
-                }
                 let app = prewarm.clone();
                 let _ = prewarm.run_on_main_thread(move || {
                     if let Err(err) = window_manager::ensure_launcher_dim(&app) {
-                        tracing::warn!("launcher-dim prewarm failed: {err}");
+                        tracing::warn!("overlay-dim prewarm failed: {err}");
                     }
                 });
-                if prewarm.get_webview_window("launcher").is_none() {
-                    tracing::error!(
-                        "launcher window missing after prewarm — Alt+Space will create it lazily"
-                    );
-                } else {
-                    tracing::info!("launcher windows ready");
-                }
+                tracing::info!("overlay dim ready");
             });
 
             // Login races often steal Alt+Space — re-register after the shell settles.
             let hotkey_app = app.handle().clone();
-            let hotkey_accel = config.launcher_hotkey.clone();
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                let accel = hotkey_accel.clone();
                 let app = hotkey_app.clone();
                 let _ = hotkey_app.run_on_main_thread(move || {
+                    let accel = window_manager::overlay_hotkey_accel(&app);
                     match register_launcher_hotkey(&app, &accel) {
-                        Ok(()) => tracing::info!("launcher hotkey re-registered ({accel})"),
-                        Err(err) => tracing::warn!("launcher hotkey re-register failed: {err}"),
+                        Ok(()) => tracing::info!("overlay hotkey re-registered ({accel})"),
+                        Err(err) => tracing::warn!("overlay hotkey re-register failed: {err}"),
                     }
                 });
             });
@@ -273,6 +235,12 @@ pub fn run() {
                 let mut join_set = JoinSet::new();
                 for widget in session {
                     if crate::desktop::html_embeds_widget(&page_html, &widget.id) {
+                        continue;
+                    }
+                    if crate::page::parse_page(&page_html)
+                        .spawnable(&widget.id)
+                        .is_some()
+                    {
                         continue;
                     }
                     let app_handle = handle.clone();
@@ -329,6 +297,12 @@ pub fn run() {
                     if crate::desktop::html_embeds_widget(&page_html, &widget.id) {
                         continue;
                     }
+                    if crate::page::parse_page(&page_html)
+                        .spawnable(&widget.id)
+                        .is_some()
+                    {
+                        continue;
+                    }
                     let app = handle.clone();
                     let id = widget.id.clone();
                     let x = widget.position.x;
@@ -355,6 +329,7 @@ pub fn run() {
                     let _ = handle.run_on_main_thread(move || {
                         if let Err(err) = desktop::reveal_desktop_window(&app) {
                             tracing::warn!("desktop surface restore failed: {err}");
+                            desktop::set_desktop_tray_label(&app, false);
                         }
                     });
                 }
@@ -374,8 +349,6 @@ pub fn run() {
             commands::get_monitors,
             commands::toggle_launcher,
             commands::dismiss_launcher,
-            commands::open_canvas,
-            commands::close_canvas,
             commands::list_layouts,
             commands::save_layout,
             commands::apply_layout,

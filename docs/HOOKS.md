@@ -15,8 +15,8 @@ The host never grants more than that list. The catalog is fixed in [`src-tauri/s
 | `layout` | Move the spawn window |
 | `spawn` | Open/toggle another spawnable |
 | `shell` | Open a URL or path (`cli_open`) |
-| `hotkey` | Global hotkey registration (action bar) |
-| `pty` | Embedded terminal (action bar) |
+| `hotkey` | Global accelerator for this spawnable (`data-hotkey`, else config) |
+| `pty` | Embedded ConPTY (`pty_open` / write / resize / close) |
 
 Unknown hook names are rejected.
 
@@ -35,6 +35,8 @@ Without Tauri (plain browser / `file:`), hook calls resolve `{ host: false }` in
 
 ## Enforcement
 
-IPC may include `caller`. If `caller` is set, that id must exist on the page and list the hook. Unscoped invokes (the launcher engine) are allowed. A piece that omitted `data-hooks="media"` cannot call `media_now` even if the JS tries.
+IPC may include `caller`. If `caller` is set, that id must exist on the page and list the hook. Unscoped invokes (no `caller`) are allowed. A piece that omitted `data-hooks="media"` cannot call `media_now` even if the JS tries.
+
+`pty_*` and `cli_exec` / `cli_search_files` enforce `pty` / `shell` the same way when `caller` is present.
 
 `sys_stats` is a host command, not a named hook. Example widgets call `versailles.invoke("sys_stats")` without a caller.

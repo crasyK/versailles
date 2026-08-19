@@ -9,7 +9,7 @@ Versailles is a tray app. It serves `Documents\Widgets` over localhost and loads
 | Local API + file server | `http://127.0.0.1:47831` |
 | Vite (dev only) | `http://localhost:1420` |
 
-Override the API port in `versailles.json` → `api.port`. The bound port is also stored in `Documents\Widgets\.versailles\config.json` as `apiBoundPort`.
+Override the API port in `#versailles` → `api.port` (or sidecar `versailles.json` if that block is missing). The bound port is also stored in `Documents\Widgets\.versailles\config.json` as `apiBoundPort`.
 
 ## File server
 
@@ -42,11 +42,11 @@ User folder (`Documents\Widgets`):
 
 | File | Purpose |
 | ---- | ------- |
-| `versailles.json` | Theme, autostart, desktop page, hotkey, API, snap |
-| `shortcuts.json` | Action bar shortcuts (`%HOME%` in folder targets) |
-| `desktop/index.html` | UI source of truth |
+| `desktop/index.html` | UI + `#versailles` JSON (autostart, hotkey, API, shortcuts) |
 | `.sdk/versailles.js` | Widget SDK |
-| `.versailles/` | Runtime state (token, layouts). Migrates from `.deck` |
+| `.versailles/` | Runtime state (token, layouts, desktop shown, session). Migrates from `.deck` |
+
+Sidecar `versailles.json` / `shortcuts.json` are fallback if `#versailles` is missing. The host does not rewrite `index.html`. `desktop.enabled` lives in `.versailles/config.json`.
 
 ## ACL
 

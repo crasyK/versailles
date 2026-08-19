@@ -1,7 +1,7 @@
 use crate::error::AppResult;
 use crate::media::get_mouse_position;
-use crate::window_manager::{hide_launcher, show_launcher};
-use tauri::{AppHandle, Manager};
+use crate::window_manager::{hide_launcher, hotkey_overlay_visible, show_launcher};
+use tauri::AppHandle;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 pub fn register_launcher_hotkey(app: &AppHandle, accelerator: &str) -> AppResult<()> {
@@ -18,12 +18,7 @@ pub fn register_launcher_hotkey(app: &AppHandle, accelerator: &str) -> AppResult
             if event.state != ShortcutState::Pressed {
                 return;
             }
-            let visible = app_handle
-                .get_webview_window("launcher")
-                .and_then(|w| w.is_visible().ok())
-                .unwrap_or(false);
-
-            if visible {
+            if hotkey_overlay_visible(&app_handle) {
                 let _ = hide_launcher(&app_handle);
             } else {
                 let _ = show_launcher(&app_handle);
@@ -34,7 +29,7 @@ pub fn register_launcher_hotkey(app: &AppHandle, accelerator: &str) -> AppResult
     Ok(())
 }
 
-/// Prefer the monitor under the cursor when placing the launcher.
+/// Prefer the monitor under the cursor when placing the overlay.
 pub fn launcher_anchor() -> Option<(i32, i32)> {
     get_mouse_position().ok()
 }

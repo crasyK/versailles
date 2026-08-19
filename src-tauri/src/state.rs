@@ -3,6 +3,8 @@ use crate::media::MediaState;
 use crate::registry::WidgetRegistry;
 use crate::window_manager::WindowManager;
 use std::sync::Mutex;
+use tauri::menu::MenuItem;
+use tauri::Wry;
 
 pub struct AppState {
     pub store: Mutex<ConfigStore>,
@@ -10,4 +12,5 @@ pub struct AppState {
     pub registry: Mutex<WidgetRegistry>,
     pub window_manager: Mutex<WindowManager>,
     pub media: MediaState,
+    pub tray_desktop_item: Mutex<Option<MenuItem<Wry>>>,
 }

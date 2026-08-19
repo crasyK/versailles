@@ -25,8 +25,6 @@ fn main() {
                 "pty_resize",
                 "pty_is_alive",
                 "pty_close",
-                "open_canvas",
-                "close_canvas",
                 "list_layouts",
                 "save_layout",
                 "apply_layout",

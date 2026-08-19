@@ -397,7 +397,7 @@ function suggestions(raw: string): Row[] {
   const m = raw.match(/^\s*(?:open|o|presets?)(?:\s+(.*))?$/i);
   if (m) {
     const p = (m[1] || "").toLowerCase();
-    if (!p || "config".startsWith(p)) out.push({ c: "config", d: "open versailles.json" });
+    if (!p || "config".startsWith(p)) out.push({ c: "config", d: "open desktop/index.html" });
     if (!p || "desktopfile".startsWith(p)) out.push({ c: "desktopfile", d: "open desktop/index.html" });
     PRESETS.filter((x) => !p || presetMatches(x, p) || x.cat.toLowerCase().startsWith(p))
       .slice(0, 8)
@@ -422,7 +422,7 @@ function suggestions(raw: string): Row[] {
     if (sessionAlive && ("continue".startsWith(low) || "attach".startsWith(low))) {
       out.push({ c: "continue", d: "reattach background terminal" });
     }
-    if ("config".startsWith(low)) out.push({ c: "config", d: "open versailles.json" });
+    if ("config".startsWith(low)) out.push({ c: "config", d: "open desktop/index.html" });
     if ("desktopfile".startsWith(low)) out.push({ c: "desktopfile", d: "open desktop/index.html" });
     if ("term".startsWith(low) || "shell".startsWith(low)) {
       out.push({
@@ -489,7 +489,7 @@ function formatBlock(text: string, maxLines = 14, maxChars = 2400): string {
 /** Installers / interactive scripts need a real terminal — not the 4s inline runner. */
 function needsTerminal(cmd: string): boolean {
   const raw = cmd.trim();
-  if (/^!\s?/.test(raw)) return true;
+  if (/^!!/.test(raw)) return true;
   const low = raw.toLowerCase();
   return (
     /\|\s*(iex|invoke-expression)\b/.test(low) ||
@@ -501,6 +501,10 @@ function needsTerminal(cmd: string): boolean {
 }
 
 function stripTerminalBang(cmd: string): string {
+  return cmd.replace(/^!!\s?/, "").trim();
+}
+
+function stripInlineBang(cmd: string): string {
   return cmd.replace(/^!\s?/, "").trim();
 }
 
@@ -547,12 +551,7 @@ function applyChrome(next: LauncherMode) {
     footHint.textContent = "paste ok";
     footR.textContent = sessionAlive ? "background live" : "";
   } else {
-    titleEl.textContent = "versailles";
     modeLabel.textContent = sessionAlive ? "actions · live" : "actions";
-    footL.textContent = "enter run";
-    footM.textContent = "↑↓ history";
-    footHint.textContent = "tab complete";
-    footR.textContent = sessionAlive ? "continue · ? help" : "profiles · ? help";
   }
 }
 
@@ -891,8 +890,23 @@ function ghSearch(q: string) {
 }
 
 function hfSearch(q: string) {
-  if (!q) return openTarget("https://huggingface.co/");
-  openTarget("https://huggingface.co/search/full-text?q=" + encodeURIComponent(q));
+  const raw = q.trim();
+  const tpl =
+    root?.getAttribute("data-search-hf") || "https://huggingface.co/models?search={q}";
+  if (!raw) return openTarget("https://huggingface.co/models");
+  const parts = raw.split(/\s+/);
+  const kind = (parts[0] || "").toLowerCase();
+  const rest = parts.slice(1).join(" ").trim();
+  if (["models", "datasets", "spaces", "papers"].includes(kind)) {
+    if (!rest) {
+      return openTarget(`https://huggingface.co/${kind}`);
+    }
+    if (kind === "papers") {
+      return openTarget("https://huggingface.co/papers?q=" + encodeURIComponent(rest));
+    }
+    return openTarget(`https://huggingface.co/${kind}?search=` + encodeURIComponent(rest));
+  }
+  openTarget(tpl.replaceAll("{q}", encodeURIComponent(raw)));
 }
 
 async function fileSearch(q: string) {
@@ -963,7 +977,7 @@ function widgetsRoot(home: string) {
 }
 
 async function openConfigFile() {
-  return openFileTarget(joinPath(widgetsRoot(HOME || "C:\\"), "versailles.json"), "versailles.json");
+  return openDesktopFile();
 }
 
 async function openDesktopFile() {
@@ -1016,17 +1030,45 @@ function mergePresetsInto(base: Preset[], extras: Preset[]): Preset[] {
   return result;
 }
 
+function parseVersaillesBlock(html: string): { shortcuts?: Preset[] } | null {
+  try {
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const el = doc.getElementById("versailles");
+    if (!el) return null;
+    return JSON.parse(el.textContent || "");
+  } catch {
+    return null;
+  }
+}
+
 async function loadUserShortcuts(): Promise<void> {
   USER_SHORTCUTS = [];
   const home = HOME || "C:\\";
   try {
+    let html = "";
+    try {
+      html = await invoke<string>("get_desktop_html");
+    } catch {
+      const api = await invoke<{ base_url: string }>("get_api_info");
+      const res = await fetch(`${api.base_url}/files/desktop/index.html`, { cache: "no-store" });
+      if (res.ok) html = await res.text();
+    }
+    const block = html ? parseVersaillesBlock(html) : null;
+    if (block && Array.isArray(block.shortcuts)) {
+      USER_SHORTCUTS = block.shortcuts.map((s) => normalizeUserShortcut(s, home));
+      return;
+    }
     const api = await invoke<{ base_url: string }>("get_api_info");
     const base = api.base_url;
     let shortcutsPath = "shortcuts.json";
     try {
       const cfgRes = await fetch(`${base}/files/versailles.json`, { cache: "no-store" });
       if (cfgRes.ok) {
-        const cfg = (await cfgRes.json()) as { shortcuts?: string };
+        const cfg = (await cfgRes.json()) as { shortcuts?: string | Preset[] };
+        if (Array.isArray(cfg.shortcuts)) {
+          USER_SHORTCUTS = cfg.shortcuts.map((s) => normalizeUserShortcut(s, home));
+          return;
+        }
         if (typeof cfg.shortcuts === "string" && cfg.shortcuts.trim()) {
           shortcutsPath = cfg.shortcuts.replace(/\\/g, "/").replace(/^\//, "");
         }
@@ -1162,14 +1204,20 @@ async function lsCmd() {
 }
 
 async function shellExec(cmd: string) {
-  const run = stripTerminalBang(cmd);
-  if (needsTerminal(cmd)) {
+  const trimmed = cmd.trim();
+  if (/^!!/.test(trimmed)) {
+    const run = stripTerminalBang(trimmed);
     return void enterTerminal(run || undefined);
+  }
+  const inline = /^!\s?/.test(trimmed) ? stripInlineBang(trimmed) : trimmed;
+  if (!inline) return setRes("err", "! : missing command — usage: ! Get-Date");
+  if (needsTerminal(trimmed) && !/^!\s?/.test(trimmed)) {
+    return void enterTerminal(inline);
   }
   setRes("out", "…");
   await withBusy(async () => {
     try {
-      const out = await invoke<CliOutput>("cli_exec", { cmd: run, cwd });
+      const out = await invoke<CliOutput>("cli_exec", { cmd: inline, cwd });
       if (out.code === 0 && !out.stderr.trim()) {
         const block = formatBlock(out.stdout);
         if (block) setRes("out", block);
@@ -1194,6 +1242,7 @@ function run(c: string) {
   if (c.startsWith("??")) return void fileSearch(c.slice(2).trim());
   if (c.startsWith("?")) return void webSearch(c.slice(1).trim());
   if (c.startsWith("=")) return void calcExpr(c.slice(1).trim());
+  if (c.startsWith("!!") || c.startsWith("!")) return void shellExec(c);
   const sp = c.split(/\s+/);
   const cmd = sp[0].toLowerCase();
   const arg = sp.slice(1).join(" ");
@@ -1232,10 +1281,22 @@ function run(c: string) {
       return void wikiSearch(arg);
     case "yt":
     case "youtube":
+      if (!arg) {
+        const hit = findPreset(cmd);
+        if (hit) return void launchPreset(hit);
+      }
       return void ytSearch(arg);
     case "gh":
+      if (!arg) {
+        const hit = findPreset(cmd) || findPreset("github");
+        if (hit) return void launchPreset(hit);
+      }
       return void ghSearch(arg);
     case "hf":
+      if (!arg) {
+        const hit = findPreset(cmd) || findPreset("huggingface");
+        if (hit) return void launchPreset(hit);
+      }
       return void hfSearch(arg);
     case "lock":
       return void withBusy(async () => {
@@ -1294,13 +1355,15 @@ function run(c: string) {
           ? [{ c: "continue", d: "reattach background terminal", cc: "continue" }]
           : []),
         { c: "term", d: "open / reattach terminal", cc: "term" },
-        { c: "config", d: "open versailles.json", cc: "config" },
+        { c: "config", d: "open desktop/index.html", cc: "config" },
         { c: "desktopfile", d: "open desktop/index.html", cc: "desktopfile" },
         { c: "? <query>", d: "Google search", cc: "? " },
         { c: "?? <query>", d: "search files", cc: "?? " },
         { c: "= <expr>", d: "quick calculator", cc: "= " },
-        { c: "hf / gh / yt / w <q>", d: "hf · github · youtube · wiki search", cc: "hf " },
-        { c: "mail · github", d: "Gmail · GitHub (extend via shortcuts.json)", cc: "mail" },
+        { c: "! <cmd>", d: "run inline pwsh", cc: "! " },
+        { c: "!!", d: "open detachable terminal", cc: "!!" },
+        { c: "hf <q>", d: "Hugging Face models (hf models|datasets|spaces)", cc: "hf " },
+        { c: "mail · github", d: "Gmail · GitHub (extend via #versailles in index.html)", cc: "mail" },
         { c: "start", d: "Start menu · installed apps", cc: "start" },
         { c: "showdesk", d: "Show desktop (taskbar Win+D)", cc: "showdesk" },
         { c: "desk", d: "toggle the HTML desktop page", cc: "desk" },
@@ -1477,17 +1540,28 @@ function applySeed(seed?: string) {
 }
 
 void (async () => {
-  await applyUserChrome();
+  const v = (window as unknown as { versailles?: { waitForTauri?: () => Promise<unknown> } }).versailles;
+  if (v?.waitForTauri) await v.waitForTauri();
   bindDom();
   bindUi();
 
-  await listen<string>("launcher://shown", (ev) => {
-    const seed = typeof ev.payload === "string" ? ev.payload : "";
+  const onShown = (ev: { payload?: string } | string) => {
+    const seed = typeof ev === "string" ? ev : typeof ev?.payload === "string" ? ev.payload : "";
     void resetBar(seed);
+  };
+  await listen<string>("overlay://shown", onShown);
+  await listen<string>("launcher://shown", onShown);
+  await listen("overlay://hidden", () => {
+    forceIdle("hidden");
+    void (async () => {
+      if (mode === "terminal") await detachTerminal(false);
+      inp.value = "";
+      syncEcho();
+      clearRes();
+      applyChrome("action");
+    })();
   });
   await listen("launcher://hidden", () => {
-    // Clear to neutral on hide so reopen never shows the last command/result.
-    // PTY stays alive for `continue`.
     forceIdle("hidden");
     void (async () => {
       if (mode === "terminal") await detachTerminal(false);

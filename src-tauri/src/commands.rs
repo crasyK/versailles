@@ -7,8 +7,8 @@ use crate::media::{
 use crate::registry::RegistrySnapshot;
 use crate::state::AppState;
 use crate::window_manager::{
-    apply_layout_template, build_layout_template, close_canvas_window, close_widget_window,
-    collect_monitor_rects, ensure_canvas_window, hide_launcher, move_widget, open_widget_window,
+    apply_layout_template, build_layout_template, close_widget_window,
+    collect_monitor_rects, hide_launcher, move_widget, open_widget_window,
     popup_widget_context_menu, set_always_on_top, set_guides_visible, show_launcher,
     toggle_slideout_widget, OpenWidgetState,
 };
@@ -19,7 +19,7 @@ use tauri_plugin_autostart::ManagerExt;
 fn persist_session(app: &AppHandle) -> AppResult<()> {
     let state = app.state::<AppState>();
     let mut config = state.config.lock().unwrap();
-    config.session_widgets = state.window_manager.lock().unwrap().session_snapshot();
+    config.session_widgets = crate::window_manager::persistable_session(app);
     let result = state.store.lock().unwrap().save_runtime_from_app(&config);
     result
 }
@@ -237,11 +237,7 @@ pub fn get_monitors(app: AppHandle) -> AppResult<Vec<Rect>> {
 
 #[tauri::command]
 pub fn toggle_launcher(app: AppHandle) -> AppResult<()> {
-    let visible = app
-        .get_webview_window("launcher")
-        .and_then(|w| w.is_visible().ok())
-        .unwrap_or(false);
-    if visible {
+    if crate::window_manager::hotkey_overlay_visible(&app) {
         hide_launcher(&app)
     } else {
         show_launcher(&app)
@@ -252,16 +248,6 @@ pub fn toggle_launcher(app: AppHandle) -> AppResult<()> {
 pub fn dismiss_launcher(app: AppHandle) -> AppResult<()> {
     // Keep any background PTY alive — Alt+Space / continue reattaches.
     hide_launcher(&app)
-}
-
-#[tauri::command]
-pub fn open_canvas(app: AppHandle) -> AppResult<()> {
-    ensure_canvas_window(&app)
-}
-
-#[tauri::command]
-pub fn close_canvas(app: AppHandle) -> AppResult<()> {
-    close_canvas_window(&app)
 }
 
 #[tauri::command]
@@ -295,7 +281,7 @@ pub fn apply_layout(
     let opened = apply_layout_template(&app, &state.window_manager, &layout)?;
     let mut config = state.config.lock().unwrap();
     config.active_layout = Some(name);
-    config.session_widgets = state.window_manager.lock().unwrap().session_snapshot();
+    config.session_widgets = crate::window_manager::persistable_session(&app);
     state.store.lock().unwrap().save_runtime_from_app(&config)?;
     Ok(opened)
 }

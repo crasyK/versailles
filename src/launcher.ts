@@ -38,24 +38,6 @@ type Row = {
 
 type LauncherMode = "action" | "terminal";
 
-/** Required ids in the user action-bar template (`desktop/index.html`). */
-const ACTION_BAR_IDS = [
-  "cli-root",
-  "cli-title",
-  "cli-mode-label",
-  "cli-term-wrap",
-  "cli-term",
-  "cli-foot-l",
-  "cli-foot-m",
-  "cli-foot-r-hint",
-  "cli-foot-r",
-  "cli-in",
-  "cli-ps",
-  "cli-echo",
-  "cli-sug",
-  "cli-res",
-] as const;
-
 let root!: HTMLDivElement;
 let titleEl!: HTMLSpanElement;
 let modeLabel!: HTMLSpanElement;
@@ -75,37 +57,6 @@ function mustEl<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);
   if (!el) throw new Error(`Action bar missing #${id}`);
   return el as T;
-}
-
-function templateHasRequired(rootNode: ParentNode): boolean {
-  return ACTION_BAR_IDS.every((id) => {
-    if (rootNode.querySelector("#" + id)) return true;
-    return rootNode instanceof Element && rootNode.id === id;
-  });
-}
-
-async function applyUserChrome() {
-  try {
-    const html = await invoke<string>("get_desktop_html");
-    if (!html.trim()) return;
-    const doc = new DOMParser().parseFromString(html, "text/html");
-    const tpl = doc.querySelector(
-      "template.action-bar, template.spawnable[data-id='action-bar']",
-    ) as HTMLTemplateElement | null;
-    if (!tpl) return;
-    const frag = tpl.content.cloneNode(true) as DocumentFragment;
-    if (!templateHasRequired(frag)) {
-      console.warn("Versailles: action-bar template missing required ids; using built-in chrome");
-      return;
-    }
-    const incoming =
-      (frag.querySelector("#cli-root") as HTMLElement | null) ||
-      (frag.firstElementChild as HTMLElement | null);
-    const current = document.getElementById("cli-root");
-    if (incoming && current) current.replaceWith(incoming);
-  } catch (err) {
-    console.warn("Versailles: could not load action-bar template", err);
-  }
 }
 
 function bindDom() {

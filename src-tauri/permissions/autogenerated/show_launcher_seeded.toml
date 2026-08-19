@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-show-launcher-seeded"
+description = "Enables the show_launcher_seeded command without any pre-configured scope."
+commands.allow = ["show_launcher_seeded"]
+
+[[permission]]
+identifier = "deny-show-launcher-seeded"
+description = "Denies the show_launcher_seeded command without any pre-configured scope."
+commands.deny = ["show_launcher_seeded"]

@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Versailles Launcher Backdrop</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        /* Plain ink scrim. Native Acrylic hangs WebView2 — CSS only, no blur. */
+        background: rgba(20, 20, 20, 0.28);
+        cursor: default;
+        user-select: none;
+      }
+    </style>
+  </head>
+  <body>
+    <script type="module">
+      import { invoke } from "@tauri-apps/api/core";
+
+      /** Route all dismiss through Rust hide_launcher so launcher://hidden + forceIdle stay in sync. */
+      function dismiss() {
+        void invoke("dismiss_launcher");
+      }
+
+      document.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        dismiss();
+      });
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          dismiss();
+        }
+      });
+    </script>
+  </body>
+</html>

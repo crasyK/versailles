@@ -1,0 +1,65 @@
+<!-- Paste into desktop/index.html. Unique data-id="timer". -->
+<style>
+  .timer { width: 280px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .tmr-face { text-align: center; font: 600 46px/1 var(--font-sans); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+  .tmr-face.done { opacity: 0.35; }
+  .tmr-track { height: 5px; border-radius: 99px; background: var(--chip); overflow: hidden; }
+  .tmr-fill { height: 100%; width: 0%; background: var(--ink); }
+  .tmr-presets, .tmr-actions { display: flex; gap: 6px; }
+  .tmr-presets button, .tmr-actions button {
+    flex: 1; height: 32px; border-radius: var(--radius-chip); border: var(--stroke-dashed);
+    background: var(--paper); font: 600 11px/1 var(--font-sans); letter-spacing: 0.08em; text-transform: uppercase;
+  }
+  .tmr-presets button.on, .tmr-actions .go { background: var(--ink); color: var(--paper); border-style: solid; }
+</style>
+<article class="widget timer" data-id="timer">
+  <div class="tmr-face" id="tmr-face">10:00</div>
+  <div class="tmr-track"><div class="tmr-fill" id="tmr-fill"></div></div>
+  <div class="tmr-presets">
+    <button type="button" data-min="1">1m</button>
+    <button type="button" class="on" data-min="10">10m</button>
+    <button type="button" data-min="25">25m</button>
+    <button type="button" data-min="45">45m</button>
+  </div>
+  <div class="tmr-actions">
+    <button class="go" id="tmr-go" type="button">Start</button>
+    <button id="tmr-reset" type="button">Reset</button>
+  </div>
+</article>
+<script>
+  (function timerWidget() {
+    const face = document.getElementById('tmr-face');
+    if (!face) return;
+    const fill = document.getElementById('tmr-fill');
+    const go = document.getElementById('tmr-go');
+    const root = face.closest('.timer');
+    let total = 600, left = 600, endAt = 0, iv = null;
+    const pad = function (n) { return String(n).padStart(2, '0'); };
+    function show() {
+      const sT = Math.max(0, Math.ceil(left));
+      face.textContent = pad(Math.floor(sT / 60)) + ':' + pad(sT % 60);
+      fill.style.width = (100 - (left / total) * 100) + '%';
+    }
+    function stop() { clearInterval(iv); iv = null; go.textContent = 'Start'; }
+    go.onclick = function () {
+      if (iv) { left = Math.max(0, (endAt - Date.now()) / 1000); stop(); return; }
+      if (left <= 0) left = total;
+      face.classList.remove('done');
+      endAt = Date.now() + left * 1000;
+      go.textContent = 'Pause';
+      iv = setInterval(function () {
+        left = Math.max(0, (endAt - Date.now()) / 1000);
+        show();
+        if (left <= 0) { stop(); face.classList.add('done'); }
+      }, 200);
+    };
+    document.getElementById('tmr-reset').onclick = function () { stop(); left = total; face.classList.remove('done'); show(); };
+    root.querySelectorAll('.tmr-presets button').forEach(function (c) {
+      c.onclick = function () {
+        root.querySelectorAll('.tmr-presets button').forEach(function (x) { x.classList.toggle('on', x === c); });
+        stop(); total = left = (+c.dataset.min) * 60; face.classList.remove('done'); show();
+      };
+    });
+    show();
+  })();
+</script>

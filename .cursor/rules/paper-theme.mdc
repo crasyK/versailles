@@ -1,0 +1,30 @@
+---
+description: Paper theme is Versailles's visual language. Tokens and do/don't live in design/PAPER-THEME.md.
+alwaysApply: true
+---
+
+# Paper theme
+
+Full token reference: `design/PAPER-THEME.md`.
+
+## Tokens
+
+- Canvas `#f4f4f4` + 28px faint grid. Paper `#f9fafb`. Ink `#141414`. Muted `#6b7280`. Chip `#e5e7eb`.
+- Stroke `2px solid #141414`. Inactive pills `2px dashed #141414`.
+- Radius: pills `32px`, cards `16–20px`, chips `9999px`.
+- Shadow `0 4px 0 0 #141414` (hard offset). No glass, acrylic, mica, or soft drop shadows.
+- Type: Inter. UI labels uppercase, semibold, ~11–12px, tracking `0.08em`.
+- Active control: ink fill, paper text. Idle: paper fill, ink dashed stroke.
+
+## Do
+
+- Desktop page is wallpaper + widgets only.
+- Slide-outs (`calc`, `calendar`, `notes`) live in Alt+Space.
+- Launcher is paper chrome; only the nested xterm is dark-card.
+
+## Don't
+
+- Do not add a second theme switcher or alternate visual language.
+- Do not use serif display, canary yellow chips, 1px hairlines, or 6–8px rectangles as the system look.
+- Do not introduce gradients (except the dark-card inner fade where already used).
+- Do not glass the launcher. Paper for bar chrome (head, prompt, suggestions, footer); nested xterm may stay dark-card (`#131212`).

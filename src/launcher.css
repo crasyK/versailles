@@ -1,0 +1,349 @@
+/* Versailles Action Bar — Cal.com 2024 paper card.
+   The whole launcher window IS the .cli panel; body stays opaque paper so
+   WebView2 does not paint gray leftover in the rounded corners. */
+
+:root {
+  --canvas: #f4f4f4;
+  --paper: #f9fafb;
+  --ink: #141414;
+  --ink-mut: #6b7280;
+  --chip: #e5e7eb;
+  --white: #ffffff;
+  --dark-card: #131212;
+  --font-sans: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI",
+    Roboto, sans-serif;
+  --font-mono: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+  --r-card: 18px;
+  --r-pill: 32px;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  /* Solid fill — WebView2 paints “transparent” corners as gray leftover otherwise. */
+  background: var(--paper);
+  overflow: hidden;
+  color: var(--ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: rgba(20, 20, 20, 0.12);
+  color: var(--ink);
+}
+
+.cli {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--paper);
+  border: none;
+  /* Inset 2px ink stroke — survives Win32 region clipping that shaves CSS border.
+     Outer 4px offset is included; Win32 may clip it. */
+  box-shadow: inset 0 0 0 2px #141414, 0 4px 0 0 #141414;
+  border-radius: var(--r-card);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+}
+
+.cli-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 18px 8px;
+  color: var(--ink-mut);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  flex: none;
+}
+
+.cli-head i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ink);
+  flex: none;
+}
+
+.cli-head .pid {
+  margin-left: auto;
+  color: var(--ink-mut);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.cli-action {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.cli[data-mode="terminal"] .cli-action {
+  display: none;
+}
+
+.cli-line {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 16px 8px;
+  padding: 10px 16px;
+  background: var(--white);
+  border-radius: var(--r-pill);
+  box-shadow: inset 0 0 0 2px #141414;
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+
+.cli-ps {
+  color: var(--ink-mut);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 52%;
+}
+
+.cli-typed {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 0;
+}
+
+.cli-echo {
+  color: var(--ink);
+  white-space: pre;
+}
+
+.cli-caret {
+  width: 7px;
+  height: 16px;
+  flex: none;
+  margin-left: 2px;
+  border-radius: 1px;
+  background: var(--ink);
+  animation: lnblink 1.2s ease-in-out infinite;
+}
+
+@keyframes lnblink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+.cli-in {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  opacity: 0;
+  font: inherit;
+  border: 0;
+  outline: none;
+  background: none;
+  cursor: text;
+}
+
+/* single ephemeral result line — no scrollback */
+.cli-res {
+  display: none;
+  margin: 0 16px 6px;
+  padding: 10px 16px;
+  line-height: 1.55;
+  background: var(--white);
+  border-radius: 16px;
+  box-shadow: inset 0 0 0 2px #141414;
+  white-space: pre-wrap;
+  word-break: break-word;
+  flex: none;
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.cli-res.on {
+  display: block;
+  animation: resIn 150ms ease-out;
+}
+
+@keyframes resIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.cli-res.ok,
+.cli-res.err,
+.cli-res.out {
+  color: var(--ink);
+}
+
+.cli-res .link {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* proposals below the prompt */
+.cli-sug {
+  padding: 4px 12px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--chip) transparent;
+}
+
+.cli-sug::-webkit-scrollbar {
+  width: 8px;
+}
+
+.cli-sug::-webkit-scrollbar-thumb {
+  background: var(--chip);
+  border-radius: 9999px;
+}
+
+.cl-s {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+  padding: 8px 14px;
+  border-radius: 16px;
+  cursor: pointer;
+  flex: none;
+  background: var(--paper);
+  transition: background 90ms ease, box-shadow 90ms ease, color 90ms ease;
+}
+
+.cl-s b {
+  color: var(--ink);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cl-s span {
+  color: var(--ink-mut);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: none;
+  max-width: 48%;
+  font-size: 11.5px;
+}
+
+.cl-s:hover {
+  background: var(--chip);
+  box-shadow: inset 0 0 0 2px #141414;
+}
+
+.cl-s.on,
+.cl-s.on:hover {
+  background: var(--ink);
+  box-shadow: none;
+  color: var(--paper);
+}
+
+.cl-s:hover b {
+  color: var(--ink);
+}
+
+.cl-s.on b,
+.cl-s.on:hover b {
+  color: var(--paper);
+}
+
+.cl-s:hover span {
+  color: var(--ink-mut);
+}
+
+.cl-s.on span,
+.cl-s.on:hover span {
+  color: var(--paper);
+}
+
+/* Nested dark-card xterm — inverted panel inside paper chrome. */
+.cli-term-wrap {
+  display: none;
+  flex: 1;
+  min-height: 0;
+  margin: 4px 14px 10px;
+  padding: 0;
+  background: var(--dark-card);
+  border-radius: 16px;
+  box-shadow: inset 0 0 0 2px #141414;
+  overflow: hidden;
+}
+
+.cli[data-mode="terminal"] .cli-term-wrap {
+  display: flex;
+  flex-direction: column;
+}
+
+.cli-term-wrap[hidden] {
+  display: none !important;
+}
+
+.cli-term {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  padding: 8px 12px 6px;
+  background: var(--dark-card);
+}
+
+.cli-term .xterm {
+  height: 100%;
+}
+
+.cli-term .xterm-viewport {
+  overflow-y: auto !important;
+  background: transparent !important;
+}
+
+.cli-term .xterm-screen {
+  padding-right: 4px;
+}
+
+.cli-foot {
+  display: flex;
+  gap: 14px;
+  padding: 8px 18px 12px;
+  color: var(--ink-mut);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  flex: none;
+}
+
+.cli-foot .r {
+  margin-left: auto;
+}

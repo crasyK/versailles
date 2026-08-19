@@ -1,0 +1,64 @@
+<!-- Paste into desktop/index.html. Unique data-id="pomodoro". Full version: examples/gallery/index.html -->
+<style>
+  .pomo { width: min(360px, 100%); height: 112px; padding: 16px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
+  .pomo .time { font: 600 40px/1 var(--font-sans); letter-spacing: -0.05em; font-variant-numeric: tabular-nums; cursor: pointer; }
+  .pomo .row { display: flex; gap: 8px; }
+  .pomo .row button {
+    height: 28px; padding: 0 12px; border-radius: var(--radius-chip); border: var(--stroke-dashed);
+    background: var(--paper); font: 600 11px/1 var(--font-sans); letter-spacing: 0.08em; text-transform: uppercase;
+  }
+  .pomo .row button:hover { background: var(--chip); }
+  .pomo .row button.on { background: #141414; color: #f9fafb; border-style: solid; }
+</style>
+<article class="widget pomo" data-id="pomodoro" id="pomo-shell">
+  <button type="button" class="time" id="pomo-time" aria-label="Start or pause">25:00</button>
+  <div class="row">
+    <button type="button" id="pomo-reset">Reset</button>
+    <button type="button" id="pomo-chime" class="on">Chime</button>
+  </div>
+</article>
+<script>
+  (function pomodoroWidget() {
+    const timeEl = document.getElementById('pomo-time');
+    if (!timeEl) return;
+    const KEY = 'versailles_pomodoro';
+    let s = { focus: 25, running: false, endAt: 0, left: 25 * 60, sound: true };
+    try { s = Object.assign(s, JSON.parse(localStorage.getItem(KEY) || '{}')); } catch (_) {}
+    let iv = null, audio = null;
+    const pad = function (n) { return String(n).padStart(2, '0'); };
+    function persist() { try { localStorage.setItem(KEY, JSON.stringify(s)); } catch (_) {} }
+    function remaining() { return s.running && s.endAt ? Math.max(0, Math.round((s.endAt - Date.now()) / 1000)) : Math.max(0, s.left); }
+    function paint() {
+      const left = remaining();
+      timeEl.textContent = pad(Math.floor(left / 60)) + ':' + pad(left % 60);
+    }
+    function chime() {
+      if (!s.sound) return;
+      try {
+        if (!audio) audio = new (window.AudioContext || window.webkitAudioContext)();
+        const o = audio.createOscillator(); const g = audio.createGain();
+        o.connect(g); g.connect(audio.destination);
+        o.frequency.value = 523.25; g.gain.value = 0.12;
+        o.start(); o.stop(audio.currentTime + 0.4);
+      } catch (_) {}
+    }
+    function stopLoop() { if (iv) clearInterval(iv); iv = null; }
+    function tick() {
+      s.left = remaining();
+      if (s.left <= 0) { s.running = false; s.endAt = 0; s.left = s.focus * 60; persist(); paint(); chime(); stopLoop(); return; }
+      paint();
+    }
+    timeEl.addEventListener('click', function () {
+      if (s.running) { s.left = remaining(); s.running = false; s.endAt = 0; stopLoop(); }
+      else { if (s.left <= 0) s.left = s.focus * 60; s.running = true; s.endAt = Date.now() + s.left * 1000; iv = setInterval(tick, 250); }
+      persist(); paint();
+    });
+    document.getElementById('pomo-reset').onclick = function () {
+      s.running = false; s.endAt = 0; s.left = s.focus * 60; stopLoop(); persist(); paint();
+    };
+    const chimeBtn = document.getElementById('pomo-chime');
+    chimeBtn.onclick = function () { s.sound = !s.sound; chimeBtn.classList.toggle('on', s.sound); persist(); };
+    if (s.running && s.endAt) iv = setInterval(tick, 250);
+    paint();
+  })();
+</script>

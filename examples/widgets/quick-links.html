@@ -1,0 +1,41 @@
+<!-- Paste into desktop/index.html. Unique data-id="quick-links". Requires data-hooks="shell". -->
+<style>
+  .links { width: 280px; padding: 16px; }
+  .links-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px 8px; }
+  .links-grid button {
+    display: flex; flex-direction: column; align-items: center; gap: 6px; background: none;
+    font: 600 10.5px/1 var(--font-sans); letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-mut);
+  }
+  .links-grid .tile {
+    width: 48px; height: 48px; border-radius: 14px; display: grid; place-items: center;
+    font-size: 12px; font-weight: 800; color: var(--paper); background: var(--ink);
+    border: var(--stroke); box-shadow: var(--shadow); letter-spacing: 0.04em;
+  }
+  .links-grid button:hover .tile { background: var(--chip); color: var(--ink); }
+</style>
+<article class="widget links" data-id="quick-links" data-hooks="shell">
+  <div class="links-grid" id="links-grid">
+    <button type="button" data-url="https://github.com"><span class="tile">GH</span>GitHub</button>
+    <button type="button" data-url="https://youtube.com"><span class="tile">YT</span>YouTube</button>
+    <button type="button" data-url="https://reddit.com"><span class="tile">RD</span>Reddit</button>
+    <button type="button" data-url="https://news.ycombinator.com"><span class="tile">HN</span>HN</button>
+  </div>
+</article>
+<script>
+  (function quickLinksWidget() {
+    const grid = document.getElementById('links-grid');
+    if (!grid) return;
+    grid.addEventListener('click', async function (e) {
+      const b = e.target.closest('button[data-url]');
+      if (!b) return;
+      const url = b.dataset.url;
+      try {
+        if (window.versailles && window.versailles.for) {
+          await window.versailles.for('quick-links').shell.open(url);
+          return;
+        }
+      } catch (_) {}
+      window.open(url, '_blank', 'noopener');
+    });
+  })();
+</script>

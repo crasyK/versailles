@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-cli-home"
+description = "Enables the cli_home command without any pre-configured scope."
+commands.allow = ["cli_home"]
+
+[[permission]]
+identifier = "deny-cli-home"
+description = "Denies the cli_home command without any pre-configured scope."
+commands.deny = ["cli_home"]

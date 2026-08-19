@@ -1,0 +1,70 @@
+<!-- Paste template + CSS into desktop/index.html. Unique data-id="calculator". data-hooks="layout". -->
+<style>
+  .calc-display { text-align: right; font-size: 34px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -.01em; padding: 10px 6px 12px; min-height: 56px; overflow: hidden; white-space: nowrap; }
+  .calc-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .calc-key {
+    height: 46px; border-radius: 12px; font-size: 16px; font-weight: 600;
+    background: var(--paper); color: var(--ink); border: var(--stroke-dashed);
+  }
+  .calc-key:hover { background: var(--chip); }
+  .calc-key.fn { color: var(--ink-mut); }
+  .calc-key.op { border-style: solid; }
+  .calc-key.eq { background: #141414; color: #f9fafb; border-style: solid; }
+  .calc-key.wide { grid-column: span 2; }
+</style>
+<template class="spawnable" data-id="calculator" data-w="280" data-h="420" data-anchor="tr" data-hooks="layout">
+  <div class="calc-display" id="calc-out">0</div>
+  <div class="calc-grid">
+    <button class="calc-key fn" data-k="C">AC</button>
+    <button class="calc-key fn" data-k="±">±</button>
+    <button class="calc-key fn" data-k="%">%</button>
+    <button class="calc-key op" data-k="/">÷</button>
+    <button class="calc-key" data-k="7">7</button>
+    <button class="calc-key" data-k="8">8</button>
+    <button class="calc-key" data-k="9">9</button>
+    <button class="calc-key op" data-k="*">×</button>
+    <button class="calc-key" data-k="4">4</button>
+    <button class="calc-key" data-k="5">5</button>
+    <button class="calc-key" data-k="6">6</button>
+    <button class="calc-key op" data-k="-">−</button>
+    <button class="calc-key" data-k="1">1</button>
+    <button class="calc-key" data-k="2">2</button>
+    <button class="calc-key" data-k="3">3</button>
+    <button class="calc-key op" data-k="+">+</button>
+    <button class="calc-key wide" data-k="0">0</button>
+    <button class="calc-key" data-k=".">.</button>
+    <button class="calc-key eq" data-k="=">=</button>
+  </div>
+  <script>
+    (function () {
+      const root = document.querySelector('.spawn-surface[data-id="calculator"], .spawn-surface[data-id="calc"]');
+      if (!root) return;
+      const out = root.querySelector('#calc-out');
+      let cur = '0', prev = null, op = null, fresh = true;
+      const fmt = function (v) {
+        if (!isFinite(v)) return 'Error';
+        return String(Math.round(v * 1e10) / 1e10).slice(0, 12);
+      };
+      const apply = function (a, b, o) {
+        return o === '+' ? a + b : o === '-' ? a - b : o === '*' ? a * b : b === 0 ? NaN : a / b;
+      };
+      root.querySelectorAll('.calc-key').forEach(function (k) {
+        k.onclick = function () {
+          const v = k.dataset.k;
+          if (/[0-9]/.test(v)) { cur = fresh || cur === '0' ? v : cur + v; fresh = false; }
+          else if (v === '.') { if (fresh) { cur = '0.'; fresh = false; } else if (cur.indexOf('.') < 0) cur += '.'; }
+          else if (v === 'C') { cur = '0'; prev = null; op = null; fresh = true; }
+          else if (v === '±') { cur = fmt(-parseFloat(cur)); }
+          else if (v === '%') { cur = fmt(parseFloat(cur) / 100); }
+          else if (v === '=') {
+            if (op && prev !== null) { cur = fmt(apply(prev, parseFloat(cur), op)); prev = null; op = null; fresh = true; }
+          } else {
+            if (op && prev !== null && !fresh) cur = fmt(apply(prev, parseFloat(cur), op));
+            prev = parseFloat(cur); op = v; fresh = true;
+          }
+          out.textContent = cur;
+        };
+      });
+    })();
+  </script>
+</template>

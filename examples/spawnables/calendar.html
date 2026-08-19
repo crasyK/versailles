@@ -1,0 +1,65 @@
+<!-- Paste template + CSS into desktop/index.html. Unique data-id="calendar". data-hooks="layout". -->
+<style>
+  .cal-head { display: flex; align-items: center; justify-content: space-between; }
+  .cal-month { font-size: 14px; font-weight: 700; letter-spacing: -.01em; }
+  .cal-nav { display: flex; gap: 2px; }
+  .cal-nav button { width: 26px; height: 26px; border-radius: 8px; color: var(--ink-mut); font-size: 15px; line-height: 1; }
+  .cal-nav button:hover { background: var(--chip); color: var(--ink); }
+  .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; margin-top: 12px; }
+  .cal-grid span { text-align: center; font-size: 12px; padding: 6px 0; border-radius: 8px; font-variant-numeric: tabular-nums; }
+  .cal-grid .wd { font-size: 10px; font-weight: 600; color: var(--ink-mut); padding-bottom: 2px; letter-spacing: 0.08em; text-transform: uppercase; }
+  .cal-grid .day:hover { background: var(--chip); cursor: pointer; }
+  .cal-grid .dim { color: #c7c7cc; }
+  .cal-grid .today { background: #141414; color: #f9fafb; font-weight: 700; }
+</style>
+<template class="spawnable" data-id="calendar" data-w="320" data-h="310" data-anchor="tr" data-hooks="layout">
+  <div class="cal-head">
+    <span class="cal-month" id="cal-month"></span>
+    <div class="cal-nav">
+      <button id="cal-prev" type="button" aria-label="Previous month">‹</button>
+      <button id="cal-next" type="button" aria-label="Next month">›</button>
+    </div>
+  </div>
+  <div class="cal-grid" id="cal-grid"></div>
+  <script>
+    (function () {
+      const root = document.querySelector('.spawn-surface[data-id="calendar"]');
+      if (!root) return;
+      const grid = root.querySelector('#cal-grid');
+      const label = root.querySelector('#cal-month');
+      const now = new Date();
+      let y = now.getFullYear(), m = now.getMonth();
+      const months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+      function render() {
+        label.textContent = months[m] + ' ' + y;
+        grid.innerHTML = '';
+        ['Mo','Tu','We','Th','Fr','Sa','Su'].forEach(function (d) {
+          const s = document.createElement('span');
+          s.className = 'wd'; s.textContent = d; grid.appendChild(s);
+        });
+        const first = new Date(y, m, 1);
+        const offset = (first.getDay() + 6) % 7;
+        const days = new Date(y, m + 1, 0).getDate();
+        const prevDays = new Date(y, m, 0).getDate();
+        for (let i = offset - 1; i >= 0; i--) {
+          const s = document.createElement('span');
+          s.className = 'day dim'; s.textContent = prevDays - i; grid.appendChild(s);
+        }
+        for (let d = 1; d <= days; d++) {
+          const s = document.createElement('span');
+          s.className = 'day';
+          if (d === now.getDate() && m === now.getMonth() && y === now.getFullYear()) s.classList.add('today');
+          s.textContent = d; grid.appendChild(s);
+        }
+        const tail = (7 - (grid.children.length % 7)) % 7;
+        for (let d = 1; d <= tail; d++) {
+          const s = document.createElement('span');
+          s.className = 'day dim'; s.textContent = d; grid.appendChild(s);
+        }
+      }
+      root.querySelector('#cal-prev').onclick = function () { if (--m < 0) { m = 11; y--; } render(); };
+      root.querySelector('#cal-next').onclick = function () { if (++m > 11) { m = 0; y++; } render(); };
+      render();
+    })();
+  </script>
+</template>

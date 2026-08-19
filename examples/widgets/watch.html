@@ -1,0 +1,55 @@
+<!-- Paste into desktop/index.html. Unique data-id="watch". -->
+<style>
+  .watch { width: 214px; height: 214px; display: grid; place-items: center; padding: 8px; }
+  .watch .dial { width: 100%; aspect-ratio: 1; display: block; }
+</style>
+<article class="widget watch" data-id="watch">
+  <svg class="dial" viewBox="0 0 200 200" aria-hidden="true">
+    <g id="ticks"></g>
+    <g id="hour" transform="rotate(0 100 100)">
+      <rect x="94.5" y="58" width="11" height="52" rx="2" fill="#141414"></rect>
+    </g>
+    <g id="minute" transform="rotate(0 100 100)">
+      <rect x="96.2" y="26" width="7.6" height="82" rx="2" fill="#141414"></rect>
+    </g>
+    <g id="second" transform="rotate(0 100 100)">
+      <line x1="100" y1="122" x2="100" y2="36" stroke="#141414" stroke-width="2.4"></line>
+      <line x1="100" y1="36" x2="100" y2="20" stroke="#c41e1e" stroke-width="2.8" stroke-linecap="round"></line>
+    </g>
+    <circle cx="100" cy="100" r="6" fill="#141414"></circle>
+  </svg>
+</article>
+<script>
+  (function watchWidget() {
+    const ticks = document.getElementById('ticks');
+    if (!ticks) return;
+    for (let i = 0; i < 12; i++) {
+      const card = i % 3 === 0;
+      const w = card ? 7 : 4.4;
+      const len = card ? 18 : 13;
+      const el = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      el.setAttribute('x', String(100 - w / 2));
+      el.setAttribute('y', '12');
+      el.setAttribute('width', String(w));
+      el.setAttribute('height', String(len));
+      el.setAttribute('rx', '1.2');
+      el.setAttribute('fill', '#141414');
+      el.setAttribute('transform', 'rotate(' + (i * 30) + ' 100 100)');
+      ticks.appendChild(el);
+    }
+    const hour = document.getElementById('hour');
+    const minute = document.getElementById('minute');
+    const second = document.getElementById('second');
+    function tick() {
+      const n = new Date();
+      const s = n.getSeconds() + n.getMilliseconds() / 1000;
+      const m = n.getMinutes() + s / 60;
+      const h = (n.getHours() % 12) + m / 60;
+      hour.setAttribute('transform', 'rotate(' + (h * 30) + ' 100 100)');
+      minute.setAttribute('transform', 'rotate(' + (m * 6) + ' 100 100)');
+      second.setAttribute('transform', 'rotate(' + (s * 6) + ' 100 100)');
+    }
+    tick();
+    setInterval(tick, 50);
+  })();
+</script>

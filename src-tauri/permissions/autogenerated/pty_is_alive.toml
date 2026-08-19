@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pty-is-alive"
+description = "Enables the pty_is_alive command without any pre-configured scope."
+commands.allow = ["pty_is_alive"]
+
+[[permission]]
+identifier = "deny-pty-is-alive"
+description = "Denies the pty_is_alive command without any pre-configured scope."
+commands.deny = ["pty_is_alive"]

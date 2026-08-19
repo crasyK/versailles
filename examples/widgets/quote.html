@@ -1,0 +1,31 @@
+<!-- Paste into desktop/index.html. Unique data-id="quote". Host GET /quote. -->
+<style>
+  .quote { height: 178px; padding: 16px 18px; display: flex; flex-direction: column; justify-content: center; gap: 8px; }
+  .quote .mark { font: 600 30px/0.7 var(--font-sans); letter-spacing: -0.06em; opacity: 0.16; }
+  .quote .text { font: 500 16px/1.35 var(--font-sans); letter-spacing: -0.02em; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; }
+  .quote .who { font: 600 11px/1 var(--font-sans); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-mut); }
+  .quote .who::before { content: "— "; color: var(--ink); }
+</style>
+<article class="widget quote" data-id="quote">
+  <div class="mark" aria-hidden="true">“</div>
+  <p class="text" id="quote-text"></p>
+  <div class="who" id="quote-who"></div>
+</article>
+<script>
+  (function quoteWidget() {
+    const textEl = document.getElementById('quote-text');
+    const whoEl = document.getElementById('quote-who');
+    if (!textEl) return;
+    function show(text, author) {
+      textEl.textContent = text;
+      whoEl.textContent = author || 'Unknown';
+    }
+    fetch('/quote', { headers: { Accept: 'application/json' } })
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        if (!data || data.ok === false || !data.text) throw new Error();
+        show(data.text, data.author);
+      })
+      .catch(function () { show('Could not load today’s quote.', ''); });
+  })();
+</script>

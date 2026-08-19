@@ -1,0 +1,89 @@
+<!-- Paste into desktop/index.html. Unique data-id="todo". Persists to localStorage. -->
+<style>
+  .todo { height: 240px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .todo-add { display: flex; gap: 8px; }
+  .todo-add input {
+    flex: 1; border: var(--stroke); border-radius: var(--radius-pill);
+    background: var(--white); padding: 9px 14px; font: inherit; font-size: 13px;
+    color: var(--ink); outline: none; min-width: 0;
+  }
+  .todo-add button {
+    width: 38px; border-radius: var(--radius-pill); background: #141414; color: #f9fafb;
+    font-size: 18px; font-weight: 600; line-height: 1; border: var(--stroke); box-shadow: 0 3px 0 0 #141414;
+  }
+  .todo-list { list-style: none; display: flex; flex-direction: column; flex: 1; overflow-y: auto; min-height: 0; }
+  .todo-list li { display: flex; align-items: center; gap: 10px; padding: 9px 2px; border-bottom: 1px solid #e1e1e1; font-size: 13.5px; }
+  .todo-check { width: 20px; height: 20px; border-radius: 50%; flex: none; border: var(--stroke); background: transparent; padding: 0; display: grid; place-items: center; color: #f9fafb; }
+  li.done .todo-check { background: #141414; }
+  li .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  li.done .t { text-decoration: line-through; color: var(--ink-mut); }
+  .todo-x { margin-left: auto; background: none; color: var(--ink-mut); font-size: 15px; padding: 2px 6px; opacity: 0; flex: none; }
+  li:hover .todo-x { opacity: 1; }
+  .w-foot { align-self: flex-start; font-size: 11px; font-weight: 600; color: var(--ink-mut); border: var(--stroke-dashed); border-radius: var(--radius-pill); padding: 4px 10px; text-transform: uppercase; letter-spacing: 0.08em; }
+</style>
+<article class="widget todo" data-id="todo">
+  <div class="todo-add" data-no-drag>
+    <input id="todo-in" type="text" placeholder="Add a task…" maxlength="60" autocomplete="off" data-no-drag />
+    <button id="todo-btn" aria-label="Add" data-no-drag>+</button>
+  </div>
+  <ul class="todo-list" id="todo-list"></ul>
+  <div class="w-foot" id="todo-cap"></div>
+</article>
+<script>
+  (function todoWidget() {
+    const list = document.getElementById('todo-list');
+    if (!list) return;
+    const STORAGE_KEY = 'versailles_todo';
+    const DEFAULT_TASKS = [
+      { id: 1, text: 'Copy templates/starter to Documents/Widgets', done: true },
+      { id: 2, text: 'Edit desktop/index.html', done: false },
+      { id: 3, text: 'Steal a tile from examples/widgets', done: false }
+    ];
+    const inp = document.getElementById('todo-in');
+    const cap = document.getElementById('todo-cap');
+    const CHECK_SVG = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round"><path d="M4 12.5 10 18 20 6"/></svg>';
+    let tasks = [];
+    function persist() { localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks)); }
+    function load() {
+      try {
+        const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+        if (!Array.isArray(parsed)) return DEFAULT_TASKS.slice();
+        return parsed.map(function (t) { return { id: t.id || Date.now(), text: String(t.text || ''), done: !!t.done }; });
+      } catch (_) { return DEFAULT_TASKS.slice(); }
+    }
+    function render() {
+      list.innerHTML = '';
+      tasks.forEach(function (it, i) {
+        const li = document.createElement('li');
+        li.className = it.done ? 'done' : '';
+        const b = document.createElement('button');
+        b.className = 'todo-check';
+        b.innerHTML = CHECK_SVG;
+        b.onclick = function () { it.done = !it.done; persist(); render(); };
+        const s = document.createElement('span');
+        s.className = 't';
+        s.textContent = it.text;
+        const x = document.createElement('button');
+        x.className = 'todo-x';
+        x.textContent = '×';
+        x.onclick = function () { tasks.splice(i, 1); persist(); render(); };
+        li.append(b, s, x);
+        list.appendChild(li);
+      });
+      const left = tasks.filter(function (t) { return !t.done; }).length;
+      cap.textContent = left ? left + ' left' : 'All done';
+    }
+    function add() {
+      const v = inp.value.trim();
+      if (!v) return;
+      tasks.unshift({ id: Date.now(), text: v, done: false });
+      inp.value = '';
+      persist();
+      render();
+    }
+    document.getElementById('todo-btn').addEventListener('click', add);
+    inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') add(); });
+    tasks = load();
+    render();
+  })();
+</script>

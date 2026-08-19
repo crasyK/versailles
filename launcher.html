@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light" />
+    <title>Versailles Action Bar</title>
+    <link rel="stylesheet" href="/src/launcher.css" />
+  </head>
+  <body>
+    <div class="cli" id="cli-root" data-mode="action">
+      <div class="cli-head">
+        <i></i><span id="cli-title">versailles actions · pwsh</span>
+        <span class="pid" id="cli-mode-label">actions</span>
+      </div>
+
+      <div class="cli-action" id="cli-action">
+        <div class="cli-line">
+          <span class="cli-ps" id="cli-ps">PS …&gt;</span>
+          <span class="cli-typed">
+            <span class="cli-echo" id="cli-echo"></span><span class="cli-caret"></span>
+          </span>
+          <input
+            class="cli-in"
+            id="cli-in"
+            spellcheck="false"
+            autocomplete="off"
+            aria-label="command input"
+          />
+        </div>
+        <div class="cli-res" id="cli-res"></div>
+        <div class="cli-sug" id="cli-sug"></div>
+      </div>
+
+      <div class="cli-term-wrap" id="cli-term-wrap" hidden>
+        <div class="cli-term" id="cli-term"></div>
+      </div>
+
+      <div class="cli-foot" id="cli-foot">
+        <span id="cli-foot-l">enter run</span><span id="cli-foot-m">↑↓ history</span
+        ><span id="cli-foot-r-hint">tab complete</span>
+        <span class="r" id="cli-foot-r">term · config · desktopfile · ? web · !! paste ok in terminal</span>
+      </div>
+    </div>
+    <script type="module" src="/src/launcher.ts"></script>
+  </body>
+</html>

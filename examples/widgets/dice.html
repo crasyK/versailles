@@ -1,0 +1,68 @@
+<!-- Paste into desktop/index.html. Unique data-id="dice". -->
+<style>
+  .dice { width: 280px; padding: 16px; display: flex; flex-direction: column; gap: 12px; align-items: center; }
+  .dice-tray { display: flex; gap: 10px; min-height: 62px; align-items: center; }
+  .die {
+    width: 52px; height: 52px; border-radius: 12px; border: var(--stroke); background: var(--white);
+    display: grid; grid-template: repeat(3,1fr) / repeat(3,1fr); padding: 8px;
+  }
+  .die i { border-radius: 50%; background: var(--ink); width: 8px; height: 8px; place-self: center; visibility: hidden; }
+  .die i.on { visibility: visible; }
+  .die.rolling { animation: die-shake 0.35s ease; }
+  @keyframes die-shake { 25% { transform: rotate(-8deg); } 60% { transform: rotate(6deg); } }
+  .dice-controls { display: flex; gap: 8px; width: 100%; }
+  .dice-controls .chip, .dice-controls .go {
+    height: 32px; border-radius: var(--radius-chip); font: 600 11px/1 var(--font-sans);
+    letter-spacing: 0.08em; text-transform: uppercase; border: var(--stroke-dashed); background: var(--paper); padding: 0 12px;
+  }
+  .dice-controls .chip.on, .dice-controls .go { background: var(--ink); color: var(--paper); border-style: solid; }
+  .dice-controls .go { margin-left: auto; }
+</style>
+<article class="widget dice" data-id="dice">
+  <div class="dice-tray" id="dice-tray"></div>
+  <div class="dice-controls">
+    <button class="chip on" data-n="1">1</button>
+    <button class="chip" data-n="2">2</button>
+    <button class="chip" data-n="3">3</button>
+    <button class="go" id="dice-roll" type="button">Roll</button>
+  </div>
+</article>
+<script>
+  (function diceWidget() {
+    const tray = document.getElementById('dice-tray');
+    if (!tray) return;
+    const pips = { 1: [5], 2: [1, 9], 3: [1, 5, 9], 4: [1, 3, 7, 9], 5: [1, 3, 5, 7, 9], 6: [1, 3, 4, 6, 7, 9] };
+    let count = 1;
+    const root = tray.closest('.dice');
+    function render(vals) {
+      tray.innerHTML = '';
+      vals.forEach(function (v) {
+        const die = document.createElement('div');
+        die.className = 'die';
+        for (let i = 1; i <= 9; i++) {
+          const p = document.createElement('i');
+          if (pips[v].indexOf(i) >= 0) p.className = 'on';
+          die.appendChild(p);
+        }
+        tray.appendChild(die);
+      });
+    }
+    function roll() {
+      const vals = Array.from({ length: count }, function () { return 1 + Math.floor(Math.random() * 6); });
+      render(vals);
+      tray.querySelectorAll('.die').forEach(function (d) {
+        d.classList.add('rolling');
+        d.addEventListener('animationend', function () { d.classList.remove('rolling'); }, { once: true });
+      });
+    }
+    root.querySelectorAll('.chip').forEach(function (b) {
+      b.onclick = function () {
+        count = +b.dataset.n;
+        root.querySelectorAll('.chip').forEach(function (c) { c.classList.toggle('on', c === b); });
+        roll();
+      };
+    });
+    document.getElementById('dice-roll').onclick = roll;
+    render([5]);
+  })();
+</script>

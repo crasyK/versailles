@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-hide-catalog-entry"
+description = "Enables the hide_catalog_entry command without any pre-configured scope."
+commands.allow = ["hide_catalog_entry"]
+
+[[permission]]
+identifier = "deny-hide-catalog-entry"
+description = "Denies the hide_catalog_entry command without any pre-configured scope."
+commands.deny = ["hide_catalog_entry"]

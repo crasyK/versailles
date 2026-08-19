@@ -1,0 +1,39 @@
+<!-- Paste into desktop/index.html. Unique data-id="random-number". -->
+<style>
+  .rng { width: 260px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .rng-out { text-align: center; font: 700 46px/1 var(--font-sans); font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+  .rng-range { display: flex; gap: 8px; align-items: center; justify-content: center; }
+  .rng-range input {
+    width: 76px; text-align: center; font: inherit; font-size: 13px; font-variant-numeric: tabular-nums;
+    background: var(--white); border: var(--stroke); color: var(--ink); border-radius: 10px; padding: 7px 6px; outline: none;
+  }
+  .rng-range span { color: var(--ink-mut); font-size: 12px; }
+  .rng .go {
+    height: 36px; border-radius: var(--radius-pill); background: var(--ink); color: var(--paper);
+    font: 600 11px/1 var(--font-sans); letter-spacing: 0.08em; text-transform: uppercase; border: var(--stroke);
+  }
+</style>
+<article class="widget rng" data-id="random-number">
+  <div class="rng-out" id="rng-out">42</div>
+  <div class="rng-range">
+    <input id="rng-min" type="number" value="1" />
+    <span>to</span>
+    <input id="rng-max" type="number" value="100" />
+  </div>
+  <button class="go" id="rng-go" type="button">Generate</button>
+</article>
+<script>
+  (function randomNumberWidget() {
+    const out = document.getElementById('rng-out');
+    if (!out) return;
+    const min = document.getElementById('rng-min');
+    const max = document.getElementById('rng-max');
+    document.getElementById('rng-go').onclick = function () {
+      let a = parseInt(min.value, 10), b = parseInt(max.value, 10);
+      if (!isFinite(a)) a = 1;
+      if (!isFinite(b)) b = 100;
+      if (a > b) { const t = a; a = b; b = t; min.value = a; max.value = b; }
+      out.textContent = String(a + Math.floor(Math.random() * (b - a + 1)));
+    };
+  })();
+</script>

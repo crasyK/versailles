@@ -1,0 +1,25 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# Dependencies
+node_modules
+
+# Build
+dist
+src-tauri/target
+src-tauri/gen
+
+# Editor
+.DS_Store
+.idea
+.vscode
+*.swp
+*.code-workspace
+
+# Env
+.env
+.env.*
+
+# Versailles local (lives under Documents/Widgets/.versailles, not in app)

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-close-anywhere-bar"
+description = "Enables the close_anywhere_bar command without any pre-configured scope."
+commands.allow = ["close_anywhere_bar"]
+
+[[permission]]
+identifier = "deny-close-anywhere-bar"
+description = "Denies the close_anywhere_bar command without any pre-configured scope."
+commands.deny = ["close_anywhere_bar"]

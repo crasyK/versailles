@@ -1,0 +1,28 @@
+---
+description: Single-file desktop dialect. Widgets, spawnables, and the action bar live in one HTML document.
+alwaysApply: true
+---
+
+# Desktop dialect
+
+The UI source of truth is `%USERPROFILE%\Documents\Widgets\desktop\index.html` (this repo ships a copy under `templates/starter/`).
+
+## Pieces
+
+- `.widget` — static tile on the canvas (`article`)
+- `.spawnable` — overlay template; host opens a native always-on-top window
+- `.action-bar` — spawnable whose chrome the launcher engine binds
+
+Required on the opening tag: `data-id`. Optional: `data-w`, `data-h`, `data-anchor`, `data-hooks`.
+
+`data-hooks` is a comma list from: `media`, `mouse`, `layout`, `spawn`, `shell`, `hotkey`, `pty`. The host never grants more than that list. `calc` aliases `calculator`.
+
+## Action bar ids
+
+`#cli-root`, `#cli-title`, `#cli-mode-label`, `#cli-term-wrap`, `#cli-term`, `#cli-foot-l`, `#cli-foot-m`, `#cli-foot-r-hint`, `#cli-foot-r`, `#cli-in`, `#cli-ps`, `#cli-echo`, `#cli-sug`, `#cli-res`. Missing → built-in chrome.
+
+## Do not
+
+- Do not iframe per-widget HTML.
+- Do not add a settings UI to the action bar.
+- Preview with `?m=desktop|widgets|spawn|spawn&id=…|action_bar`.

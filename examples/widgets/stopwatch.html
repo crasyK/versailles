@@ -1,0 +1,63 @@
+<!-- Paste into desktop/index.html. Unique data-id="stopwatch". -->
+<style>
+  .stopwatch { width: 280px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .sw-face { text-align: center; font: 600 40px/1 var(--font-sans); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+  .sw-face .cs { font-size: 18px; font-weight: 500; color: var(--ink-mut); }
+  .sw-actions { display: flex; gap: 8px; }
+  .sw-actions button {
+    flex: 1; height: 36px; border-radius: var(--radius-pill); font: 600 11px/1 var(--font-sans);
+    letter-spacing: 0.08em; text-transform: uppercase; border: var(--stroke-dashed); background: var(--paper);
+  }
+  .sw-actions .go { background: var(--ink); color: var(--paper); border-style: solid; }
+  .sw-laps { max-height: 74px; overflow-y: auto; }
+  .sw-laps div { display: flex; justify-content: space-between; font-size: 12px; color: var(--ink-mut); padding: 6px 4px; font-variant-numeric: tabular-nums; }
+  .sw-laps div b { color: var(--ink); }
+</style>
+<article class="widget stopwatch" data-id="stopwatch">
+  <div class="sw-face"><span id="sw-face">00:00</span><span class="cs" id="sw-cs">.00</span></div>
+  <div class="sw-actions">
+    <button class="go" id="sw-go" type="button">Start</button>
+    <button id="sw-lap" type="button" disabled>Lap</button>
+  </div>
+  <div class="sw-laps" id="sw-laps"></div>
+</article>
+<script>
+  (function stopwatchWidget() {
+    const face = document.getElementById('sw-face');
+    if (!face) return;
+    const csEl = document.getElementById('sw-cs');
+    const go = document.getElementById('sw-go');
+    const lapB = document.getElementById('sw-lap');
+    const laps = document.getElementById('sw-laps');
+    let elapsed = 0, startAt = 0, iv = null, lapN = 0;
+    function fmt(ms) {
+      const t = Math.floor(ms / 10), cs = t % 100, s = Math.floor(t / 100) % 60, m = Math.floor(t / 6000);
+      return [String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0'), '.' + String(cs).padStart(2, '0')];
+    }
+    function show(ms) { const p = fmt(ms); face.textContent = p[0]; csEl.textContent = p[1]; }
+    go.onclick = function () {
+      if (iv) {
+        elapsed += Date.now() - startAt; clearInterval(iv); iv = null;
+        go.textContent = 'Start'; lapB.textContent = 'Reset';
+      } else {
+        startAt = Date.now();
+        iv = setInterval(function () { show(elapsed + Date.now() - startAt); }, 33);
+        go.textContent = 'Pause'; lapB.textContent = 'Lap';
+      }
+      lapB.disabled = false;
+    };
+    lapB.onclick = function () {
+      if (iv) {
+        lapN++;
+        const p = fmt(elapsed + Date.now() - startAt);
+        const row = document.createElement('div');
+        row.innerHTML = '<span>Lap ' + lapN + '</span><b>' + p[0] + p[1] + '</b>';
+        laps.prepend(row);
+      } else {
+        elapsed = 0; lapN = 0; laps.innerHTML = ''; show(0);
+        lapB.textContent = 'Lap'; lapB.disabled = true;
+      }
+    };
+    show(0);
+  })();
+</script>

@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Versailles — Paper theme tokens</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --canvas: #f4f4f4;
+    --paper: #f9fafb;
+    --ink: #141414;
+    --muted: #6b7280;
+    --chip: #e5e7eb;
+    --white: #ffffff;
+    --dark-card: #131212;
+    --stroke: 2px solid #141414;
+    --stroke-dashed: 2px dashed #141414;
+    --shadow: 0 4px 0 0 #141414;
+    --radius-pill: 32px;
+    --radius-card: 16px;
+    --radius-chip: 9999px;
+    --font: Inter, system-ui, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: var(--font);
+    background-color: var(--canvas);
+    background-image:
+      linear-gradient(rgba(20, 20, 20, 0.045) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(20, 20, 20, 0.045) 1px, transparent 1px);
+    background-size: 28px 28px;
+    color: var(--ink);
+    min-height: 100vh;
+    padding: 48px 32px 64px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  main { max-width: 720px; margin: 0 auto; }
+
+  h1 {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+
+  .lead {
+    margin-top: 8px;
+    font-size: 14px;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+
+  .lead a { color: var(--ink); }
+
+  section { margin-top: 40px; }
+
+  h2 {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 16px;
+  }
+
+  .swatches {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 12px;
+  }
+
+  .swatch {
+    background: var(--paper);
+    border: var(--stroke);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
+
+  .swatch i {
+    display: block;
+    height: 56px;
+    border-bottom: var(--stroke);
+  }
+
+  .swatch div {
+    padding: 10px 12px;
+  }
+
+  .swatch b {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .swatch code {
+    display: block;
+    margin-top: 4px;
+    font-size: 12px;
+    color: var(--muted);
+    font-family: "Cascadia Mono", Consolas, monospace;
+  }
+
+  .samples {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+  }
+
+  .pill {
+    border-radius: var(--radius-pill);
+    padding: 10px 20px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .pill.active {
+    background: var(--ink);
+    color: var(--paper);
+    border: var(--stroke);
+  }
+
+  .pill.idle {
+    background: var(--paper);
+    color: var(--ink);
+    border: var(--stroke-dashed);
+  }
+
+  .pill.hover {
+    background: var(--chip);
+    color: var(--ink);
+    border: var(--stroke);
+  }
+
+  .card-demo {
+    background: var(--paper);
+    border: var(--stroke);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow);
+    padding: 20px;
+    max-width: 280px;
+  }
+
+  .card-demo p {
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  .card-demo .label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+
+  .terminal-demo {
+    margin-top: 12px;
+    background: var(--dark-card);
+    color: #e5e5e5;
+    border-radius: 12px;
+    padding: 12px 14px;
+    font-family: "Cascadia Mono", Consolas, monospace;
+    font-size: 12px;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--paper);
+    border: var(--stroke);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    font-size: 13px;
+  }
+
+  th, td {
+    padding: 10px 14px;
+    text-align: left;
+    border-bottom: 1px solid var(--chip);
+  }
+
+  th {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    background: var(--chip);
+  }
+
+  tr:last-child td { border-bottom: 0; }
+
+  td code {
+    font-family: "Cascadia Mono", Consolas, monospace;
+    font-size: 12px;
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Paper theme</h1>
+  <p class="lead">
+    Visual tokens for Versailles widgets and desktop.
+    Full reference: <a href="./PAPER-THEME.md">PAPER-THEME.md</a>
+  </p>
+
+  <section>
+    <h2>Colors</h2>
+    <div class="swatches">
+      <div class="swatch"><i style="background:#f4f4f4"></i><div><b>Canvas</b><code>#f4f4f4</code></div></div>
+      <div class="swatch"><i style="background:#f9fafb"></i><div><b>Paper</b><code>#f9fafb</code></div></div>
+      <div class="swatch"><i style="background:#141414"></i><div><b>Ink</b><code>#141414</code></div></div>
+      <div class="swatch"><i style="background:#6b7280"></i><div><b>Muted</b><code>#6b7280</code></div></div>
+      <div class="swatch"><i style="background:#e5e7eb"></i><div><b>Chip</b><code>#e5e7eb</code></div></div>
+      <div class="swatch"><i style="background:#ffffff"></i><div><b>White</b><code>#ffffff</code></div></div>
+      <div class="swatch"><i style="background:#131212"></i><div><b>Dark card</b><code>#131212</code></div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Shape</h2>
+    <table>
+      <thead><tr><th>Token</th><th>Value</th></tr></thead>
+      <tbody>
+        <tr><td>Stroke</td><td><code>2px solid #141414</code></td></tr>
+        <tr><td>Stroke dashed</td><td><code>2px dashed #141414</code></td></tr>
+        <tr><td>Shadow</td><td><code>0 4px 0 0 #141414</code></td></tr>
+        <tr><td>Radius pill</td><td><code>32px</code></td></tr>
+        <tr><td>Radius card</td><td><code>16–20px</code></td></tr>
+        <tr><td>Grid</td><td><code>28px</code>, <code>rgba(20,20,20,0.045)</code></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Controls</h2>
+    <div class="samples">
+      <span class="pill active">Active</span>
+      <span class="pill idle">Idle</span>
+      <span class="pill hover">Hover</span>
+    </div>
+  </section>
+
+  <section>
+    <h2>Card + nested terminal</h2>
+    <div class="card-demo">
+      <div class="label">Widget card</div>
+      <p>Paper surface with ink border and hard offset shadow.</p>
+      <div class="terminal-demo">PS&gt; paper chrome, dark nested panel</div>
+    </div>
+  </section>
+</main>
+</body>
+</html>

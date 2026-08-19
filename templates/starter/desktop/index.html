@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light" />
+    <title>Versailles</title>
+    <!--
+      Single-file desktop dialect
+      .widget              static tile on the canvas
+      .spawnable           overlay template (native window via host)
+      .action-bar          spawnable with a larger data-hooks list
+      data-id              catalog id (calc aliases calculator)
+      data-w / data-h      overlay size
+      data-anchor          spawn dock hint (tr = top-right)
+      data-hooks           allowlist: media, mouse, layout, spawn, shell, hotkey, pty
+
+      Preview: ?m=desktop (default) | widgets | spawn | spawn&id=calculator | action_bar
+      Action bar required ids: cli-root, cli-title, cli-mode-label, cli-term-wrap,
+      cli-term, cli-foot-l, cli-foot-m, cli-foot-r-hint, cli-foot-r, cli-in, cli-ps,
+      cli-echo, cli-sug, cli-res
+    -->
+    <style>
+      :root {
+        --font-sans: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", Roboto, sans-serif;
+        --font-mono: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+        --bg: #f4f4f4;
+        --canvas: #f4f4f4;
+        --paper: #f9fafb;
+        --ink: #141414;
+        --ink-mut: #6b7280;
+        --muted: #6b7280;
+        --chip: #e5e7eb;
+        --white: #ffffff;
+        --dark-card: #131212;
+        --stroke: 2px solid #141414;
+        --stroke-dashed: 2px dashed #141414;
+        --shadow: 0 4px 0 0 #141414;
+        --radius-pill: 32px;
+        --radius-card: 20px;
+        --radius-chip: 9999px;
+      }
+
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body { width: 100%; height: 100%; }
+      body {
+        display: flex;
+        flex-direction: column;
+        font-family: var(--font-sans);
+        color: var(--ink);
+        background-color: var(--bg);
+        background-image:
+          linear-gradient(rgba(20, 20, 20, 0.045) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(20, 20, 20, 0.045) 1px, transparent 1px);
+        background-size: 28px 28px;
+        -webkit-font-smoothing: antialiased;
+        overflow: hidden;
+      }
+      html.overlay, html.overlay body {
+        background: transparent;
+        background-image: none;
+        overflow: hidden;
+      }
+      button { font-family: inherit; border: 0; cursor: pointer; background: none; color: inherit; }
+
+      .stage {
+        position: relative;
+        flex: 1;
+        min-height: 0;
+        padding: 26px;
+        display: flex;
+        align-items: flex-start;
+        gap: 14px;
+      }
+      article.widget {
+        background: var(--paper);
+        border: var(--stroke);
+        box-shadow: var(--shadow);
+        border-radius: var(--radius-card);
+        min-width: 0;
+        min-height: 0;
+      }
+
+      .clock {
+        width: 320px;
+        height: 150px;
+        padding: 16px 20px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 6px;
+      }
+      .clock-time {
+        font: 600 52px var(--font-sans);
+        letter-spacing: -0.03em;
+        font-variant-numeric: tabular-nums;
+        line-height: 1;
+      }
+      .clock-time .sec {
+        display: inline-block;
+        font: 600 12px var(--font-sans);
+        font-variant-numeric: tabular-nums;
+        color: var(--paper);
+        background: var(--ink);
+        border-radius: var(--radius-chip);
+        padding: 3px 8px;
+        margin-left: 8px;
+        vertical-align: 8px;
+        letter-spacing: 0;
+      }
+      .clock-date { font-size: 13px; color: var(--ink-mut); }
+
+      #preview-root { display: none; flex: 1; min-height: 0; padding: 26px; gap: 16px; flex-wrap: wrap; align-content: flex-start; overflow: auto; }
+      body.preview { overflow: auto; }
+      body.preview #preview-root { display: flex; }
+      body.preview-widgets #preview-root { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+      .spawn-surface {
+        background: var(--paper); border: var(--stroke); box-shadow: var(--shadow);
+        border-radius: var(--radius-card); padding: 16px; color: var(--ink);
+      }
+      .spawn-surface.solo { width: 100%; height: 100%; box-shadow: none; border: 0; background: var(--paper); }
+      html.overlay .spawn-surface.solo { box-shadow: var(--shadow); border: var(--stroke); }
+      .unknown-spawn {
+        font: 600 12px/1.4 var(--font-sans); letter-spacing: 0.08em; text-transform: uppercase;
+        color: var(--ink); border: var(--stroke-dashed); border-radius: 16px; padding: 18px;
+      }
+
+      .calc-display { text-align: right; font-size: 34px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -.01em; padding: 10px 6px 12px; min-height: 56px; overflow: hidden; white-space: nowrap; }
+      .calc-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+      .calc-key {
+        height: 46px; border-radius: 12px; font-size: 16px; font-weight: 600;
+        background: var(--paper); color: var(--ink); border: var(--stroke-dashed);
+      }
+      .calc-key:hover { background: var(--chip); }
+      .calc-key.fn { color: var(--ink-mut); }
+      .calc-key.op { border-style: solid; }
+      .calc-key.eq { background: #141414; color: #f9fafb; border-style: solid; }
+      .calc-key.wide { grid-column: span 2; }
+
+      .cli {
+        width: 100%; height: 100%; overflow: hidden; background: var(--paper);
+        box-shadow: inset 0 0 0 2px #141414, 0 4px 0 0 #141414;
+        border-radius: 18px; font-size: 13px; display: flex; flex-direction: column;
+      }
+      .cli-head {
+        display: flex; align-items: center; gap: 10px; padding: 12px 18px 8px;
+        color: var(--ink-mut); font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; flex: none;
+      }
+      .cli-head i { width: 8px; height: 8px; border-radius: 50%; background: var(--ink); flex: none; }
+      .cli-head .pid { margin-left: auto; }
+      .cli-action { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 0 18px; }
+      .cli-line { display: flex; align-items: baseline; gap: 10px; position: relative; }
+      .cli-ps { font-family: var(--font-mono); color: var(--ink-mut); flex: none; }
+      .cli-in {
+        position: absolute; inset: 0; opacity: 0; border: 0; outline: none;
+        font: inherit; font-family: var(--font-mono); color: var(--ink); background: transparent;
+      }
+      .cli-typed { font-family: var(--font-mono); min-height: 1.2em; }
+      .cli-caret { display: inline-block; width: 7px; height: 1em; background: #141414; vertical-align: text-bottom; margin-left: 1px; }
+      .cli-res, .cli-sug { margin-top: 10px; font-size: 12.5px; color: var(--ink); }
+      .cli-term-wrap { flex: 1; min-height: 0; margin: 0 10px 8px; border-radius: 12px; background: var(--dark-card); overflow: hidden; }
+      .cli-term { width: 100%; height: 100%; }
+      .cli-foot {
+        display: flex; gap: 14px; padding: 8px 18px 12px;
+        font: 600 11px/1 var(--font-sans); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-mut); flex: none;
+      }
+      .cli-foot .r { margin-left: auto; }
+      body.preview-action { padding: 0; }
+      body.preview-action #preview-root { padding: 0; display: block; }
+      body.preview-action .spawn-surface { height: 100%; padding: 0; border: 0; box-shadow: none; background: transparent; }
+    </style>
+  </head>
+  <body>
+    <section id="desktop" class="stage">
+      <article class="widget clock" data-id="clock">
+        <div class="clock-time"><span id="clk">--:--</span><span class="sec" id="clk-sec">--</span></div>
+        <div class="clock-date" id="clk-date"></div>
+      </article>
+    </section>
+
+    <template class="spawnable" data-id="calculator" data-w="280" data-h="420" data-anchor="tr" data-hooks="layout">
+      <div class="calc-display" id="calc-out">0</div>
+      <div class="calc-grid">
+        <button class="calc-key fn" data-k="C">AC</button>
+        <button class="calc-key fn" data-k="±">±</button>
+        <button class="calc-key fn" data-k="%">%</button>
+        <button class="calc-key op" data-k="/">÷</button>
+        <button class="calc-key" data-k="7">7</button>
+        <button class="calc-key" data-k="8">8</button>
+        <button class="calc-key" data-k="9">9</button>
+        <button class="calc-key op" data-k="*">×</button>
+        <button class="calc-key" data-k="4">4</button>
+        <button class="calc-key" data-k="5">5</button>
+        <button class="calc-key" data-k="6">6</button>
+        <button class="calc-key op" data-k="-">−</button>
+        <button class="calc-key" data-k="1">1</button>
+        <button class="calc-key" data-k="2">2</button>
+        <button class="calc-key" data-k="3">3</button>
+        <button class="calc-key op" data-k="+">+</button>
+        <button class="calc-key wide" data-k="0">0</button>
+        <button class="calc-key" data-k=".">.</button>
+        <button class="calc-key eq" data-k="=">=</button>
+      </div>
+      <script>
+        (function () {
+          const root = document.querySelector('.spawn-surface[data-id="calculator"], .spawn-surface[data-id="calc"]');
+          if (!root) return;
+          const out = root.querySelector('#calc-out');
+          let cur = '0', prev = null, op = null, fresh = true;
+          const fmt = function (v) {
+            if (!isFinite(v)) return 'Error';
+            return String(Math.round(v * 1e10) / 1e10).slice(0, 12);
+          };
+          const apply = function (a, b, o) {
+            return o === '+' ? a + b : o === '-' ? a - b : o === '*' ? a * b : b === 0 ? NaN : a / b;
+          };
+          root.querySelectorAll('.calc-key').forEach(function (k) {
+            k.onclick = function () {
+              const v = k.dataset.k;
+              if (/[0-9]/.test(v)) { cur = fresh || cur === '0' ? v : cur + v; fresh = false; }
+              else if (v === '.') { if (fresh) { cur = '0.'; fresh = false; } else if (cur.indexOf('.') < 0) cur += '.'; }
+              else if (v === 'C') { cur = '0'; prev = null; op = null; fresh = true; }
+              else if (v === '±') { cur = fmt(-parseFloat(cur)); }
+              else if (v === '%') { cur = fmt(parseFloat(cur) / 100); }
+              else if (v === '=') {
+                if (op && prev !== null) { cur = fmt(apply(prev, parseFloat(cur), op)); prev = null; op = null; fresh = true; }
+              } else {
+                if (op && prev !== null && !fresh) cur = fmt(apply(prev, parseFloat(cur), op));
+                prev = parseFloat(cur); op = v; fresh = true;
+              }
+              out.textContent = cur;
+            };
+          });
+        })();
+      </script>
+    </template>
+
+    <template class="spawnable action-bar"
+              data-id="action-bar"
+              data-hooks="shell,hotkey,spawn,media,mouse,pty,layout"
+              data-w="640"
+              data-h="420">
+      <div class="cli" id="cli-root" data-mode="action">
+        <div class="cli-head">
+          <i></i><span id="cli-title">versailles actions · pwsh</span>
+          <span class="pid" id="cli-mode-label">actions</span>
+        </div>
+        <div class="cli-action" id="cli-action">
+          <div class="cli-line">
+            <span class="cli-ps" id="cli-ps">PS …&gt;</span>
+            <span class="cli-typed">
+              <span class="cli-echo" id="cli-echo"></span><span class="cli-caret"></span>
+            </span>
+            <input class="cli-in" id="cli-in" spellcheck="false" autocomplete="off" aria-label="command input" />
+          </div>
+          <div class="cli-res" id="cli-res"></div>
+          <div class="cli-sug" id="cli-sug"></div>
+        </div>
+        <div class="cli-term-wrap" id="cli-term-wrap" hidden>
+          <div class="cli-term" id="cli-term"></div>
+        </div>
+        <div class="cli-foot" id="cli-foot">
+          <span id="cli-foot-l">enter run</span><span id="cli-foot-m">↑↓ history</span><span id="cli-foot-r-hint">tab complete</span>
+          <span class="r" id="cli-foot-r">term · config · desktopfile · ? web · !! paste ok in terminal</span>
+        </div>
+      </div>
+    </template>
+
+    <div id="preview-root" hidden></div>
+
+    <script>
+      (function boot() {
+        const params = new URLSearchParams(location.search || '');
+        let m = (params.get('m') || 'desktop').trim().toLowerCase().replace(/-/g, '_');
+        if (m === 'spawnables') m = 'spawn';
+        if (m === 'actionbar') m = 'action_bar';
+        const idRaw = (params.get('id') || '').trim();
+        const id = idRaw === 'calc' ? 'calculator' : idRaw;
+        document.documentElement.dataset.mode = m;
+        document.body.dataset.mode = m;
+        if (id) document.body.dataset.spawnId = id;
+
+        const desktop = document.getElementById('desktop');
+        const preview = document.getElementById('preview-root');
+
+        function runScripts(root) {
+          root.querySelectorAll('script').forEach(function (old) {
+            const s = document.createElement('script');
+            s.textContent = old.textContent;
+            old.replaceWith(s);
+          });
+        }
+
+        function materialize(tpl, solo) {
+          const wrap = document.createElement('section');
+          wrap.className = 'spawn-surface' + (solo ? ' solo' : '');
+          wrap.dataset.id = tpl.getAttribute('data-id') || '';
+          const hooks = tpl.getAttribute('data-hooks');
+          if (hooks) wrap.setAttribute('data-hooks', hooks);
+          wrap.appendChild(tpl.content.cloneNode(true));
+          runScripts(wrap);
+          return wrap;
+        }
+
+        function spawnables(includeBar) {
+          return Array.prototype.slice.call(document.querySelectorAll('template.spawnable')).filter(function (t) {
+            return includeBar || !t.classList.contains('action-bar');
+          });
+        }
+
+        function findSpawn(needle) {
+          const want = (needle || '').toLowerCase();
+          return spawnables(true).find(function (t) {
+            const sid = (t.getAttribute('data-id') || '').toLowerCase();
+            return sid === want || (want === 'calc' && sid === 'calculator') || (want === 'calculator' && sid === 'calc');
+          });
+        }
+
+        if (m === 'desktop') return;
+
+        desktop.hidden = true;
+        preview.hidden = false;
+        document.body.classList.add('preview');
+
+        if (m === 'widgets') {
+          document.body.classList.add('preview-widgets');
+          Array.prototype.slice.call(desktop.querySelectorAll('article.widget')).forEach(function (el) {
+            preview.appendChild(el);
+          });
+          return;
+        }
+
+        desktop.remove();
+
+        if (m === 'action_bar') {
+          document.body.classList.add('preview-action');
+          const tpl = document.querySelector('template.action-bar, template.spawnable[data-id="action-bar"]');
+          if (tpl) preview.appendChild(materialize(tpl, true));
+          return;
+        }
+
+        if (m === 'spawn') {
+          if (id) {
+            document.documentElement.classList.add('overlay');
+            const tpl = findSpawn(id);
+            if (!tpl) {
+              const p = document.createElement('p');
+              p.className = 'unknown-spawn';
+              p.textContent = 'unknown spawnable: ' + id;
+              preview.appendChild(p);
+              return;
+            }
+            const w = tpl.getAttribute('data-w');
+            const h = tpl.getAttribute('data-h');
+            if (w) document.body.style.width = w + 'px';
+            if (h) document.body.style.height = h + 'px';
+            preview.style.padding = '0';
+            preview.appendChild(materialize(tpl, true));
+            return;
+          }
+          spawnables(false).forEach(function (t) { preview.appendChild(materialize(t, false)); });
+          return;
+        }
+
+        const p = document.createElement('p');
+        p.className = 'unknown-spawn';
+        p.textContent = 'unknown mode: ' + m;
+        preview.appendChild(p);
+      })();
+    </script>
+    <script>
+      (function loadSdk() {
+        if (window.versailles) return;
+        var s = document.createElement('script');
+        s.src = location.protocol === 'file:' ? '../.sdk/versailles.js' : '/files/.sdk/versailles.js';
+        document.head.appendChild(s);
+      })();
+    </script>
+    <script>
+      (function clockWidget() {
+        const t = document.getElementById('clk');
+        const s = document.getElementById('clk-sec');
+        const d = document.getElementById('clk-date');
+        if (!t) return;
+        const pad = function (n) { return String(n).padStart(2, '0'); };
+        function tick() {
+          const n = new Date();
+          t.textContent = pad(n.getHours()) + ':' + pad(n.getMinutes());
+          s.textContent = pad(n.getSeconds());
+          d.textContent = n.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+        }
+        tick();
+        setInterval(tick, 1000);
+      })();
+    </script>
+  </body>
+</html>

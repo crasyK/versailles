@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-move-widget-cmd"
+description = "Enables the move_widget_cmd command without any pre-configured scope."
+commands.allow = ["move_widget_cmd"]
+
+[[permission]]
+identifier = "deny-move-widget-cmd"
+description = "Denies the move_widget_cmd command without any pre-configured scope."
+commands.deny = ["move_widget_cmd"]

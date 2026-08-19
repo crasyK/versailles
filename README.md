@@ -12,13 +12,13 @@ Versailles runs in the system tray and serves **one HTML document** from `%USERP
 - Example command bar in the same file + `desktop/bar.js` (delete it and the host still works)
 - Named hooks (`data-hooks`) — the host never grants more than the list
 - GSMTC now-playing
-- Alt+Space overlay (the page’s `hotkey` spawnable)
+- Alt+Space overlay (each spawnable can bind its own `data-hotkey`)
 - Silent tray startup
 - Localhost API for automation
 
 ## Install
 
-After install, look for the **Versailles tray icon**. Left-click toggles the page’s hotkey spawnable (the example command bar). **Alt+Space** also toggles it when that piece declares `data-hooks="hotkey"`. The tray menu is **Show desktop page** / **Hide desktop page** and **Quit**. Type `desk` in the example bar to toggle the HTML desktop.
+After install, look for the **Versailles tray icon**. Left-click toggles the first spawnable with the `hotkey` hook (the example command bar). **Alt+Space** also toggles it when that piece declares `data-hooks="hotkey"` and `data-hotkey="Alt+Space"`. Add `data-hotkey` on any other spawnable the same way. The tray menu is **Show desktop page** / **Hide desktop page** and **Quit**. Type `desk` in the example bar to toggle the HTML desktop.
 
 Copy [`templates/starter/`](templates/starter) onto `%USERPROFILE%\Documents\Widgets` if that folder is empty. The host does not seed HTML for you.
 

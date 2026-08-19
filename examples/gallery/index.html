@@ -695,7 +695,7 @@
     </script>
     <script>
       (function loadSdk() {
-        if (window.versailles) return;
+        if (window.versailles && typeof window.versailles.invoke === 'function') return;
         var s = document.createElement('script');
         s.src = location.protocol === 'file:' ? '../.sdk/versailles.js' : '/files/.sdk/versailles.js';
         document.head.appendChild(s);

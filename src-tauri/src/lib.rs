@@ -21,7 +21,7 @@ mod window_manager;
 
 use api::start_api_server;
 use config::ConfigStore;
-use hotkeys::register_launcher_hotkey;
+use hotkeys::register_page_hotkeys;
 use media::{start_media_listener, MediaState};
 use registry::{widgets_root, WidgetRegistry};
 use state::AppState;
@@ -172,16 +172,17 @@ pub fn run() {
                     } = event
                     {
                         let app = tray.app_handle();
-                        let _ = window_manager::show_launcher(app);
+                        if let Some(id) = window_manager::hotkey_piece_id(app) {
+                            window_manager::toggle_hotkey_piece(app, &id);
+                        }
                     }
                 })
                 .build(app)?;
 
-            // Launcher is created lazily on first Alt+Space / tray action.
-            let _ = register_launcher_hotkey(
-                app.handle(),
-                &window_manager::overlay_hotkey_accel(app.handle()),
-            );
+            // Spawnable hotkeys (data-hotkey on pieces with the hotkey hook).
+            if let Err(err) = register_page_hotkeys(app.handle()) {
+                tracing::warn!("page hotkeys failed: {err}");
+            }
             let _ = crate::commands::apply_autostart(app.handle(), config.autostart);
 
             // Pre-create the dim window off the hotkey path so Alt+Space only
@@ -204,10 +205,9 @@ pub fn run() {
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                 let app = hotkey_app.clone();
                 let _ = hotkey_app.run_on_main_thread(move || {
-                    let accel = window_manager::overlay_hotkey_accel(&app);
-                    match register_launcher_hotkey(&app, &accel) {
-                        Ok(()) => tracing::info!("overlay hotkey re-registered ({accel})"),
-                        Err(err) => tracing::warn!("overlay hotkey re-register failed: {err}"),
+                    match register_page_hotkeys(&app) {
+                        Ok(()) => tracing::info!("page hotkeys re-registered"),
+                        Err(err) => tracing::warn!("page hotkeys re-register failed: {err}"),
                     }
                 });
             });

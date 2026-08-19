@@ -98,6 +98,7 @@
       data-w / data-h      overlay size
       data-anchor          c/center/overlay = centered overlay; tr = docked slide-out
       data-hotkey          global accelerator when data-hooks includes hotkey
+                           (any spawnable; Alt+Space, Ctrl+Shift+D, CommandOrControl+K)
       data-hooks           allowlist: media, mouse, layout, spawn, shell, hotkey, pty
 
       Preview: ?m=desktop (default) | widgets | spawn | spawn&id=draw | action_bar
@@ -139,9 +140,38 @@
         overflow: hidden;
       }
       html.overlay, html.overlay body {
+        width: 100% !important;
+        height: 100% !important;
         background: transparent;
         background-image: none;
         overflow: hidden;
+      }
+      html.overlay:has(.cli), html.overlay:has(.cli) body {
+        background: var(--paper);
+      }
+      html.overlay #preview-root,
+      html.overlay body.preview #preview-root {
+        display: flex !important;
+        flex-direction: column;
+        width: 100%;
+        height: 100%;
+        padding: 0;
+        overflow: hidden;
+      }
+      html.overlay .spawn-surface.solo {
+        flex: 1;
+        min-width: 0;
+        min-height: 0;
+        width: 100%;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+      }
+      html.overlay .spawn-surface.solo > .cli {
+        flex: 1;
+        min-height: 0;
+        width: 100%;
+        height: 100%;
       }
       button { font-family: inherit; border: 0; cursor: pointer; background: none; color: inherit; }
 
@@ -200,10 +230,11 @@
         background: var(--paper); border: var(--stroke); box-shadow: var(--shadow);
         border-radius: var(--radius-card); padding: 16px; color: var(--ink);
       }
-      .spawn-surface.solo { width: 100%; height: 100%; box-shadow: none; border: 0; background: var(--paper); }
+      .spawn-surface.solo { width: 100%; height: 100%; padding: 0; box-shadow: none; border: 0; background: var(--paper); }
       html.overlay .spawn-surface.solo { box-shadow: var(--shadow); border: var(--stroke); }
       html.overlay .spawn-surface.solo:has(.cli) {
-        padding: 0; border: 0; box-shadow: none; background: transparent;
+        padding: 0; border: 0; box-shadow: none; background: var(--paper);
+        overflow: hidden; border-radius: 18px;
       }
       .unknown-spawn {
         font: 600 12px/1.4 var(--font-sans); letter-spacing: 0.08em; text-transform: uppercase;
@@ -238,18 +269,75 @@
       }
       .cli-head i { width: 8px; height: 8px; border-radius: 50%; background: var(--ink); flex: none; }
       .cli-head .pid { margin-left: auto; }
-      .cli-action { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 0 18px; }
-      .cli-line { display: flex; align-items: baseline; gap: 10px; position: relative; }
-      .cli-ps { font-family: var(--font-mono); color: var(--ink-mut); flex: none; }
-      .cli-in {
-        position: absolute; inset: 0; opacity: 0; border: 0; outline: none;
-        font: inherit; font-family: var(--font-mono); color: var(--ink); background: transparent;
+      .cli-action { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+      .cli[data-mode="terminal"] .cli-action { display: none; }
+      .cli-line {
+        position: relative; display: flex; align-items: center; gap: 10px;
+        margin: 4px 16px 8px; padding: 10px 16px; align-self: stretch;
+        background: var(--white); border-radius: var(--radius-pill);
+        box-shadow: inset 0 0 0 2px #141414; flex: none;
+        font-family: var(--font-mono); font-size: 12.5px;
       }
-      .cli-typed { font-family: var(--font-mono); min-height: 1.2em; }
-      .cli-caret { display: inline-block; width: 7px; height: 1em; background: #141414; vertical-align: text-bottom; margin-left: 1px; }
-      .cli-res, .cli-sug { margin-top: 10px; font-size: 12.5px; color: var(--ink); }
-      .cli-term-wrap { flex: 1; min-height: 0; margin: 0 10px 8px; border-radius: 12px; background: var(--dark-card); overflow: hidden; }
-      .cli-term { width: 100%; height: 100%; }
+      .cli-ps {
+        color: var(--ink-mut); font-weight: 600; white-space: nowrap;
+        overflow: hidden; text-overflow: ellipsis; max-width: 52%; flex: none;
+      }
+      .cli-typed { display: inline-flex; align-items: center; min-width: 0; }
+      .cli-echo { color: var(--ink); white-space: pre; }
+      .cli-caret {
+        width: 7px; height: 16px; flex: none; margin-left: 2px; border-radius: 1px;
+        background: var(--ink); animation: lnblink 1.2s ease-in-out infinite;
+      }
+      @keyframes lnblink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+      .cli-in {
+        position: absolute; inset: 0; width: 100%; opacity: 0;
+        font: inherit; border: 0; outline: none; background: none; cursor: text;
+      }
+      .cli-res {
+        display: none; margin: 0 16px 6px; padding: 10px 16px; line-height: 1.55;
+        background: var(--white); border-radius: 16px; box-shadow: inset 0 0 0 2px #141414;
+        white-space: pre-wrap; word-break: break-word; flex: none; color: var(--ink); font-size: 13px;
+      }
+      .cli-res.on { display: block; }
+      .cli-res .link { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
+      .cli-sug {
+        padding: 4px 12px 8px; display: flex; flex-direction: column; gap: 4px;
+        flex: 1; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--chip) transparent;
+      }
+      .cli-sug::-webkit-scrollbar { width: 8px; }
+      .cli-sug::-webkit-scrollbar-thumb { background: var(--chip); border-radius: 9999px; }
+      .cl-s {
+        display: flex; justify-content: space-between; align-items: baseline; gap: 16px;
+        padding: 8px 14px; border-radius: 16px; cursor: pointer; flex: none; background: var(--paper);
+      }
+      .cl-s b { color: var(--ink); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .cl-s span {
+        color: var(--ink-mut); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        flex: none; max-width: 48%; font-size: 11.5px;
+      }
+      .cl-s:hover { background: var(--chip); box-shadow: inset 0 0 0 2px #141414; }
+      .cl-s.on, .cl-s.on:hover { background: var(--ink); box-shadow: none; color: var(--paper); }
+      .cl-s:hover b { color: var(--ink); }
+      .cl-s.on b, .cl-s.on:hover b { color: var(--paper); }
+      .cl-s:hover span { color: var(--ink-mut); }
+      .cl-s.on span, .cl-s.on:hover span { color: var(--paper); }
+      .cli-term-wrap {
+        display: none; flex: 1; min-height: 0; margin: 4px 14px 10px;
+        background: var(--dark-card); border-radius: 16px; box-shadow: inset 0 0 0 2px #141414; overflow: hidden;
+      }
+      .cli[data-mode="terminal"] .cli-term-wrap { display: flex; flex-direction: column; }
+      .cli-term-wrap[hidden] { display: none !important; }
+      .cli-term { flex: 1; min-height: 0; width: 100%; padding: 8px 12px 6px; background: var(--dark-card); color-scheme: dark; }
+      .cli-term .xterm, .cli-term .xterm-screen, .cli-term .xterm-viewport { width: 100%; height: 100%; }
+      .cli-term .xterm-viewport {
+        overflow-y: auto !important; background: transparent !important;
+        scrollbar-width: thin; scrollbar-color: #3f3f3f transparent;
+      }
+      .cli-term .xterm-viewport::-webkit-scrollbar { width: 8px; }
+      .cli-term .xterm-viewport::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+      .cli-term .xterm-viewport::-webkit-scrollbar-track { background: transparent; }
+      .cli-term .xterm-viewport::-webkit-scrollbar-thumb { background: #3f3f3f; border-radius: 9999px; }
+      .cli-term .xterm-screen { padding-right: 4px; }
       .cli-foot {
         display: flex; gap: 14px; padding: 8px 18px 12px;
         font: 600 11px/1 var(--font-sans); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-mut); flex: none;
@@ -257,7 +345,7 @@
       .cli-foot .r { margin-left: auto; }
       body.preview-action { padding: 0; }
       body.preview-action #preview-root { padding: 0; display: block; }
-      body.preview-action .spawn-surface { height: 100%; padding: 0; border: 0; box-shadow: none; background: transparent; }
+      body.preview-action .spawn-surface { height: 100%; padding: 0; border: 0; box-shadow: none; background: var(--paper); }
     </style>
   </head>
   <body>
@@ -417,7 +505,7 @@
             <span class="cli-typed">
               <span class="cli-echo" id="cli-echo"></span><span class="cli-caret"></span>
             </span>
-            <input class="cli-in" id="cli-in" spellcheck="false" autocomplete="off" aria-label="command input" />
+            <input class="cli-in" id="cli-in" spellcheck="false" autocomplete="off" autofocus aria-label="command input" />
           </div>
           <div class="cli-res" id="cli-res"></div>
           <div class="cli-sug" id="cli-sug"></div>
@@ -426,8 +514,8 @@
           <div class="cli-term" id="cli-term"></div>
         </div>
         <div class="cli-foot" id="cli-foot">
-          <span id="cli-foot-l">enter run</span><span id="cli-foot-m">↑↓ history</span><span id="cli-foot-r-hint">tab complete</span>
-          <span class="r" id="cli-foot-r">! pwsh · !! term · ? help</span>
+          <span id="cli-foot-l">enter</span><span id="cli-foot-m">tab</span><span id="cli-foot-r-hint">esc</span>
+          <span class="r" id="cli-foot-r">? web · !! term · help</span>
         </div>
       </div>
       <script>
@@ -451,9 +539,12 @@
             });
           }
           var chain = Promise.resolve();
+          if (!(window.versailles && typeof window.versailles.listen === 'function')) {
+            chain = chain.then(function () { return load(sdk + 'versailles.js'); });
+          }
           if (!window.Terminal) chain = chain.then(function () { return load(sdk + 'xterm.js'); });
           if (!window.FitAddon) chain = chain.then(function () { return load(sdk + 'xterm-addon-fit.js'); });
-          chain.then(function () { return load(desk + 'bar.js'); }).catch(function (err) {
+          chain.then(function () { return load(desk + 'bar.js?v=' + Date.now()); }).catch(function (err) {
             console.error('bar engine failed to load', err);
           });
         })();
@@ -547,10 +638,13 @@
               preview.appendChild(p);
               return;
             }
-            const w = tpl.getAttribute('data-w');
-            const h = tpl.getAttribute('data-h');
-            if (w) document.body.style.width = w + 'px';
-            if (h) document.body.style.height = h + 'px';
+            const hosted = !!(window.__TAURI_INTERNALS__ || window.__TAURI__);
+            if (!hosted) {
+              const w = tpl.getAttribute('data-w');
+              const h = tpl.getAttribute('data-h');
+              if (w) document.body.style.width = w + 'px';
+              if (h) document.body.style.height = h + 'px';
+            }
             preview.style.padding = '0';
             preview.appendChild(materialize(tpl, true));
             return;
@@ -567,7 +661,7 @@
     </script>
     <script>
       (function loadSdk() {
-        if (window.versailles) return;
+        if (window.versailles && typeof window.versailles.invoke === 'function') return;
         var s = document.createElement('script');
         s.src = location.protocol === 'file:' ? '../.sdk/versailles.js' : '/files/.sdk/versailles.js';
         document.head.appendChild(s);

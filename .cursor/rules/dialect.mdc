@@ -19,7 +19,7 @@ Required on the opening tag: `data-id`. Optional: `data-w`, `data-h`, `data-anch
 
 `data-anchor="c"` (or `center` / `overlay`) = centered overlay with dim. `tr` = docked slide-out.
 
-The first spawnable with the `hotkey` hook is what Alt+Space toggles. Engine/JS for an example bar lives in the page (`desktop/bar.js`), not the host.
+The first spawnable with the `hotkey` hook is the tray left-click target. Every spawnable with that hook and `data-hotkey` gets its own global shortcut. Engine/JS for an example bar lives in the page (`desktop/bar.js`), not the host.
 
 Host knobs and shortcuts: `<script type="application/json" id="versailles">` in the same HTML file. Runtime (token, session, desktop shown) stays in `.versailles/`.
 

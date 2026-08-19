@@ -1,7 +1,6 @@
 //! Lightweight directory watcher that reloads open widget webviews on save.
 use crate::registry::widgets_root;
 use crate::state::AppState;
-use crate::window_manager::widget_label;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::sync::mpsc::channel;
 use std::time::{Duration, Instant};
@@ -79,6 +78,19 @@ pub fn start_widget_watcher(app: AppHandle) {
                     let _ = app.emit("registry://changed", true);
                     let _ = app.emit("desktop://reload", true);
 
+                    let touches_hotkeys = event.paths.iter().any(|p| {
+                        let s = p.to_string_lossy().replace('\\', "/").to_lowercase();
+                        s.ends_with("/desktop/index.html") || s.ends_with("/versailles.json")
+                    });
+                    if touches_hotkeys {
+                        let app2 = app.clone();
+                        let _ = app.run_on_main_thread(move || {
+                            if let Err(err) = crate::hotkeys::register_page_hotkeys(&app2) {
+                                tracing::warn!("hotkey rebind failed: {err}");
+                            }
+                        });
+                    }
+
                     if let Some(window) = app.get_webview_window("desktop") {
                         // Cross-origin iframe (Vite shell vs :47831 page) — set src, do not touch contentWindow.
                         let _ = window.eval(
@@ -86,17 +98,27 @@ pub fn start_widget_watcher(app: AppHandle) {
                         );
                     }
 
-                    // Reload open widget windows
-                    let open_ids: Vec<String> = {
-                        let state = app.state::<AppState>();
-                        let mgr = state.window_manager.lock().unwrap();
-                        mgr.open_widgets().into_iter().map(|w| w.id).collect()
-                    };
-                    for id in open_ids {
-                        if let Some(window) = app.get_webview_window(&widget_label(&id)) {
-                            let _ = window.eval("location.reload()");
+                    // Never eval/navigate a spawn WebView2 from the watcher — that
+                    // hangs the UI thread on Windows. Destroy them; next toggle creates fresh.
+                    let app_close = app.clone();
+                    let _ = app.run_on_main_thread(move || {
+                        let state = app_close.state::<AppState>();
+                        let ids: Vec<String> = state
+                            .window_manager
+                            .lock()
+                            .unwrap()
+                            .open_widgets()
+                            .into_iter()
+                            .map(|w| w.id)
+                            .collect();
+                        for id in ids {
+                            let _ = crate::window_manager::close_widget_window(
+                                &app_close,
+                                &state.window_manager,
+                                &id,
+                            );
                         }
-                    }
+                    });
                 }
                 Ok(Err(err)) => tracing::debug!("watch event error: {err}"),
                 Err(_) => break,

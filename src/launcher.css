@@ -317,15 +317,40 @@ body {
   width: 100%;
   padding: 8px 12px 6px;
   background: var(--dark-card);
+  color-scheme: dark;
 }
 
-.cli-term .xterm {
+.cli-term .xterm,
+.cli-term .xterm-screen,
+.cli-term .xterm-viewport {
+  width: 100%;
   height: 100%;
 }
 
 .cli-term .xterm-viewport {
   overflow-y: auto !important;
   background: transparent !important;
+  scrollbar-width: thin;
+  scrollbar-color: #3f3f3f transparent;
+}
+
+.cli-term .xterm-viewport::-webkit-scrollbar {
+  width: 8px;
+}
+
+.cli-term .xterm-viewport::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.cli-term .xterm-viewport::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.cli-term .xterm-viewport::-webkit-scrollbar-thumb {
+  background: #3f3f3f;
+  border-radius: 9999px;
 }
 
 .cli-term .xterm-screen {

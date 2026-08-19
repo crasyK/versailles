@@ -68,6 +68,43 @@ impl PageCatalog {
         })
     }
 
+    /// Global accelerators for spawnables that list the `hotkey` hook.
+    /// `(accelerator, piece id)` in page order. Duplicate combos: first wins.
+    /// A piece with no `data-hotkey` uses `fallback` (once), typically `#versailles` `launcher.hotkey`.
+    pub fn hotkey_bindings(&self, fallback: &str) -> Vec<(String, String)> {
+        let fallback = fallback.trim();
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut out = Vec::new();
+        let mut used_fallback = false;
+        for piece in &self.pieces {
+            if piece.kind != PageKind::Spawnable {
+                continue;
+            }
+            if !piece.hooks.iter().any(|h| h == "hotkey") {
+                continue;
+            }
+            let explicit = piece
+                .hotkey
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            let accel = if let Some(value) = explicit {
+                value.to_string()
+            } else if !used_fallback && !fallback.is_empty() {
+                used_fallback = true;
+                fallback.to_string()
+            } else {
+                continue;
+            };
+            let key = accel.to_ascii_lowercase();
+            if !seen.insert(key) {
+                continue;
+            }
+            out.push((accel, piece.id.clone()));
+        }
+        out
+    }
+
     pub fn is_overlay(&self, id: &str) -> bool {
         self.spawnable(id).is_some_and(piece_is_overlay)
     }
@@ -290,6 +327,10 @@ mod tests {
             .hooks
             .iter()
             .any(|h| h == "media"));
+        assert_eq!(
+            cat.hotkey_bindings("Alt+Space"),
+            vec![("Alt+Space".into(), "action-bar".into())]
+        );
         assert!(enforce_caller_hook(html, None, "media").is_ok());
         assert!(enforce_caller_hook(html, Some("now-playing"), "media").is_ok());
         assert!(enforce_caller_hook(html, Some("clock"), "media").is_err());
@@ -313,5 +354,39 @@ mod tests {
         let html = r#"<html><head><script type="application/json" id="other">{}</script></head></html>"#;
         assert!(extract_versailles_json(html).is_none());
         assert!(extract_versailles_json("").is_none());
+    }
+
+    #[test]
+    fn binds_every_hotkey_spawnable() {
+        let html = r#"
+<template class="spawnable" data-id="draw" data-hooks="layout,hotkey" data-hotkey="Ctrl+Shift+D" data-anchor="tr"></template>
+<template class="spawnable action-bar" data-id="action-bar" data-hooks="shell,hotkey" data-hotkey="Alt+Space" data-anchor="c"></template>
+<template class="spawnable" data-id="notes" data-hooks="hotkey" data-anchor="tr"></template>
+<article class="widget" data-id="clock" data-hooks="hotkey" data-hotkey="Ctrl+K"></article>
+<template class="spawnable" data-id="calc" data-anchor="tr" data-hotkey="Ctrl+Shift+C"></template>
+"#;
+        let cat = parse_page(html);
+        assert_eq!(
+            cat.hotkey_bindings("Super+K"),
+            vec![
+                ("Ctrl+Shift+D".into(), "draw".into()),
+                ("Alt+Space".into(), "action-bar".into()),
+                ("Super+K".into(), "notes".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn duplicate_hotkey_first_wins() {
+        let html = r#"
+<template class="spawnable" data-id="a" data-hooks="hotkey" data-hotkey="Alt+Space"></template>
+<template class="spawnable" data-id="b" data-hooks="hotkey" data-hotkey="Alt+Space"></template>
+<template class="spawnable" data-id="c" data-hooks="hotkey"></template>
+"#;
+        let cat = parse_page(html);
+        assert_eq!(
+            cat.hotkey_bindings("Alt+Space"),
+            vec![("Alt+Space".into(), "a".into())]
+        );
     }
 }

@@ -15,7 +15,7 @@ The host never grants more than that list. The catalog is fixed in [`src-tauri/s
 | `layout` | Move the spawn window |
 | `spawn` | Open/toggle another spawnable |
 | `shell` | Open a URL or path (`cli_open`) |
-| `hotkey` | Global accelerator for this spawnable (`data-hotkey`, else config) |
+| `hotkey` | Global accelerator for this spawnable (`data-hotkey` on that piece, else `#versailles` `launcher.hotkey` for the first hook piece) |
 | `pty` | Embedded ConPTY (`pty_open` / write / resize / close) |
 
 Unknown hook names are rejected.

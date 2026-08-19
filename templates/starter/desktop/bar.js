@@ -6,13 +6,31 @@
     if (!caller) return args;
     return Object.assign({ caller }, args || {});
   }
+  function sdk() {
+    const v = window.versailles;
+    if (v && typeof v.invoke === "function") return v;
+    return null;
+  }
   function invoke(cmd, args) {
-    return window.versailles.invoke(cmd, callerArgs(args));
+    const v = sdk();
+    if (v) return v.invoke(cmd, callerArgs(args));
+    const t = window.__TAURI__;
+    if (t?.core?.invoke) return t.core.invoke(cmd, callerArgs(args));
+    return Promise.reject(new Error("Versailles API not available in this window"));
   }
 
   // scripts/bar-shims/event.js
+  function sdk2() {
+    const v = window.versailles;
+    if (v && typeof v.listen === "function") return v;
+    return null;
+  }
   function listen(event, handler) {
-    return window.versailles.listen(event, (payload) => handler({ payload }));
+    const v = sdk2();
+    if (v) return v.listen(event, (payload) => handler({ payload }));
+    const t = window.__TAURI__;
+    if (t?.event?.listen) return t.event.listen(event, handler);
+    return Promise.reject(new Error("Versailles event API not available"));
   }
 
   // scripts/bar-shims/dpi.js
@@ -32,8 +50,58 @@
   };
 
   // scripts/bar-shims/window.js
+  function invoke2(cmd, args) {
+    const v = window.versailles;
+    if (v && typeof v.invoke === "function") return v.invoke(cmd, args);
+    const t = window.__TAURI__;
+    if (t?.core?.invoke) return t.core.invoke(cmd, args);
+    return Promise.reject(new Error("Versailles API not available"));
+  }
+  function label() {
+    return window.__TAURI_INTERNALS__?.metadata?.currentWindow?.label || "widget-action-bar";
+  }
+  function ipcSize(size) {
+    const kind = size?.type === "Physical" ? "Physical" : "Logical";
+    return { [kind]: { width: size.width, height: size.height } };
+  }
+  function ipcPos(pos) {
+    const kind = pos?.type === "Physical" ? "Physical" : "Logical";
+    return { [kind]: { x: pos.x, y: pos.y } };
+  }
   function getCurrentWindow() {
-    return window.__TAURI__.window.getCurrentWindow();
+    const l = label();
+    return {
+      label: l,
+      async setSize(size) {
+        return invoke2("plugin:window|set_size", { label: l, value: ipcSize(size) });
+      },
+      async setPosition(position) {
+        return invoke2("plugin:window|set_position", { label: l, value: ipcPos(position) });
+      },
+      async currentMonitor() {
+        return invoke2("plugin:window|current_monitor");
+      },
+      async isFocused() {
+        return invoke2("plugin:window|is_focused", { label: l });
+      },
+      async onFocusChanged(handler) {
+        const v = window.versailles;
+        if (!v || typeof v.listen !== "function") return () => {
+        };
+        const offFocus = await v.listen("tauri://focus", () => handler({ payload: true }));
+        const offBlur = await v.listen("tauri://blur", () => handler({ payload: false }));
+        return () => {
+          try {
+            offFocus();
+          } catch {
+          }
+          try {
+            offBlur();
+          } catch {
+          }
+        };
+      }
+    };
   }
   async function currentMonitor() {
     return getCurrentWindow().currentMonitor();
@@ -182,7 +250,7 @@
     rows.forEach((r) => {
       const d = document.createElement("div");
       d.className = "cl-s";
-      d.innerHTML = `<b>${esc(r.c)}</b><span>${esc(r.d || "")}</span>`;
+      d.innerHTML = `<b>${esc(r.c)}</b> <span>${esc(r.d || "")}</span>`;
       d.onmousedown = (e) => {
         e.preventDefault();
         activateRow(r);
@@ -241,12 +309,14 @@
     pick(r);
   }
   function defaults() {
-    showRows([
-      { c: "profiles", d: "personal \xB7 work \xB7 dev \xB7 ai \xB7 fun \xB7 folders \xB7 apps", cat: "profiles" },
-      { c: "?  <query>", d: "Google search", cc: "? " },
-      { c: "hf <q>", d: "Hugging Face \xB7 gh github \xB7 yt youtube \xB7 w wiki", cc: "hf " },
-      { c: "?? <query>", d: "search files", cc: "?? " }
-    ]);
+    clearRes();
+    const verbs = [
+      { c: "?", d: "search the web", cc: "? " },
+      { c: "!!", d: "open a terminal", cc: "!!" }
+    ];
+    const shortcuts = PRESETS.filter((p) => p.cat !== "apps").slice(0, 8);
+    const rows2 = shortcuts.length ? shortcuts.map((x) => ({ c: x.n, d: x.d, cc: x.n })) : [];
+    showRows([...rows2, ...verbs]);
   }
   function findPreset(name) {
     const p = name.toLowerCase();
@@ -423,7 +493,12 @@
       footHint.textContent = "paste ok";
       footR.textContent = sessionAlive ? "background live" : "";
     } else {
-      modeLabel.textContent = sessionAlive ? "actions \xB7 live" : "actions";
+      titleEl.textContent = "versailles";
+      modeLabel.textContent = sessionAlive ? "live" : "actions";
+      footL.textContent = "enter";
+      footM.textContent = "tab";
+      footHint.textContent = "esc";
+      footR.textContent = "? web \xB7 !! term \xB7 help";
     }
   }
   async function refreshSessionAlive() {
@@ -497,6 +572,16 @@
     t.open(termHost);
     fitAddon = fit;
     term = t;
+    if (typeof ResizeObserver !== "undefined") {
+      let fitTimer = 0;
+      new ResizeObserver(() => {
+        if (mode !== "terminal") return;
+        window.clearTimeout(fitTimer);
+        fitTimer = window.setTimeout(() => {
+          void fitAndResizePty();
+        }, 40);
+      }).observe(termHost);
+    }
     t.onData((data) => {
       void invoke("pty_write", { data }).catch(() => {
       });
@@ -528,6 +613,8 @@
         h = 420;
       }
       await win.setSize(new LogicalSize(w, h));
+      document.body.style.width = "";
+      document.body.style.height = "";
       if (monitor) {
         const x = monitor.position.x + Math.round((monitor.size.width - w * scale) / 2);
         const y = next === "terminal" ? monitor.position.y + Math.round((monitor.size.height - h * scale) / 2) : monitor.position.y + Math.round(120 * scale);
@@ -767,11 +854,11 @@
     setRes("out", f ? `${list.length} in \u201C${esc(f)}\u201D` : `${list.length} shortcuts \xB7 ${cats.join(" \xB7 ")}`);
     showRows(list.map((x) => ({ c: x.n, d: `${x.cat} \xB7 ${x.d}`, cc: x.n })));
   }
-  async function openFileTarget(target, label) {
+  async function openFileTarget(target, label2) {
     await withBusy(async () => {
       try {
         await invoke("cli_open", { target });
-        setRes("ok", `&rarr; opened <span class="link">${esc(label)}</span>`);
+        setRes("ok", `&rarr; opened <span class="link">${esc(label2)}</span>`);
         await hideLauncherWindow("openFileTarget");
       } catch (e) {
         setRes("err", esc(String(e)));
@@ -1150,26 +1237,18 @@
         }, { focusSteals: false });
       }
       case "help":
-        setRes("out", "grammar \u2014 ? web \xB7 ?? files \xB7 = calc \xB7 term \xB7 profile names (personal, work, dev, fun, apps\u2026)");
+        setRes("out", "type a shortcut name \xB7 or one of these");
         return showRows([
-          ...sessionAlive ? [{ c: "continue", d: "reattach background terminal", cc: "continue" }] : [],
-          { c: "term", d: "open / reattach terminal", cc: "term" },
-          { c: "config", d: "open desktop/index.html", cc: "config" },
-          { c: "desktopfile", d: "open desktop/index.html", cc: "desktopfile" },
-          { c: "? <query>", d: "Google search", cc: "? " },
-          { c: "?? <query>", d: "search files", cc: "?? " },
-          { c: "= <expr>", d: "quick calculator", cc: "= " },
-          { c: "! <cmd>", d: "run inline pwsh", cc: "! " },
-          { c: "!!", d: "open detachable terminal", cc: "!!" },
-          { c: "hf <q>", d: "Hugging Face models (hf models|datasets|spaces)", cc: "hf " },
-          { c: "mail \xB7 github", d: "Gmail \xB7 GitHub (extend via #versailles in index.html)", cc: "mail" },
-          { c: "start", d: "Start menu \xB7 installed apps", cc: "start" },
-          { c: "showdesk", d: "Show desktop (taskbar Win+D)", cc: "showdesk" },
-          { c: "desk", d: "toggle the HTML desktop page", cc: "desk" },
-          { c: "hide <app>", d: "remove an auto-added app from the bar", cc: "hide " },
-          { c: "presets <cat>", d: "browse personal \xB7 work \xB7 dev \xB7 fun \xB7 apps \u2026", cc: "presets " },
-          { c: "lock", d: "lock workstation", cc: "lock" },
-          { c: "cls", d: "reset the bar", cc: "cls" }
+          ...sessionAlive ? [{ c: "continue", d: "reattach terminal", cc: "continue" }] : [],
+          { c: "?", d: "search the web", cc: "? " },
+          { c: "??", d: "search files", cc: "?? " },
+          { c: "!!", d: "open a terminal", cc: "!!" },
+          { c: "!", d: "run pwsh inline", cc: "! " },
+          { c: "=", d: "calculator", cc: "= " },
+          { c: "start", d: "installed apps", cc: "start" },
+          { c: "desk", d: "toggle the desktop page", cc: "desk" },
+          { c: "config", d: "edit index.html", cc: "config" },
+          { c: "lock", d: "lock workstation", cc: "lock" }
         ]);
       case "pwd":
       case "get-location":
@@ -1216,6 +1295,16 @@
   }
   function dismissAction(reason) {
     void hideLauncherWindow(reason);
+  }
+  function focusPrompt() {
+    if (mode === "terminal") {
+      term?.focus();
+      return;
+    }
+    try {
+      inp.focus();
+    } catch {
+    }
   }
   function bindUi() {
     inp.addEventListener("input", () => {
@@ -1281,12 +1370,12 @@
       true
     );
     document.querySelector(".cli").addEventListener("click", () => {
-      if (mode === "action") inp.focus();
-      else term?.focus();
+      focusPrompt();
     });
     void getCurrentWindow().onFocusChanged(({ payload: focused }) => {
       if (focused) {
         clearBlurTimer();
+        requestAnimationFrame(focusPrompt);
         return;
       }
       if (mode === "terminal") return;
@@ -1310,7 +1399,7 @@
     setPrompt();
     applyChrome("action");
     applySeed(seed);
-    inp.focus();
+    focusPrompt();
   }
   function applySeed(seed) {
     if (seed == null || seed === "") return defaults();
@@ -1364,6 +1453,6 @@
     applyChrome("action");
     setPrompt();
     defaults();
-    inp.focus();
+    focusPrompt();
   })();
 })();

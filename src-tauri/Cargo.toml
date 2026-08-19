@@ -1,6 +1,6 @@
 [package]
 name = "versailles"
-version = "0.1.1"
+version = "0.1.2"
 description = "Versailles — lightweight HTML desktop widget host"
 authors = ["you"]
 edition = "2021"

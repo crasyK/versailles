@@ -22,7 +22,7 @@ The host is a small windowing + hooks layer. Pieces on the page are the product.
 | `data-w` | no | Window width in CSS pixels. Default 280. |
 | `data-h` | no | Window height. Default 200. |
 | `data-anchor` | no | Placement. `c` / `center` / `tc` / `overlay` = centered overlay (covers apps, dim, hide/show). `tr` = docked top-right slide-out. |
-| `data-hotkey` | no | Global accelerator when the piece lists the `hotkey` hook. Fallback: `versailles.json` `launcher.hotkey`. |
+| `data-hotkey` | no | Global accelerator for this spawnable when `data-hooks` includes `hotkey`. Format: Tauri accelerators (`Alt+Space`, `Ctrl+Shift+D`, `CommandOrControl+K`). Duplicate combos: first piece on the page wins. A hook piece with no `data-hotkey` uses `#versailles` `launcher.hotkey` (once). |
 | `data-hooks` | no | Comma-separated allowlist. See [`HOOKS.md`](HOOKS.md). |
 
 Duplicate `data-id` values are ignored after the first.
@@ -38,7 +38,18 @@ A spawnable with `data-anchor="c"` (or `center` / `tc` / `overlay`) is an overla
 
 `data-anchor="tr"` stays a docked slide-out. Toggle closes it.
 
-The first spawnable that lists `hotkey` in `data-hooks` is what Alt+Space and tray left-click toggle. No such piece → the hotkey is idle.
+Every spawnable with `hotkey` in `data-hooks` can bind its own combo. Pressing that shortcut toggles that piece (overlay hide/show, slide-out open/close). Tray left-click still toggles the first such piece.
+
+```html
+<template class="spawnable action-bar" data-id="action-bar"
+          data-hooks="shell,hotkey,pty" data-hotkey="Alt+Space" data-anchor="c"
+          data-w="640" data-h="420"></template>
+<template class="spawnable" data-id="draw"
+          data-hooks="layout,hotkey" data-hotkey="Ctrl+Shift+D" data-anchor="tr"
+          data-w="480" data-h="360"></template>
+```
+
+No `hotkey` piece → those shortcuts stay idle. Saving `desktop/index.html` rebinds them; otherwise restart Versailles.
 
 ## Preview query
 

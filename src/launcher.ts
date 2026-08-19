@@ -204,7 +204,7 @@ function showRows(list: Row[]) {
   rows.forEach((r) => {
     const d = document.createElement("div");
     d.className = "cl-s";
-    d.innerHTML = `<b>${esc(r.c)}</b><span>${esc(r.d || "")}</span>`;
+    d.innerHTML = `<b>${esc(r.c)}</b> <span>${esc(r.d || "")}</span>`;
     d.onmousedown = (e) => {
       e.preventDefault();
       activateRow(r);
@@ -271,12 +271,16 @@ function activateRow(r: Row) {
 }
 
 function defaults() {
-  showRows([
-    { c: "profiles", d: "personal · work · dev · ai · fun · folders · apps", cat: "profiles" },
-    { c: "?  <query>", d: "Google search", cc: "? " },
-    { c: "hf <q>", d: "Hugging Face · gh github · yt youtube · w wiki", cc: "hf " },
-    { c: "?? <query>", d: "search files", cc: "?? " },
-  ]);
+  clearRes();
+  const verbs: Row[] = [
+    { c: "?", d: "search the web", cc: "? " },
+    { c: "!!", d: "open a terminal", cc: "!!" },
+  ];
+  const shortcuts = PRESETS.filter((p) => p.cat !== "apps").slice(0, 8);
+  const rows: Row[] = shortcuts.length
+    ? shortcuts.map((x) => ({ c: x.n, d: x.d, cc: x.n }))
+    : [];
+  showRows([...rows, ...verbs]);
 }
 
 function findPreset(name: string): Preset | undefined {
@@ -502,7 +506,12 @@ function applyChrome(next: LauncherMode) {
     footHint.textContent = "paste ok";
     footR.textContent = sessionAlive ? "background live" : "";
   } else {
-    modeLabel.textContent = sessionAlive ? "actions · live" : "actions";
+    titleEl.textContent = "versailles";
+    modeLabel.textContent = sessionAlive ? "live" : "actions";
+    footL.textContent = "enter";
+    footM.textContent = "tab";
+    footHint.textContent = "esc";
+    footR.textContent = "? web · !! term · help";
   }
 }
 
@@ -581,6 +590,17 @@ function ensureTerm(): Terminal {
   fitAddon = fit;
   term = t;
 
+  if (typeof ResizeObserver !== "undefined") {
+    let fitTimer = 0;
+    new ResizeObserver(() => {
+      if (mode !== "terminal") return;
+      window.clearTimeout(fitTimer);
+      fitTimer = window.setTimeout(() => {
+        void fitAndResizePty();
+      }, 40);
+    }).observe(termHost);
+  }
+
   t.onData((data) => {
     void invoke("pty_write", { data }).catch(() => {});
   });
@@ -617,6 +637,8 @@ async function resizeLauncher(next: LauncherMode) {
     }
 
     await win.setSize(new LogicalSize(w, h));
+    document.body.style.width = "";
+    document.body.style.height = "";
 
     if (monitor) {
       const x = monitor.position.x + Math.round((monitor.size.width - w * scale) / 2);
@@ -1300,28 +1322,20 @@ function run(c: string) {
       }, { focusSteals: false });
     }
     case "help":
-      setRes("out", "grammar — ? web · ?? files · = calc · term · profile names (personal, work, dev, fun, apps…)");
+      setRes("out", "type a shortcut name · or one of these");
       return showRows([
         ...(sessionAlive
-          ? [{ c: "continue", d: "reattach background terminal", cc: "continue" }]
+          ? [{ c: "continue", d: "reattach terminal", cc: "continue" }]
           : []),
-        { c: "term", d: "open / reattach terminal", cc: "term" },
-        { c: "config", d: "open desktop/index.html", cc: "config" },
-        { c: "desktopfile", d: "open desktop/index.html", cc: "desktopfile" },
-        { c: "? <query>", d: "Google search", cc: "? " },
-        { c: "?? <query>", d: "search files", cc: "?? " },
-        { c: "= <expr>", d: "quick calculator", cc: "= " },
-        { c: "! <cmd>", d: "run inline pwsh", cc: "! " },
-        { c: "!!", d: "open detachable terminal", cc: "!!" },
-        { c: "hf <q>", d: "Hugging Face models (hf models|datasets|spaces)", cc: "hf " },
-        { c: "mail · github", d: "Gmail · GitHub (extend via #versailles in index.html)", cc: "mail" },
-        { c: "start", d: "Start menu · installed apps", cc: "start" },
-        { c: "showdesk", d: "Show desktop (taskbar Win+D)", cc: "showdesk" },
-        { c: "desk", d: "toggle the HTML desktop page", cc: "desk" },
-        { c: "hide <app>", d: "remove an auto-added app from the bar", cc: "hide " },
-        { c: "presets <cat>", d: "browse personal · work · dev · fun · apps …", cc: "presets " },
+        { c: "?", d: "search the web", cc: "? " },
+        { c: "??", d: "search files", cc: "?? " },
+        { c: "!!", d: "open a terminal", cc: "!!" },
+        { c: "!", d: "run pwsh inline", cc: "! " },
+        { c: "=", d: "calculator", cc: "= " },
+        { c: "start", d: "installed apps", cc: "start" },
+        { c: "desk", d: "toggle the desktop page", cc: "desk" },
+        { c: "config", d: "edit index.html", cc: "config" },
         { c: "lock", d: "lock workstation", cc: "lock" },
-        { c: "cls", d: "reset the bar", cc: "cls" },
       ]);
     case "pwd":
     case "get-location":
@@ -1374,6 +1388,18 @@ async function hideLauncherWindow(reason: string) {
 
 function dismissAction(reason: string) {
   void hideLauncherWindow(reason);
+}
+
+function focusPrompt() {
+  if (mode === "terminal") {
+    term?.focus();
+    return;
+  }
+  try {
+    inp.focus();
+  } catch {
+    /* HWND not ready yet */
+  }
 }
 
 function bindUi() {
@@ -1444,13 +1470,13 @@ document.addEventListener(
 );
 
 document.querySelector(".cli")!.addEventListener("click", () => {
-  if (mode === "action") inp.focus();
-  else term?.focus();
+  focusPrompt();
 });
 
 void getCurrentWindow().onFocusChanged(({ payload: focused }) => {
   if (focused) {
     clearBlurTimer();
+    requestAnimationFrame(focusPrompt);
     return;
   }
   // Terminal mode: keep session alive on focus flicker; only Action auto-dismisses.
@@ -1478,7 +1504,7 @@ async function resetBar(seed?: string) {
   setPrompt();
   applyChrome("action");
   applySeed(seed);
-  inp.focus();
+  focusPrompt();
 }
 
 function applySeed(seed?: string) {
@@ -1538,5 +1564,5 @@ void (async () => {
   applyChrome("action");
   setPrompt();
   defaults();
-  inp.focus();
+  focusPrompt();
 })();

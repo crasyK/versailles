@@ -197,7 +197,9 @@ fn ensure_widget_menu_handler(app: &AppHandle, window: &WebviewWindow, id: &str)
     window.on_menu_event(move |_window, event| {
         let eid = event.id().as_ref();
         if eid == "wlauncher" {
-            let _ = toggle_hotkey_overlay(&app_handle);
+            if let Some(id) = hotkey_piece_id(&app_handle) {
+                toggle_hotkey_piece(&app_handle, &id);
+            }
             return;
         }
         if let Some(rest) = eid.strip_prefix("wclose::") {
@@ -347,7 +349,7 @@ fn force_borderless(window: &WebviewWindow) {
     let _ = window.set_decorations(false);
     let _ = window.set_shadow(false);
     // Do NOT SetWindowRgn here — widgets need full transparent corners;
-    // rounded clip is launcher-only (see ensure_launcher_window / show_launcher_ready).
+    // rounded clip is overlay-only (see clip_round_window).
 
     let Ok(hwnd_raw) = window.hwnd() else {
         return;
@@ -368,10 +370,6 @@ fn force_borderless(window: &WebviewWindow) {
 
 #[cfg(not(windows))]
 fn force_borderless(_window: &WebviewWindow) {}
-
-fn defer_window_focus(window: WebviewWindow) {
-    defer_raise_widget(window, None);
-}
 
 /// Raise a widget off the calling thread. Sync show/focus on the UI/IPC thread
 /// can re-enter WebView2 and freeze the whole desktop.
@@ -475,6 +473,7 @@ struct OpenSpec {
     border_radius: u32,
     default_position: Option<Position>,
     page_surface: bool,
+    resizable: bool,
 }
 
 fn resolve_open_spec(
@@ -511,6 +510,7 @@ fn resolve_open_spec(
             border_radius: 20,
             default_position: None,
             page_surface: true,
+            resizable: crate::page::piece_is_overlay(piece),
         });
     }
 
@@ -544,6 +544,7 @@ fn resolve_open_spec(
         border_radius: widget.manifest.border_radius,
         default_position: widget.manifest.default_position.clone(),
         page_surface: false,
+        resizable: false,
     })
 }
 
@@ -644,7 +645,7 @@ pub fn open_widget_window(
         .transparent(true)
         .always_on_top(on_top)
         .skip_taskbar(true)
-        .resizable(false)
+        .resizable(spec.resizable)
         .visible(false)
         .focused(false)
         .shadow(false)
@@ -910,12 +911,6 @@ pub fn set_always_on_top(
 
 const LAUNCHER_DIM_LABEL: &str = "launcher-dim";
 
-/// Host no longer clones bar chrome into `launcher.html`. Alt+Space opens the
-/// spawnable that declared `data-hooks="hotkey"`.
-pub fn ensure_launcher_window(_app: &AppHandle) -> AppResult<()> {
-    Ok(())
-}
-
 fn overlay_focus_until() -> &'static Mutex<Instant> {
     static SLOT: OnceLock<Mutex<Instant>> = OnceLock::new();
     SLOT.get_or_init(|| Mutex::new(Instant::now()))
@@ -943,21 +938,6 @@ pub fn hotkey_overlay_visible(app: &AppHandle) -> bool {
     app.get_webview_window(&widget_label(&id))
         .and_then(|w| w.is_visible().ok())
         .unwrap_or(false)
-}
-
-pub fn overlay_hotkey_accel(app: &AppHandle) -> String {
-    let state = app.state::<AppState>();
-    let cat = crate::desktop::page_catalog(&state);
-    if let Some(hk) = cat
-        .hotkey_piece()
-        .and_then(|p| p.hotkey.as_deref())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        return hk.to_string();
-    }
-    let fallback = state.config.lock().unwrap().launcher_hotkey.clone();
-    fallback
 }
 
 fn overlay_center_position(app: &AppHandle, width: u32, _height: u32) -> Position {
@@ -1066,13 +1046,21 @@ fn conceal_overlay(app: &AppHandle, id: &str) -> AppResult<()> {
     Ok(())
 }
 
-pub fn toggle_hotkey_overlay(app: &AppHandle) -> AppResult<bool> {
-    let Some(id) = hotkey_piece_id(app) else {
-        tracing::warn!("no spawnable declared data-hooks=hotkey; overlay hotkey is idle");
-        return Ok(false);
-    };
-    let state = app.state::<AppState>();
-    toggle_slideout_widget(app, &state.window_manager, &id)
+/// Toggle the spawnable bound to a `data-hotkey`. Deferred off the shortcut thread
+/// so WebView2 is not created there (that hangs Windows).
+pub fn toggle_hotkey_piece(app: &AppHandle, id: &str) {
+    let app = app.clone();
+    let id = id.to_string();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(10));
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            let state = handle.state::<AppState>();
+            if let Err(err) = toggle_slideout_widget(&handle, &state.window_manager, &id) {
+                tracing::warn!("hotkey spawn '{id}' failed: {err}");
+            }
+        });
+    });
 }
 
 pub fn ensure_launcher_dim(app: &AppHandle) -> AppResult<()> {
@@ -1129,91 +1117,62 @@ fn launcher_monitor_bounds(window: &WebviewWindow) -> (i32, i32, u32, u32, f64) 
 }
 
 pub fn show_launcher(app: &AppHandle) -> AppResult<()> {
-    // Never create WebView2 synchronously on the hotkey/IPC thread — that hangs Windows.
-    // Prewarm owns creation; if somehow missing, create off-thread then show.
-    if app.get_webview_window("launcher").is_none()
-        || app.get_webview_window(LAUNCHER_DIM_LABEL).is_none()
-    {
-        tracing::warn!("launcher windows not ready; creating off hotkey thread");
-        let app = app.clone();
-        std::thread::spawn(move || {
-            let (tx, rx) = std::sync::mpsc::channel();
-            let handle = app.clone();
-            let tx1 = tx.clone();
-            let _ = app.run_on_main_thread(move || {
-                let _ = tx1.send(ensure_launcher_window(&handle));
-            });
-            let _ = rx.recv_timeout(Duration::from_secs(8));
-
-            let handle = app.clone();
-            let tx2 = tx;
-            let _ = app.run_on_main_thread(move || {
-                let _ = tx2.send(ensure_launcher_dim(&handle));
-            });
-            let _ = rx.recv_timeout(Duration::from_secs(8));
-
-            let _ = show_launcher_ready(&app);
-        });
-        return Ok(());
-    }
-    let app = app.clone();
-    std::thread::spawn(move || {
-        let handle = app.clone();
-        let _ = app.run_on_main_thread(move || {
-            let _ = show_launcher_ready(&handle);
-        });
-    });
-    Ok(())
-}
-
-fn show_launcher_ready(app: &AppHandle) -> AppResult<()> {
-    let window = app
-        .get_webview_window("launcher")
-        .ok_or_else(|| AppError::msg("Launcher window missing"))?;
-
-    let (left, top, width, height, scale) = launcher_monitor_bounds(&window);
-
-    if let Some(dim) = app.get_webview_window(LAUNCHER_DIM_LABEL) {
-        let _ = dim.set_position(tauri::Position::Physical(PhysicalPosition { x: left, y: top }));
-        let _ = dim.set_size(tauri::Size::Physical(PhysicalSize { width, height }));
-        let _ = dim.show();
-    }
-
-    let bar_w = (640.0 * scale) as i32;
-    let x = left + (width as i32 - bar_w) / 2;
-    let y = top + (120.0 * scale) as i32;
-    window.set_position(tauri::Position::Physical(PhysicalPosition { x, y }))?;
-
-    let _ = window.set_decorations(false);
-    force_borderless(&window);
-    clip_round_window(&window);
-    let _ = window.show();
-    force_borderless(&window);
-    clip_round_window(&window);
-    let _ = window.set_always_on_top(true);
-    defer_window_focus(window);
-    let seed = take_launcher_seed().unwrap_or_default();
-    let _ = app.emit("launcher://shown", seed);
-    Ok(())
-}
-
-/// Hide dim + launcher off the calling invoke/hotkey thread.
-/// Sync hide from a webview invoke re-enters WebView2 and can Application Hang.
-pub fn hide_launcher(app: &AppHandle) -> AppResult<()> {
+    // Never create WebView2 on the hotkey/IPC thread — that hangs Windows.
     let app = app.clone();
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(10));
         let handle = app.clone();
         let _ = app.run_on_main_thread(move || {
-            if let Some(dim) = handle.get_webview_window(LAUNCHER_DIM_LABEL) {
-                let _ = dim.hide();
+            let _ = ensure_launcher_dim(&handle);
+            let Some(id) = hotkey_piece_id(&handle) else {
+                tracing::warn!("no spawnable declared data-hooks=hotkey; overlay is idle");
+                return;
+            };
+            let state = handle.state::<AppState>();
+            if let Err(err) = reveal_overlay(&handle, &state.window_manager, &id) {
+                tracing::warn!("overlay '{id}' failed to show: {err}");
             }
-            if let Some(window) = handle.get_webview_window("launcher") {
-                let _ = window.hide();
-            }
-            let _ = handle.emit("launcher://hidden", true);
         });
     });
+    Ok(())
+}
+
+/// Hide dim + overlay spawnables off the calling invoke/hotkey thread.
+/// Sync hide from a webview invoke re-enters WebView2 and can Application Hang.
+pub fn hide_launcher(app: &AppHandle) -> AppResult<()> {
+    let overlay_ids = {
+        let state = app.state::<AppState>();
+        let cat = crate::desktop::page_catalog(&state);
+        cat.pieces
+            .iter()
+            .filter(|p| {
+                p.kind == crate::page::PageKind::Spawnable && crate::page::piece_is_overlay(p)
+            })
+            .map(|p| p.id.clone())
+            .collect::<Vec<_>>()
+    };
+    let mut hid_any = false;
+    for id in overlay_ids {
+        let visible = app
+            .get_webview_window(&widget_label(&id))
+            .and_then(|w| w.is_visible().ok())
+            .unwrap_or(false);
+        if visible {
+            hid_any = true;
+            let _ = conceal_overlay(app, &id);
+        }
+    }
+    if !hid_any {
+        let app = app.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(10));
+            let handle = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                hide_overlay_dim(&handle);
+                emit_overlay_hidden(&handle);
+            });
+        });
+    }
     Ok(())
 }
 

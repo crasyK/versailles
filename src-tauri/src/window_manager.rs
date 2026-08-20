@@ -234,8 +234,12 @@ pub(crate) fn persistable_session(app: &AppHandle) -> Vec<SessionWidget> {
 
 fn persist_session(app: &AppHandle) {
     let state = app.state::<AppState>();
+    // persistable_session → page_catalog → read_desktop_html locks config.
+    // Snapshot first: std Mutex is not reentrant, so holding it here deadlocks
+    // the caller, then the API runtime, then the UI thread (WebView2 GPU kill).
+    let session = persistable_session(app);
     let mut config = state.config.lock().unwrap();
-    config.session_widgets = persistable_session(app);
+    config.session_widgets = session;
     let _ = state.store.lock().unwrap().save_runtime_from_app(&config);
 }
 
@@ -474,6 +478,9 @@ struct OpenSpec {
     default_position: Option<Position>,
     page_surface: bool,
     resizable: bool,
+    /// Centered overlays stay transparent; docked slide-outs are opaque.
+    /// Transparent WebView2 plus GPU-heavy page surfaces can hang the process.
+    transparent: bool,
 }
 
 fn resolve_open_spec(
@@ -500,6 +507,7 @@ fn resolve_open_spec(
             pairs.append_pair("versaillesWidgetId", &piece.id);
             pairs.append_pair("deckWidgetId", &piece.id);
         }
+        let overlay = crate::page::piece_is_overlay(piece);
         return Ok(OpenSpec {
             id: piece.id.clone(),
             width: piece.width,
@@ -510,7 +518,8 @@ fn resolve_open_spec(
             border_radius: 20,
             default_position: None,
             page_surface: true,
-            resizable: crate::page::piece_is_overlay(piece),
+            resizable: overlay,
+            transparent: overlay,
         });
     }
 
@@ -545,15 +554,46 @@ fn resolve_open_spec(
         default_position: widget.manifest.default_position.clone(),
         page_surface: false,
         resizable: false,
+        transparent: true,
     })
 }
 
-fn page_surface_chrome_script(id: &str) -> String {
+fn page_surface_chrome_script(id: &str, opaque: bool) -> String {
     let id_js = serde_json::to_string(id).unwrap_or_else(|_| "null".into());
+    let opaque_js = if opaque {
+        r#"try{document.documentElement.style.background='#f9fafb';document.body&&(document.body.style.background='#f9fafb');}catch(e){}"#
+    } else {
+        ""
+    };
     format!(
         r#"(function(){{
   window.__VERSAILLES_WIDGET_ID__ = {id_js};
   window.__DECK_WIDGET_ID__ = {id_js};
+  {opaque_js}
+  function versaillesBindPageChrome() {{
+    try {{
+      if (window.__VERSAILLES_NATIVE_CHROME__ || window.__DECK_NATIVE_CHROME__) return;
+      var root = document.querySelector('.spawn-surface') || document.body;
+      if (window.versailles && typeof window.versailles.enableNativeChrome === 'function') {{
+        window.versailles.enableNativeChrome(root);
+        return;
+      }}
+      var n = 0;
+      var t = setInterval(function () {{
+        if (window.versailles && typeof window.versailles.enableNativeChrome === 'function') {{
+          clearInterval(t);
+          window.versailles.enableNativeChrome(root);
+        }} else if (++n > 40) {{
+          clearInterval(t);
+        }}
+      }}, 100);
+    }} catch (err) {{}}
+  }}
+  if (document.readyState === 'loading') {{
+    document.addEventListener('DOMContentLoaded', versaillesBindPageChrome, {{ once: true }});
+  }} else {{
+    versaillesBindPageChrome();
+  }}
 }})();"#
     )
 }
@@ -631,7 +671,7 @@ pub fn open_widget_window(
     let opacity = spec.opacity.clamp(0.05, 1.0);
     let radius = spec.border_radius;
     let inject = if spec.page_surface {
-        page_surface_chrome_script(id)
+        page_surface_chrome_script(id, !spec.transparent)
     } else {
         widget_host_chrome_script(id, opacity, radius)
     };
@@ -642,7 +682,7 @@ pub fn open_widget_window(
         .title("")
         .inner_size(spec.width as f64, spec.height as f64)
         .decorations(false)
-        .transparent(true)
+        .transparent(spec.transparent)
         .always_on_top(on_top)
         .skip_taskbar(true)
         .resizable(spec.resizable)
@@ -728,18 +768,19 @@ pub fn open_widget_window(
     });
 
     // Belt-and-suspenders: re-apply after show in case the first paint raced init.
-    let delayed = window.clone();
-    let reinject = inject.clone();
-    std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(250));
-        if let Err(err) = delayed.eval(&reinject) {
-            tracing::warn!("widget host chrome re-eval failed: {err}");
-        }
-    });
+    {
+        let delayed = window.clone();
+        let reinject = inject.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(250));
+            if let Err(err) = delayed.eval(&reinject) {
+                tracing::warn!("widget host chrome re-eval failed: {err}");
+            }
+        });
+    }
 
     ensure_widget_menu_handler(app, &window, id);
 
-    // Re-assert physical position after show — Win32 often nudges new windows.
     defer_raise_widget(window.clone(), Some(pos.clone()));
     force_borderless(&window);
 
@@ -968,6 +1009,18 @@ fn hide_overlay_dim(app: &AppHandle) {
     }
 }
 
+fn overlay_spawn_ids(app: &AppHandle) -> Vec<String> {
+    let state = app.state::<AppState>();
+    let cat = crate::desktop::page_catalog(&state);
+    cat.pieces
+        .iter()
+        .filter(|p| {
+            p.kind == crate::page::PageKind::Spawnable && crate::page::piece_is_overlay(p)
+        })
+        .map(|p| p.id.clone())
+        .collect()
+}
+
 fn emit_overlay_shown(app: &AppHandle, id: &str) {
     let seed = take_launcher_seed().unwrap_or_default();
     let _ = app.emit("overlay://shown", &seed);
@@ -1140,17 +1193,7 @@ pub fn show_launcher(app: &AppHandle) -> AppResult<()> {
 /// Hide dim + overlay spawnables off the calling invoke/hotkey thread.
 /// Sync hide from a webview invoke re-enters WebView2 and can Application Hang.
 pub fn hide_launcher(app: &AppHandle) -> AppResult<()> {
-    let overlay_ids = {
-        let state = app.state::<AppState>();
-        let cat = crate::desktop::page_catalog(&state);
-        cat.pieces
-            .iter()
-            .filter(|p| {
-                p.kind == crate::page::PageKind::Spawnable && crate::page::piece_is_overlay(p)
-            })
-            .map(|p| p.id.clone())
-            .collect::<Vec<_>>()
-    };
+    let overlay_ids = overlay_spawn_ids(app);
     let mut hid_any = false;
     for id in overlay_ids {
         let visible = app

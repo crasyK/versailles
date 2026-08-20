@@ -18,8 +18,10 @@ use tauri_plugin_autostart::ManagerExt;
 
 fn persist_session(app: &AppHandle) -> AppResult<()> {
     let state = app.state::<AppState>();
+    // Snapshot before locking: persistable_session re-locks config internally.
+    let session = crate::window_manager::persistable_session(app);
     let mut config = state.config.lock().unwrap();
-    config.session_widgets = crate::window_manager::persistable_session(app);
+    config.session_widgets = session;
     let result = state.store.lock().unwrap().save_runtime_from_app(&config);
     result
 }
@@ -135,15 +137,25 @@ pub async fn toggle_slideout(
     caller: Option<String>,
 ) -> AppResult<bool> {
     require_hook(&state, &caller, "spawn")?;
+    // Never create WebView2 directly from the IPC/async stack — that hangs
+    // Windows (same pattern as toggle_hotkey_piece / show_launcher).
     let app2 = app.clone();
     let id2 = id.clone();
     let (tx, rx) = tokio::sync::oneshot::channel();
-    app.run_on_main_thread(move || {
-        let state = app2.state::<AppState>();
-        let result = toggle_slideout_widget(&app2, &state.window_manager, &id2);
-        let _ = tx.send(result);
-    })
-    .map_err(|e| crate::error::AppError::msg(e.to_string()))?;
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let handle = app2.clone();
+        let id3 = id2.clone();
+        let _ = app2.run_on_main_thread(move || {
+            let state = handle.state::<AppState>();
+            let result = toggle_slideout_widget(
+                &handle,
+                &state.window_manager,
+                &id3,
+            );
+            let _ = tx.send(result);
+        });
+    });
 
     let opened = rx
         .await
@@ -279,9 +291,11 @@ pub fn apply_layout(
 ) -> AppResult<Vec<OpenWidgetState>> {
     let layout = state.store.lock().unwrap().load_layout(&name)?;
     let opened = apply_layout_template(&app, &state.window_manager, &layout)?;
+    // Snapshot before locking: persistable_session re-locks config internally.
+    let session = crate::window_manager::persistable_session(&app);
     let mut config = state.config.lock().unwrap();
     config.active_layout = Some(name);
-    config.session_widgets = crate::window_manager::persistable_session(&app);
+    config.session_widgets = session;
     state.store.lock().unwrap().save_runtime_from_app(&config)?;
     Ok(opened)
 }

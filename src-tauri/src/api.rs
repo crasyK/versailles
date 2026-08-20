@@ -391,8 +391,10 @@ async fn show_launcher_api(
 
 fn persist_session(app: &AppHandle) -> AppResult<()> {
     let state = app.state::<AppState>();
+    // Snapshot before locking: persistable_session re-locks config internally.
+    let session = crate::window_manager::persistable_session(app);
     let mut config = state.config.lock().unwrap();
-    config.session_widgets = crate::window_manager::persistable_session(app);
+    config.session_widgets = session;
     let result = state.store.lock().unwrap().save_runtime_from_app(&config);
     result
 }

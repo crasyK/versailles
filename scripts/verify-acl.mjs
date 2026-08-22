@@ -14,7 +14,7 @@ const build = read("src-tauri/build.rs");
 const caps = JSON.parse(read("src-tauri/capabilities/default.json"));
 
 const handlerBlock = lib.match(/generate_handler!\[\s*([\s\S]*?)\]/)?.[1] ?? "";
-const registered = [...handlerBlock.matchAll(/(?:commands|cli|pty|apps|desktop)::(\w+)/g)].map((m) => m[1]);
+const registered = [...handlerBlock.matchAll(/(?:commands|cli|pty|apps|desktop|engine_runtime)::(\w+)/g)].map((m) => m[1]);
 
 const buildBlock = build.match(/\.commands\(\&\[([\s\S]*?)\]\)/)?.[1] ?? "";
 const manifest = [...buildBlock.matchAll(/"(\w+)"/g)].map((m) => m[1]);

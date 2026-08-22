@@ -337,15 +337,15 @@
       .cl-s:hover span { color: var(--ink-mut); }
       .cl-s.on span, .cl-s.on:hover span { color: var(--paper); }
       .cli-term-wrap {
-        display: none; flex: 1; min-height: 0; margin: 4px 14px 10px;
+        display: none; flex: 1; min-height: 0; margin: 4px 14px 10px; position: relative;
         background: var(--dark-card); border-radius: 16px; box-shadow: inset 0 0 0 2px #141414; overflow: hidden;
       }
       .cli[data-mode="terminal"] .cli-term-wrap { display: flex; flex-direction: column; }
       .cli-term-wrap[hidden] { display: none !important; }
-      .cli-term { flex: 1; min-height: 0; width: 100%; padding: 8px 12px 6px; background: var(--dark-card); color-scheme: dark; }
-      .cli-term .xterm, .cli-term .xterm-screen, .cli-term .xterm-viewport { width: 100%; height: 100%; }
+      .cli-term { flex: 1; min-height: 0; width: 100%; padding: 8px 12px 6px; background: var(--dark-card); color-scheme: dark; touch-action: pan-y; overscroll-behavior: contain; }
+      .cli-term .xterm { width: 100%; height: 100%; }
       .cli-term .xterm-viewport {
-        overflow-y: auto !important; background: transparent !important;
+        overflow-y: scroll !important; background: transparent !important;
         scrollbar-width: thin; scrollbar-color: #3f3f3f transparent;
       }
       .cli-term .xterm-viewport::-webkit-scrollbar { width: 8px; }
@@ -353,6 +353,45 @@
       .cli-term .xterm-viewport::-webkit-scrollbar-track { background: transparent; }
       .cli-term .xterm-viewport::-webkit-scrollbar-thumb { background: #3f3f3f; border-radius: 9999px; }
       .cli-term .xterm-screen { padding-right: 4px; }
+      .cli-term-find {
+        position: absolute; top: 10px; right: 12px; z-index: 6;
+        display: none; align-items: center; gap: 6px;
+        padding: 6px 8px 6px 10px;
+        background: var(--paper); color: var(--ink);
+        border: 2px solid #141414; border-radius: 16px;
+        box-shadow: 0 4px 0 0 #141414;
+      }
+      .cli-term-find.on { display: flex; }
+      .cli-term-find input {
+        width: 160px; border: 0; outline: none; background: transparent;
+        font: 600 12px/1 var(--font-sans); color: var(--ink);
+      }
+      .cli-term-find button {
+        height: 26px; min-width: 26px; padding: 0 8px;
+        border: 2px dashed #141414; border-radius: 9999px;
+        background: var(--paper); color: var(--ink);
+        font: 600 11px/1 var(--font-sans); letter-spacing: 0.08em; text-transform: uppercase;
+        cursor: pointer;
+      }
+      .cli-term-find button.on,
+      .cli-term-find button:active {
+        background: var(--ink); color: var(--paper); border-style: solid;
+      }
+      .cli-term-menu {
+        position: fixed; z-index: 20; display: none; flex-direction: column;
+        min-width: 148px; padding: 6px;
+        background: var(--paper); color: var(--ink);
+        border: 2px solid #141414; border-radius: 16px;
+        box-shadow: 0 4px 0 0 #141414;
+      }
+      .cli-term-menu.on { display: flex; }
+      .cli-term-menu button {
+        text-align: left; padding: 8px 12px; border: 0; background: transparent;
+        color: var(--ink); border-radius: 12px; cursor: pointer;
+        font: 600 11px/1 var(--font-sans); letter-spacing: 0.08em; text-transform: uppercase;
+      }
+      .cli-term-menu button:hover { background: var(--chip); }
+      .cli-term-menu button:disabled { opacity: 0.35; cursor: default; }
       .cli-foot {
         display: flex; gap: 14px; padding: 8px 18px 12px;
         font: 600 11px/1 var(--font-sans); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-mut); flex: none;
@@ -555,6 +594,9 @@
           }
           if (!window.Terminal) chain = chain.then(function () { return load(sdk + 'xterm.js'); });
           if (!window.FitAddon) chain = chain.then(function () { return load(sdk + 'xterm-addon-fit.js'); });
+          if (!window.WebglAddon) chain = chain.then(function () { return load(sdk + 'xterm-addon-webgl.js').catch(function () {}); });
+          if (!window.WebLinksAddon) chain = chain.then(function () { return load(sdk + 'xterm-addon-web-links.js').catch(function () {}); });
+          if (!window.SearchAddon) chain = chain.then(function () { return load(sdk + 'xterm-addon-search.js').catch(function () {}); });
           chain.then(function () { return load(desk + 'bar.js?v=' + Date.now()); }).catch(function (err) {
             console.error('bar engine failed to load', err);
           });

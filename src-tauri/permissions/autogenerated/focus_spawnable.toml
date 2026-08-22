@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-focus-spawnable"
+description = "Enables the focus_spawnable command without any pre-configured scope."
+commands.allow = ["focus_spawnable"]
+
+[[permission]]
+identifier = "deny-focus-spawnable"
+description = "Denies the focus_spawnable command without any pre-configured scope."
+commands.deny = ["focus_spawnable"]

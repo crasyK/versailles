@@ -4,6 +4,7 @@ mod cli;
 mod commands;
 mod config;
 mod desktop;
+mod engine_runtime;
 mod error;
 mod page;
 mod hotkeys;
@@ -349,6 +350,11 @@ pub fn run() {
             commands::get_monitors,
             commands::toggle_launcher,
             commands::dismiss_launcher,
+            commands::arm_overlay_focus_guard,
+            commands::focus_spawnable,
+            commands::get_spawnable_engine_context,
+            engine_runtime::get_engine_runtime,
+            engine_runtime::patch_engine_runtime,
             commands::list_layouts,
             commands::save_layout,
             commands::apply_layout,

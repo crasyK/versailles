@@ -73,6 +73,8 @@ pub fn reveal_desktop_window(app: &AppHandle) -> AppResult<()> {
     ensure_desktop_window(app, url)?;
     close_page_embedded_windows(app);
     emit_layout(app);
+    // Desktop iframe may have failed if it raced the file server on first boot.
+    let _ = app.emit("desktop://reload", true);
     set_desktop_tray_label(app, true);
     Ok(())
 }

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-engine-runtime"
+description = "Enables the get_engine_runtime command without any pre-configured scope."
+commands.allow = ["get_engine_runtime"]
+
+[[permission]]
+identifier = "deny-get-engine-runtime"
+description = "Denies the get_engine_runtime command without any pre-configured scope."
+commands.deny = ["get_engine_runtime"]

@@ -5,9 +5,11 @@ use tauri::{AppHandle, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 /// Register a global shortcut for every spawnable with the `hotkey` hook.
+///
+/// Never clears existing shortcuts until a parse yields at least one binding.
+/// Mid-save / empty reads of `desktop/index.html` used to call `unregister_all`
+/// first and leave Alt+Space dead for the rest of the session.
 pub fn register_page_hotkeys(app: &AppHandle) -> AppResult<()> {
-    let _ = app.global_shortcut().unregister_all();
-
     let bindings = {
         let state = app.state::<crate::state::AppState>();
         let cat = crate::desktop::page_catalog(&state);
@@ -16,10 +18,15 @@ pub fn register_page_hotkeys(app: &AppHandle) -> AppResult<()> {
     };
 
     if bindings.is_empty() {
-        tracing::warn!("no spawnable declared data-hooks=hotkey; global hotkeys are idle");
+        tracing::warn!(
+            "no spawnable declared data-hooks=hotkey; keeping existing global hotkeys"
+        );
         return Ok(());
     }
 
+    let _ = app.global_shortcut().unregister_all();
+
+    let mut registered = 0usize;
     for (accel, id) in bindings {
         let shortcut: Shortcut = match accel.parse() {
             Ok(s) => s,
@@ -36,9 +43,16 @@ pub fn register_page_hotkeys(app: &AppHandle) -> AppResult<()> {
             }
             toggle_hotkey_piece(&app_handle, &piece_id);
         }) {
-            Ok(()) => tracing::info!("hotkey {accel} → {id}"),
+            Ok(()) => {
+                registered += 1;
+                tracing::info!("hotkey {accel} → {id}");
+            }
             Err(e) => tracing::warn!("failed to register '{accel}' for '{id}': {e}"),
         }
+    }
+
+    if registered == 0 {
+        tracing::warn!("hotkey parse produced bindings but none registered");
     }
     Ok(())
 }

@@ -1,6 +1,7 @@
 //! Parse `desktop/index.html` for widgets and spawnables.
 
 use crate::error::{AppError, AppResult};
+use crate::config::{SpawnableConfig, UserConfig};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -24,6 +25,8 @@ pub struct PagePiece {
     pub anchor: Option<String>,
     /// Global accelerator when the piece lists the `hotkey` hook (`data-hotkey`).
     pub hotkey: Option<String>,
+    /// `data-dismiss-on-blur="true|false"` — override blur auto-hide for overlays.
+    pub dismiss_on_blur: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -66,6 +69,18 @@ impl PageCatalog {
         self.pieces.iter().find(|p| {
             p.kind == PageKind::Spawnable && p.hooks.iter().any(|h| h == "hotkey")
         })
+    }
+
+    /// Resolve tray / show_launcher target: explicit primary id, else first hotkey piece.
+    pub fn hotkey_piece_with_primary(&self, primary: Option<&str>) -> Option<&PagePiece> {
+        if let Some(id) = primary.map(str::trim).filter(|s| !s.is_empty()) {
+            if let Some(p) = self.get(id) {
+                if p.kind == PageKind::Spawnable && p.hooks.iter().any(|h| h == "hotkey") {
+                    return Some(p);
+                }
+            }
+        }
+        self.hotkey_piece()
     }
 
     /// Global accelerators for spawnables that list the `hotkey` hook.
@@ -175,6 +190,11 @@ pub fn parse_page(html: &str) -> PageCatalog {
             .unwrap_or_default();
         let anchor = attr(tag, "data-anchor");
         let hotkey = attr(tag, "data-hotkey").filter(|s| !s.trim().is_empty());
+        let dismiss_on_blur = attr(tag, "data-dismiss-on-blur").and_then(|v| match v.trim().to_ascii_lowercase().as_str() {
+            "true" | "1" | "yes" => Some(true),
+            "false" | "0" | "no" => Some(false),
+            _ => None,
+        });
         pieces.push(PagePiece {
             id,
             kind,
@@ -183,6 +203,7 @@ pub fn parse_page(html: &str) -> PageCatalog {
             hooks,
             anchor,
             hotkey,
+            dismiss_on_blur,
         });
     }
     PageCatalog { pieces }
@@ -252,6 +273,42 @@ fn attr(tag: &str, name: &str) -> Option<String> {
 
 pub fn unknown_spawn(id: &str) -> AppError {
     AppError::msg(format!("Unknown spawnable '{id}'"))
+}
+
+fn spawnable_config<'a>(user: &'a UserConfig, piece_id: &str) -> Option<&'a SpawnableConfig> {
+    let key = piece_id.trim().to_ascii_lowercase();
+    user.spawnables.get(&key).or_else(|| user.spawnables.get(piece_id))
+}
+
+/// Whether an overlay spawnable should auto-hide when its window loses focus.
+pub fn piece_dismiss_on_blur(piece: &PagePiece, user: &UserConfig) -> bool {
+    if let Some(v) = piece.dismiss_on_blur {
+        return v;
+    }
+    if let Some(cfg) = spawnable_config(user, &piece.id) {
+        if let Some(overlay) = &cfg.overlay {
+            if let Some(v) = overlay.dismiss_on_blur {
+                return v;
+            }
+        }
+    }
+    // PTY spawnables keep sessions alive across blur by default.
+    if piece.hooks.iter().any(|h| h == "pty") {
+        return false;
+    }
+    true
+}
+
+/// Whether the spawn window background may start a native drag.
+pub fn piece_draggable(piece: &PagePiece, user: &UserConfig) -> bool {
+    if let Some(cfg) = spawnable_config(user, &piece.id) {
+        if let Some(overlay) = &cfg.overlay {
+            if let Some(v) = overlay.draggable {
+                return v;
+            }
+        }
+    }
+    !piece_is_overlay(piece)
 }
 
 /// Inner JSON of `<script type="application/json" id="versailles">…</script>`.

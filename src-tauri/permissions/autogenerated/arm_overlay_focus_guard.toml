@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-arm-overlay-focus-guard"
+description = "Enables the arm_overlay_focus_guard command without any pre-configured scope."
+commands.allow = ["arm_overlay_focus_guard"]
+
+[[permission]]
+identifier = "deny-arm-overlay-focus-guard"
+description = "Denies the arm_overlay_focus_guard command without any pre-configured scope."
+commands.deny = ["arm_overlay_focus_guard"]

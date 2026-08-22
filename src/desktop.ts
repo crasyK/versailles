@@ -44,6 +44,36 @@ void (async () => {
   } catch {
     /* page optional until the file exists */
   }
+
+  // If the file server raced boot, iframe shows connection-refused — retry a few times.
+  pageEl.addEventListener("load", () => {
+    try {
+      const href = pageEl.contentWindow?.location?.href ?? "";
+      if (/chrome-error:|error-page|ERR_/i.test(href)) {
+        window.setTimeout(() => reloadPage(), 800);
+      }
+    } catch {
+      /* cross-origin ok — real page loaded from file server */
+    }
+  });
+
+  let retries = 0;
+  const bootRetry = window.setInterval(() => {
+    if (!pageEl.src || retries++ > 6) {
+      window.clearInterval(bootRetry);
+      return;
+    }
+    // Empty iframe or still no layout — ask host again.
+    void invoke<DesktopLayout>("get_desktop_layout")
+      .then((layout) => {
+        if (layout.pageUrl) {
+          applyPage(layout.pageUrl, true);
+          window.clearInterval(bootRetry);
+        }
+      })
+      .catch(() => {});
+  }, 700);
+
   await listen<DesktopLayout>("desktop://layout", (ev) => applyPage(ev.payload.pageUrl, true));
   await listen("desktop://reload", () => reloadPage());
   await listen("registry://changed", () => reloadPage());

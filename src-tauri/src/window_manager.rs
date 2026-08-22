@@ -558,17 +558,23 @@ fn resolve_open_spec(
     })
 }
 
-fn page_surface_chrome_script(id: &str, opaque: bool) -> String {
+fn page_surface_chrome_script(id: &str, opaque: bool, allow_drag: bool) -> String {
     let id_js = serde_json::to_string(id).unwrap_or_else(|_| "null".into());
     let opaque_js = if opaque {
         r#"try{document.documentElement.style.background='#f9fafb';document.body&&(document.body.style.background='#f9fafb');}catch(e){}"#
     } else {
         ""
     };
+    let skip_drag = if allow_drag {
+        ""
+    } else {
+        "window.__VERSAILLES_NATIVE_CHROME__=true;window.__DECK_NATIVE_CHROME__=true;"
+    };
     format!(
         r#"(function(){{
   window.__VERSAILLES_WIDGET_ID__ = {id_js};
   window.__DECK_WIDGET_ID__ = {id_js};
+  {skip_drag}
   {opaque_js}
   function versaillesBindPageChrome() {{
     try {{
@@ -671,7 +677,20 @@ pub fn open_widget_window(
     let opacity = spec.opacity.clamp(0.05, 1.0);
     let radius = spec.border_radius;
     let inject = if spec.page_surface {
-        page_surface_chrome_script(id, !spec.transparent)
+        let allow_drag = {
+            let state = app.state::<AppState>();
+            let cat = crate::desktop::page_catalog(&state);
+            let user = state
+                .store
+                .lock()
+                .unwrap()
+                .load_user_config()
+                .unwrap_or_default();
+            cat.spawnable(id)
+                .map(|p| crate::page::piece_draggable(p, &user))
+                .unwrap_or(true)
+        };
+        page_surface_chrome_script(id, !spec.transparent, allow_drag)
     } else {
         widget_host_chrome_script(id, opacity, radius)
     };
@@ -748,7 +767,21 @@ pub fn open_widget_window(
             }
             tauri::WindowEvent::Focused(focused) => {
                 if overlay && !*focused && !overlay_focus_is_guarded() {
-                    let _ = hide_launcher(&sync_app);
+                    let state = sync_app.state::<AppState>();
+                    let user = state
+                        .store
+                        .lock()
+                        .unwrap()
+                        .load_user_config()
+                        .unwrap_or_default();
+                    let cat = crate::desktop::page_catalog(&state);
+                    let dismiss = cat
+                        .spawnable(&sync_id)
+                        .map(|p| crate::page::piece_dismiss_on_blur(p, &user))
+                        .unwrap_or(true);
+                    if dismiss {
+                        let _ = hide_launcher(&sync_app);
+                    }
                 }
             }
             tauri::WindowEvent::Destroyed => {
@@ -961,14 +994,21 @@ fn arm_overlay_focus_guard() {
     *overlay_focus_until().lock().unwrap() = Instant::now() + Duration::from_millis(500);
 }
 
+/// Extend blur-dismiss guard from spawnable engines (resize, focus steal).
+pub fn arm_overlay_focus_guard_ms(ms: u64) {
+    let ms = ms.clamp(50, 5000);
+    *overlay_focus_until().lock().unwrap() = Instant::now() + Duration::from_millis(ms);
+}
+
 fn overlay_focus_is_guarded() -> bool {
     Instant::now() < *overlay_focus_until().lock().unwrap()
 }
 
 pub fn hotkey_piece_id(app: &AppHandle) -> Option<String> {
     let state = app.state::<AppState>();
+    let primary = state.config.lock().unwrap().launcher_primary.clone();
     crate::desktop::page_catalog(&state)
-        .hotkey_piece()
+        .hotkey_piece_with_primary(primary.as_deref())
         .map(|p| p.id.clone())
 }
 
@@ -1033,7 +1073,7 @@ fn emit_overlay_hidden(app: &AppHandle) {
     let _ = app.emit("launcher://hidden", true);
 }
 
-fn reveal_overlay(
+pub fn reveal_overlay(
     app: &AppHandle,
     manager: &Mutex<WindowManager>,
     id: &str,

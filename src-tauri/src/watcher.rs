@@ -2,9 +2,13 @@
 use crate::registry::widgets_root;
 use crate::state::AppState;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::channel;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
+
+/// Coalesce desktop HTML saves so mid-write parses do not race hotkey rebind.
+static HOTKEY_REBIND_GEN: AtomicU64 = AtomicU64::new(0);
 
 fn should_ignore(path: &std::path::Path) -> bool {
     let s = path.to_string_lossy().replace('\\', "/").to_lowercase();
@@ -83,11 +87,20 @@ pub fn start_widget_watcher(app: AppHandle) {
                         s.ends_with("/desktop/index.html") || s.ends_with("/versailles.json")
                     });
                     if touches_hotkeys {
+                        // Delay past editor flush/rename; only the latest save rebinds.
+                        let gen = HOTKEY_REBIND_GEN.fetch_add(1, Ordering::SeqCst) + 1;
                         let app2 = app.clone();
-                        let _ = app.run_on_main_thread(move || {
-                            if let Err(err) = crate::hotkeys::register_page_hotkeys(&app2) {
-                                tracing::warn!("hotkey rebind failed: {err}");
+                        tauri::async_runtime::spawn(async move {
+                            tokio::time::sleep(Duration::from_millis(600)).await;
+                            if HOTKEY_REBIND_GEN.load(Ordering::SeqCst) != gen {
+                                return;
                             }
+                            let app3 = app2.clone();
+                            let _ = app2.run_on_main_thread(move || {
+                                if let Err(err) = crate::hotkeys::register_page_hotkeys(&app3) {
+                                    tracing::warn!("hotkey rebind failed: {err}");
+                                }
+                            });
                         });
                     }
 

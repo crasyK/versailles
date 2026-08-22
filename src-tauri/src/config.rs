@@ -45,6 +45,60 @@ impl Default for DesktopConfig {
 pub struct LauncherConfig {
     #[serde(default = "default_launcher_hotkey")]
     pub hotkey: String,
+    /// Spawnable id for tray left-click / show_launcher when multiple hotkey pieces exist.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SpawnableOverlayConfig {
+    #[serde(default)]
+    pub dim: Option<bool>,
+    #[serde(default)]
+    pub dismiss_on_blur: Option<bool>,
+    #[serde(default)]
+    pub dismiss_on_dim_click: Option<bool>,
+    /// Allow dragging the spawn window by its background. Overlays default false.
+    #[serde(default)]
+    pub draggable: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SpawnableEngineOpts {
+    #[serde(default)]
+    pub blur_dismiss_ms: Option<u32>,
+    #[serde(default)]
+    pub suggestion_limit: Option<u32>,
+    #[serde(default)]
+    pub compact: Option<bool>,
+    #[serde(default)]
+    pub launch_tick: Option<bool>,
+    #[serde(default)]
+    pub search_hf: Option<String>,
+    #[serde(default)]
+    pub time_aware_defaults: Option<bool>,
+    #[serde(default)]
+    pub auto_dismiss_launch: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SpawnableConfig {
+    #[serde(default)]
+    pub engine: Option<String>,
+    #[serde(default)]
+    pub overlay: Option<SpawnableOverlayConfig>,
+    #[serde(default)]
+    pub opts: Option<SpawnableEngineOpts>,
+    /// Scoped shortcuts for this spawnable; `"inherit"` uses top-level shortcuts.
+    #[serde(default)]
+    pub shortcuts: Option<ShortcutsSpec>,
+}
+
+fn default_spawnables() -> HashMap<String, SpawnableConfig> {
+    HashMap::new()
 }
 
 fn default_launcher_hotkey() -> String {
@@ -55,6 +109,7 @@ impl Default for LauncherConfig {
     fn default() -> Self {
         Self {
             hotkey: default_launcher_hotkey(),
+            primary: None,
         }
     }
 }
@@ -151,6 +206,9 @@ pub struct UserConfig {
     pub api: ApiConfig,
     #[serde(default)]
     pub desktop: DesktopConfig,
+    /// Per-spawnable engine and overlay options keyed by `data-id`.
+    #[serde(default = "default_spawnables")]
+    pub spawnables: HashMap<String, SpawnableConfig>,
 }
 
 impl Default for UserConfig {
@@ -164,6 +222,7 @@ impl Default for UserConfig {
             launcher: LauncherConfig::default(),
             api: ApiConfig::default(),
             desktop: DesktopConfig::default(),
+            spawnables: default_spawnables(),
         }
     }
 }
@@ -236,6 +295,8 @@ pub struct AppConfig {
     pub api_bound_port: Option<u16>,
     pub snap_threshold: i32,
     pub launcher_hotkey: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launcher_primary: Option<String>,
     pub session_widgets: Vec<SessionWidget>,
     pub active_layout: Option<String>,
     #[serde(default)]
@@ -257,6 +318,7 @@ impl AppConfig {
             api_bound_port: runtime.api_bound_port,
             snap_threshold: user.snap_threshold,
             launcher_hotkey: user.launcher.hotkey,
+            launcher_primary: user.launcher.primary.clone(),
             session_widgets: runtime.session_widgets,
             active_layout: runtime.active_layout,
             catalog: runtime.catalog,
@@ -276,12 +338,14 @@ impl AppConfig {
             snap_threshold: self.snap_threshold,
             launcher: LauncherConfig {
                 hotkey: self.launcher_hotkey.clone(),
+                primary: self.launcher_primary.clone(),
             },
             api: ApiConfig {
                 enabled: self.api_enabled,
                 port: self.api_port,
             },
             desktop: self.desktop.clone(),
+            spawnables: HashMap::new(),
         }
     }
 
@@ -345,6 +409,10 @@ impl ConfigStore {
 
     pub fn runtime_path(&self) -> PathBuf {
         self.root.join("config.json")
+    }
+
+    pub fn engines_runtime_path(&self) -> PathBuf {
+        self.root.join("engines.json")
     }
 
     pub fn user_config_path(&self) -> PathBuf {

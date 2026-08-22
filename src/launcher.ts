@@ -4,13 +4,35 @@ import { LogicalSize, PhysicalPosition } from "@tauri-apps/api/dpi";
 import { getCurrentWindow, currentMonitor } from "@tauri-apps/api/window";
 import { Terminal } from "xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { WebglAddon } from "@xterm/addon-webgl";
+import { WebLinksAddon } from "@xterm/addon-web-links";
+import { SearchAddon } from "@xterm/addon-search";
 import "xterm/css/xterm.css";
+import {
+  loadSpawnableEngineContext,
+  loadEngineRuntime,
+  pushRecent,
+  togglePin,
+  saveLastTermSeed,
+  type EngineRuntimeState,
+} from "./engine/spawnable-config";
+import {
+  rebuildFuseIndex,
+  fuzzyPresets,
+  parseCategoryFilter,
+  presetMatchesCat,
+  findPresetStrict,
+  duplicateShortcutIds,
+  validatePreset,
+  orderDefaults,
+  playLaunchTick,
+} from "./engine/search";
 
 type CliOutput = { stdout: string; stderr: string; code: number };
 
 type Preset = {
   n: string;
-  t: "web" | "folder" | "app";
+  t: "web" | "folder" | "app" | "term";
   d: string;
   target: string;
   /** Group label for presets / help browsing. */
@@ -34,6 +56,8 @@ type Row = {
   cc?: string;
   path?: string;
   cat?: string;
+  /** Pulsing live-session marker (background PTY). */
+  live?: boolean;
 };
 
 type LauncherMode = "action" | "terminal";
@@ -52,6 +76,7 @@ let psEl!: HTMLSpanElement;
 let echoEl!: HTMLSpanElement;
 let sug!: HTMLDivElement;
 let res!: HTMLDivElement;
+let headDot!: HTMLElement;
 
 function mustEl<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id);
@@ -74,6 +99,8 @@ function bindDom() {
   echoEl = mustEl("cli-echo");
   sug = mustEl("cli-sug");
   res = mustEl("cli-res");
+  headDot = root.querySelector(".cli-head i") as HTMLElement;
+  if (!headDot) throw new Error("Action bar missing .cli-head i");
 }
 
 let HOME = "";
@@ -99,14 +126,59 @@ const BUSY_WATCHDOG_MS = 4500;
 let mode: LauncherMode = "action";
 let term: Terminal | null = null;
 let fitAddon: FitAddon | null = null;
+let searchAddon: SearchAddon | null = null;
+let termFindOpen = false;
+let termFindCase = false;
+let termMenuBound = false;
 let ptyDataUnlisten: UnlistenFn | null = null;
 let ptyExitUnlisten: UnlistenFn | null = null;
 let termSeed: string | null = null;
 /** Backend PTY still running (may be detached from the UI). */
 let sessionAlive = false;
+let ENGINE_ID = "action-bar";
+let ENGINE_OPTS = {
+  blurDismissMs: BLUR_DISMISS_MS,
+  suggestionLimit: 12,
+  compact: false,
+  launchTick: false,
+  searchHf: "https://huggingface.co/models?search={q}",
+  timeAwareDefaults: true,
+  autoDismissLaunch: true,
+};
+let ENGINE_RUNTIME: EngineRuntimeState = { recents: [], pins: [] };
+let lastLaunchError: { preset: Preset; err: string } | null = null;
+let escClearPending = false;
+let termSessionLabel = "";
+let hostAvailable = true;
 /** Coalesce pty://data into one term.write per animation frame. */
 let ptyWriteBuf = "";
 let ptyRaf: number | null = null;
+
+const WEB_TLDS = new Set([
+  "com", "org", "net", "io", "dev", "app", "ai", "co", "me", "tv", "gg", "to",
+  "sh", "rs", "edu", "gov", "info", "xyz", "de", "uk", "eu", "us", "ca", "au",
+  "nl", "fr", "it", "es", "ch", "at", "be", "se", "no", "dk", "fi", "pl", "cz",
+  "in", "jp", "kr", "cn", "ru", "br", "mx", "nz", "ie", "pt",
+]);
+
+/** Turn typed text into a browser URL, or null if it is not address-like. */
+function looksLikeUrl(raw: string): string | null {
+  const s = raw.trim();
+  if (!s || /\s/.test(s)) return null;
+  if (/^https?:\/\/.+/i.test(s)) return s;
+  if (/^www\.[a-z0-9]/i.test(s)) return "https://" + s;
+  if (/^localhost(?::\d{1,5})?(?:[/?#].*)?$/i.test(s)) return "http://" + s;
+  if (/^\d{1,3}(?:\.\d{1,3}){3}(?::\d{1,5})?(?:[/?#].*)?$/.test(s)) return "http://" + s;
+  const host = s.split(/[/?#]/)[0]?.split(":")[0] ?? "";
+  const parts = host.split(".");
+  if (parts.length < 2) return null;
+  const tld = (parts[parts.length - 1] || "").toLowerCase();
+  if (!WEB_TLDS.has(tld)) return null;
+  if (!/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/i.test(host)) {
+    return null;
+  }
+  return "https://" + s;
+}
 
 const esc = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -197,14 +269,27 @@ async function withBusy<T>(
   }
 }
 
+function continueRow(): Row {
+  const label = termSessionLabel ? `reattach · ${termSessionLabel}` : "reattach background terminal";
+  return { c: "continue", d: label, cc: "continue", live: true };
+}
+
+function syncLiveChrome() {
+  const live = sessionAlive && mode === "action";
+  root.classList.toggle("cli-live", live);
+  headDot.classList.toggle("cli-live-dot", sessionAlive);
+  modeLabel.classList.toggle("cli-live-badge", sessionAlive);
+}
+
 function showRows(list: Row[]) {
   rows = list;
   rowSel = -1;
   sug.innerHTML = "";
   rows.forEach((r) => {
     const d = document.createElement("div");
-    d.className = "cl-s";
+    d.className = r.live ? "cl-s cl-s-live" : "cl-s";
     d.innerHTML = `<b>${esc(r.c)}</b> <span>${esc(r.d || "")}</span>`;
+    d.title = r.path || r.d || "";
     d.onmousedown = (e) => {
       e.preventDefault();
       activateRow(r);
@@ -242,21 +327,20 @@ function commandFromRow(r: Row): string | null {
   return (r.cc ?? r.c).trim() || null;
 }
 
-function submitCommand(raw: string) {
+function submitCommand(raw: string, background = false) {
   const v = raw.trim();
-  if (busy) {
-    return;
-  }
+  if (busy) return;
+  escClearPending = false;
   inp.value = "";
   syncEcho();
   rowSel = -1;
   if (v) hist.push(v);
   hi = 0;
-  run(v);
+  run(v, background);
 }
 
 /** Run, open, or complete a suggestion row (shared by Enter and click). */
-function activateRow(r: Row) {
+function activateRow(r: Row, background = false) {
   if (r.path) {
     rowSel = -1;
     void openPath(r.path);
@@ -264,7 +348,7 @@ function activateRow(r: Row) {
   }
   const cmd = commandFromRow(r);
   if (cmd) {
-    submitCommand(cmd);
+    submitCommand(cmd, background);
     return;
   }
   pick(r);
@@ -272,25 +356,31 @@ function activateRow(r: Row) {
 
 function defaults() {
   clearRes();
+  const limit = ENGINE_OPTS.suggestionLimit;
   const verbs: Row[] = [
     { c: "?", d: "search the web", cc: "? " },
     { c: "!!", d: "open a terminal", cc: "!!" },
   ];
-  const shortcuts = PRESETS.filter((p) => p.cat !== "apps").slice(0, 8);
-  const rows: Row[] = shortcuts.length
-    ? shortcuts.map((x) => ({ c: x.n, d: x.d, cc: x.n }))
-    : [];
-  showRows([...rows, ...verbs]);
+  const ordered = orderDefaults(PRESETS, ENGINE_RUNTIME.recents, ENGINE_RUNTIME.pins, {
+    timeAware: ENGINE_OPTS.timeAwareDefaults,
+    limit,
+  });
+  const rows: Row[] = [];
+  const pinSet = new Set(ENGINE_RUNTIME.pins);
+  const recentSet = new Set(ENGINE_RUNTIME.recents);
+  for (const x of ordered) {
+    let tag = x.cat;
+    if (pinSet.has(x.n)) tag = `pin · ${x.cat}`;
+    else if (recentSet.has(x.n)) tag = `recent · ${x.cat}`;
+    rows.push({ c: x.n, d: `${tag} · ${x.d}`, cc: x.n });
+  }
+  if (root) root.classList.toggle("cli-compact", ENGINE_OPTS.compact);
+  const prefix = sessionAlive ? [continueRow()] : [];
+  showRows([...prefix, ...rows, ...verbs]);
 }
 
 function findPreset(name: string): Preset | undefined {
-  const p = name.toLowerCase();
-  return (
-    PRESETS.find((x) => x.n === p) ||
-    PRESETS.find((x) => (x.aliases ?? []).includes(p)) ||
-    PRESETS.find((x) => x.n.startsWith(p)) ||
-    PRESETS.find((x) => (x.aliases ?? []).some((a) => a.startsWith(p)))
-  );
+  return findPresetStrict(PRESETS, name);
 }
 
 function presetMatches(x: Preset, low: string): boolean {
@@ -332,8 +422,14 @@ function findInProfile(cat: string, name: string): Preset | undefined {
 function suggestions(raw: string): Row[] {
   const s = raw.trim();
   const out: Row[] = [];
+  const typedUrl = looksLikeUrl(s);
+  if (typedUrl || /^https?:\/\//i.test(s) || /^www\./i.test(s)) {
+    return [{ c: s, d: "open in browser", cc: s }];
+  }
   if (/^\?/.test(s)) {
     const q = s.replace(/^\?+\s*/, "");
+    const qUrl = looksLikeUrl(q);
+    if (qUrl) return [{ c: s, d: "open in browser", cc: s }];
     if (!s.startsWith("??")) out.push({ c: "? " + q, d: "Google search" });
     out.push({ c: "?? " + q, d: "search files" });
     return out;
@@ -372,10 +468,17 @@ function suggestions(raw: string): Row[] {
     return out;
   }
 
-  const low = s.toLowerCase();
+  const { cat: catFilter, rest: catRest } = parseCategoryFilter(s);
+  if (catFilter && !catRest) {
+    PRESETS.filter((x) => presetMatchesCat(x, catFilter))
+      .slice(0, ENGINE_OPTS.suggestionLimit)
+      .forEach((x) => out.push({ c: x.n, d: `${x.cat} · ${x.d}`, cc: x.n }));
+    return out;
+  }
+  const low = (catRest || s).toLowerCase();
   if (low && !s.includes(" ")) {
     if (sessionAlive && ("continue".startsWith(low) || "attach".startsWith(low))) {
-      out.push({ c: "continue", d: "reattach background terminal" });
+      out.push(continueRow());
     }
     if ("config".startsWith(low)) out.push({ c: "config", d: "open desktop/index.html" });
     if ("desktopfile".startsWith(low)) out.push({ c: "desktopfile", d: "open desktop/index.html" });
@@ -399,9 +502,16 @@ function suggestions(raw: string): Row[] {
       .forEach((cat) =>
         out.push({ c: cat, d: `profile · ${PRESETS.filter((x) => x.cat === cat).length} shortcuts`, cat }),
       );
-    PRESETS.filter((x) => presetMatches(x, low))
-      .slice(0, 8)
-      .forEach((x) => out.push({ c: commandForQuery(x, low), d: `${x.cat} · ${x.d}` }));
+    const fuzzy = fuzzyPresets(low, ENGINE_OPTS.suggestionLimit);
+    const list = fuzzy.length ? fuzzy : PRESETS.filter((x) => presetMatches(x, low));
+    list
+      .slice(0, ENGINE_OPTS.suggestionLimit)
+      .forEach((x) =>
+        out.push({
+          c: commandForQuery(x, low),
+          d: `${x.cat} · ${x.d} · ${esc(x.target).slice(0, 48)}`,
+        }),
+      );
   }
   return out;
 }
@@ -499,20 +609,25 @@ function clearPtyWriteBuf() {
 function applyChrome(next: LauncherMode) {
   root.dataset.mode = next;
   if (next === "terminal") {
-    titleEl.textContent = "versailles · pwsh";
+    const label = termSessionLabel || "pwsh";
+    titleEl.textContent = `versailles · ${label}`;
     modeLabel.textContent = "terminal";
-    footL.textContent = "esc detach";
-    footM.textContent = "ctrl+c";
-    footHint.textContent = "paste ok";
-    footR.textContent = sessionAlive ? "background live" : "";
+    footL.textContent = "alt+space hide";
+    footM.textContent = "ctrl+f find";
+    footHint.textContent = "esc → app";
+    footR.textContent = sessionAlive ? "live · background ok" : "right-click menu";
   } else {
     titleEl.textContent = "versailles";
     modeLabel.textContent = sessionAlive ? "live" : "actions";
-    footL.textContent = "enter";
-    footM.textContent = "tab";
+    footL.textContent = "ctrl+l clear";
+    footM.textContent = "ctrl+1-9";
     footHint.textContent = "esc";
-    footR.textContent = "? web · !! term · help";
+    const n = PRESETS.filter((x) => x.cat !== "apps").length;
+    footR.textContent = n
+      ? `${n} shortcuts · ? web · https:// · !! term`
+      : "? web · https:// · !! term · help";
   }
+  syncLiveChrome();
 }
 
 async function refreshSessionAlive() {
@@ -544,21 +659,299 @@ async function bindPtyListeners() {
     term?.writeln("\r\n\x1b[90m[session ended — esc returns to actions]\x1b[0m");
     if (mode === "action") {
       applyChrome("action");
-      defaults();
+      if (termSessionLabel) {
+        setRes("out", "terminal ended");
+        const hit = findPreset(termSessionLabel);
+        if (hit) showRows([{ c: hit.n, d: `reopen · ${hit.d}`, cc: hit.n }]);
+        else defaults();
+      } else defaults();
     }
   });
 }
 
+const SEARCH_DECO = {
+  matchBackground: "#3f3f46",
+  matchBorder: "#6b7280",
+  matchOverviewRuler: "#6b7280",
+  activeMatchBackground: "#f9fafb",
+  activeMatchBorder: "#141414",
+  activeMatchColorOverviewRuler: "#f9fafb",
+};
+
+async function copyTermSelection(): Promise<boolean> {
+  if (!term?.hasSelection()) return false;
+  const text = term.getSelection();
+  if (!text) return false;
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function pasteToTerm(): Promise<boolean> {
+  let text = "";
+  try {
+    text = await navigator.clipboard.readText();
+  } catch {
+    return false;
+  }
+  if (!text) return false;
+  void invoke("pty_write", { data: text }).catch(() => {});
+  return true;
+}
+
+function selectAllTerm() {
+  term?.selectAll();
+}
+
+function clearTermBuffer() {
+  term?.clear();
+}
+
+function searchOpts(incremental = false) {
+  return {
+    caseSensitive: termFindCase,
+    incremental,
+    decorations: SEARCH_DECO,
+  };
+}
+
+function runTermFind(dir: "next" | "prev", incremental = false) {
+  if (!searchAddon) return;
+  const input = document.getElementById("cli-term-find-in") as HTMLInputElement | null;
+  const q = input?.value ?? "";
+  if (!q) {
+    searchAddon.clearDecorations();
+    term?.clearSelection();
+    return;
+  }
+  const opts = searchOpts(incremental);
+  if (dir === "prev") searchAddon.findPrevious(q, opts);
+  else searchAddon.findNext(q, opts);
+}
+
+function ensureFindBar() {
+  if (document.getElementById("cli-term-find")) return;
+  const bar = document.createElement("div");
+  bar.id = "cli-term-find";
+  bar.className = "cli-term-find";
+  bar.innerHTML =
+    '<input id="cli-term-find-in" type="search" spellcheck="false" autocomplete="off" placeholder="Find" aria-label="Find in terminal" />' +
+    '<button type="button" id="cli-term-find-prev" title="Previous">↑</button>' +
+    '<button type="button" id="cli-term-find-next" title="Next">↓</button>' +
+    '<button type="button" id="cli-term-find-case" title="Match case">Aa</button>' +
+    '<button type="button" id="cli-term-find-close" title="Close">×</button>';
+  termWrap.appendChild(bar);
+  const input = bar.querySelector("#cli-term-find-in") as HTMLInputElement;
+  const prev = bar.querySelector("#cli-term-find-prev") as HTMLButtonElement;
+  const next = bar.querySelector("#cli-term-find-next") as HTMLButtonElement;
+  const cse = bar.querySelector("#cli-term-find-case") as HTMLButtonElement;
+  const close = bar.querySelector("#cli-term-find-close") as HTMLButtonElement;
+  input.addEventListener("input", () => runTermFind("next", true));
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      e.stopPropagation();
+      runTermFind(e.shiftKey ? "prev" : "next");
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      hideTermFind();
+    } else if (e.key.toLowerCase() === "f" && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+    }
+  });
+  prev.addEventListener("click", () => runTermFind("prev"));
+  next.addEventListener("click", () => runTermFind("next"));
+  cse.addEventListener("click", () => {
+    termFindCase = !termFindCase;
+    cse.classList.toggle("on", termFindCase);
+    runTermFind("next", true);
+  });
+  close.addEventListener("click", () => hideTermFind());
+  bar.addEventListener("mousedown", (e) => e.stopPropagation());
+}
+
+function showTermFind() {
+  if (!searchAddon) return;
+  ensureFindBar();
+  const bar = document.getElementById("cli-term-find");
+  const input = document.getElementById("cli-term-find-in") as HTMLInputElement | null;
+  if (!bar || !input) return;
+  bar.classList.add("on");
+  termFindOpen = true;
+  input.focus();
+  input.select();
+}
+
+function hideTermFind() {
+  document.getElementById("cli-term-find")?.classList.remove("on");
+  termFindOpen = false;
+  searchAddon?.clearDecorations();
+  if (mode === "terminal") term?.focus();
+}
+
+function ensureTermMenu() {
+  if (document.getElementById("cli-term-menu")) return;
+  const menu = document.createElement("div");
+  menu.id = "cli-term-menu";
+  menu.className = "cli-term-menu";
+  menu.innerHTML =
+    '<button type="button" data-act="copy">Copy</button>' +
+    '<button type="button" data-act="paste">Paste</button>' +
+    '<button type="button" data-act="select-all">Select All</button>' +
+    '<button type="button" data-act="clear">Clear</button>';
+  document.body.appendChild(menu);
+  menu.addEventListener("mousedown", (e) => e.stopPropagation());
+  menu.addEventListener("click", (e) => {
+    const btn = (e.target as HTMLElement).closest("button");
+    if (!btn) return;
+    const act = btn.getAttribute("data-act");
+    hideTermMenu();
+    if (act === "copy") void copyTermSelection();
+    else if (act === "paste") void pasteToTerm();
+    else if (act === "select-all") selectAllTerm();
+    else if (act === "clear") clearTermBuffer();
+  });
+  if (!termMenuBound) {
+    termMenuBound = true;
+    document.addEventListener("mousedown", (e) => {
+      if (!menu.classList.contains("on")) return;
+      if (menu.contains(e.target as Node)) return;
+      hideTermMenu();
+    });
+  }
+}
+
+function showTermMenu(x: number, y: number) {
+  ensureTermMenu();
+  const menu = document.getElementById("cli-term-menu");
+  if (!menu) return;
+  const copyBtn = menu.querySelector('[data-act="copy"]') as HTMLButtonElement | null;
+  if (copyBtn) copyBtn.disabled = !term?.hasSelection();
+  menu.classList.add("on");
+  const pad = 8;
+  const w = menu.offsetWidth || 148;
+  const h = menu.offsetHeight || 140;
+  menu.style.left = `${Math.min(x, window.innerWidth - w - pad)}px`;
+  menu.style.top = `${Math.min(y, window.innerHeight - h - pad)}px`;
+}
+
+function hideTermMenu() {
+  document.getElementById("cli-term-menu")?.classList.remove("on");
+}
+
+function attachWebgl(t: Terminal) {
+  try {
+    const addon = new WebglAddon();
+    addon.onContextLoss(() => {
+      try {
+        addon.dispose();
+      } catch {
+        /* ignore */
+      }
+      attachWebgl(t);
+    });
+    t.loadAddon(addon);
+  } catch {
+    /* canvas / DOM renderer fallback */
+  }
+}
+
+function bindTermChrome(t: Terminal) {
+  t.attachCustomKeyEventHandler((ev) => {
+    if (ev.type !== "keydown") return true;
+    const key = ev.key.toLowerCase();
+    const mod = ev.ctrlKey || ev.metaKey;
+
+    if (key === "escape") return true;
+    if (ev.shiftKey && ev.key === "PageUp") {
+      t.scrollPages(-1);
+      return false;
+    }
+    if (ev.shiftKey && ev.key === "PageDown") {
+      t.scrollPages(1);
+      return false;
+    }
+    if (mod && key === "f") {
+      showTermFind();
+      return false;
+    }
+    if (mod && ev.shiftKey && key === "c") {
+      void copyTermSelection();
+      return false;
+    }
+    if (mod && key === "c" && t.hasSelection()) {
+      void copyTermSelection();
+      return false;
+    }
+    if (mod && key === "v") {
+      void pasteToTerm();
+      return false;
+    }
+    if (ev.shiftKey && key === "insert") {
+      void pasteToTerm();
+      return false;
+    }
+    if (ev.ctrlKey && key === "insert") {
+      void copyTermSelection();
+      return false;
+    }
+    return true;
+  });
+
+  termHost.addEventListener(
+    "contextmenu",
+    (e) => {
+      if (mode !== "terminal") return;
+      e.preventDefault();
+      e.stopPropagation();
+      showTermMenu(e.clientX, e.clientY);
+    },
+    true,
+  );
+
+  termHost.addEventListener("paste", (e) => {
+    if (mode !== "terminal") return;
+    const text = e.clipboardData?.getData("text");
+    if (!text) return;
+    e.preventDefault();
+    void invoke("pty_write", { data: text }).catch(() => {});
+  });
+}
+
 function ensureTerm(): Terminal {
+  if (term?.options.convertEol) {
+    try {
+      term.dispose();
+    } catch {
+      /* ignore */
+    }
+    term = null;
+    fitAddon = null;
+    searchAddon = null;
+  }
   if (term) return term;
   const t = new Terminal({
-    convertEol: true,
+    // ConPTY already translates newlines — convertEol wraps TUIs onto line 1.
+    convertEol: false,
     cursorBlink: true,
     cursorStyle: "bar",
     fontFamily: '"Cascadia Mono", "JetBrains Mono", Consolas, monospace',
     fontSize: 13,
-    lineHeight: 1.25,
-    scrollback: 5000,
+    lineHeight: 1,
+    scrollback: 10000,
+    scrollSensitivity: 1,
+    smoothScrollDuration: 0,
+    fastScrollModifier: "alt",
+    fastScrollSensitivity: 5,
+    drawBoldTextInBrightColors: true,
+    minimumContrastRatio: 4.5,
+    wordSeparator: " ()[]{}',\"`\"",
+    windowsPty: { backend: "conpty", buildNumber: 26100 },
+    overviewRulerWidth: 0,
     allowProposedApi: true,
     theme: {
       background: "#131212",
@@ -586,7 +979,24 @@ function ensureTerm(): Terminal {
   });
   const fit = new FitAddon();
   t.loadAddon(fit);
+  try {
+    const search = new SearchAddon();
+    t.loadAddon(search);
+    searchAddon = search;
+  } catch {
+    searchAddon = null;
+  }
+  try {
+    t.loadAddon(
+      new WebLinksAddon((_ev, uri) => {
+        void invoke("cli_open", { target: uri }).catch(() => {});
+      }),
+    );
+  } catch {
+    /* addon not loaded */
+  }
   t.open(termHost);
+  attachWebgl(t);
   fitAddon = fit;
   term = t;
 
@@ -605,13 +1015,7 @@ function ensureTerm(): Terminal {
     void invoke("pty_write", { data }).catch(() => {});
   });
 
-  termHost.addEventListener("paste", (e) => {
-    if (mode !== "terminal") return;
-    const text = e.clipboardData?.getData("text");
-    if (!text) return;
-    e.preventDefault();
-    void invoke("pty_write", { data: text }).catch(() => {});
-  });
+  bindTermChrome(t);
 
   return t;
 }
@@ -656,9 +1060,27 @@ async function resizeLauncher(next: LauncherMode) {
   }
 }
 
+function fitTermExact() {
+  if (!term || !fitAddon) return;
+  const proposed = fitAddon.proposeDimensions();
+  if (!proposed || !proposed.cols || !proposed.rows) {
+    fitAddon.fit();
+    return;
+  }
+  // addon-fit reserves 14px for an overview ruler we do not show (~1–2 cols).
+  const hostW = termHost.clientWidth;
+  const cellW = proposed.cols > 0 ? hostW / (proposed.cols + 2) : 9;
+  const extra = cellW > 1 ? Math.round(14 / cellW) : 0;
+  const cols = Math.max(20, proposed.cols + extra);
+  const rows = Math.max(8, proposed.rows);
+  if (term.cols !== cols || term.rows !== rows) {
+    term.resize(cols, rows);
+  }
+}
+
 async function fitAndResizePty() {
   if (!term || !fitAddon) return;
-  fitAddon.fit();
+  fitTermExact();
   const cols = term.cols;
   const rows = term.rows;
   try {
@@ -666,6 +1088,14 @@ async function fitAndResizePty() {
   } catch {
     /* session may not be open yet */
   }
+}
+
+async function settleTermSize() {
+  fitTermExact();
+  await new Promise<void>((r) => requestAnimationFrame(() => r()));
+  fitTermExact();
+  await delay(60);
+  await fitAndResizePty();
 }
 
 /** Hide terminal UI but keep the PTY (and xterm scrollback) alive. */
@@ -680,6 +1110,8 @@ async function detachTerminal(focusAction = true) {
     return;
   }
   clearBlurTimer();
+  hideTermFind();
+  hideTermMenu();
   mode = "action";
   applyChrome("action");
   termWrap.hidden = true;
@@ -719,6 +1151,8 @@ async function killTerminalSession() {
 async function enterTerminal(seedCmd?: string, opts: { fresh?: boolean } = {}) {
   const fresh = opts.fresh === true;
   termSeed = seedCmd?.trim() || null;
+  clearBlurTimer();
+  void invoke("arm_overlay_focus_guard", { ms: 800 }).catch(() => {});
 
   await withBusy(async () => {
     try {
@@ -747,7 +1181,7 @@ async function enterTerminal(seedCmd?: string, opts: { fresh?: boolean } = {}) {
         await delay(80);
         ensureTerm();
         if (!ptyDataUnlisten) await bindPtyListeners();
-        await fitAndResizePty();
+        await settleTermSize();
         term?.focus();
         if (termSeed) {
           const payload = termSeed.endsWith("\n") ? termSeed : termSeed + "\r";
@@ -766,13 +1200,13 @@ async function enterTerminal(seedCmd?: string, opts: { fresh?: boolean } = {}) {
       const t = ensureTerm();
       t.reset();
       clearPtyWriteBuf();
-      fitAddon?.fit();
+      await settleTermSize();
       const cols = t.cols || 80;
       const rows = t.rows || 24;
       await bindPtyListeners();
       await invoke("pty_open", { cwd, cols, rows });
       sessionAlive = true;
-      await fitAndResizePty();
+      await settleTermSize();
       t.focus();
 
       if (termSeed) {
@@ -809,18 +1243,26 @@ async function openPath(path: string) {
 
 function webSearch(q: string) {
   if (!q) return setRes("err", "? : missing query — usage: ? &lt;query&gt;");
+  const url = looksLikeUrl(q);
+  if (url) return openTarget(url);
   openTarget("https://www.google.com/search?q=" + encodeURIComponent(q));
 }
 
-function openTarget(target: string) {
+function openTarget(target: string, opts: { background?: boolean } = {}) {
   void withBusy(async () => {
     try {
+      if (!hostAvailable) throw new Error("host unavailable — preview mode cannot launch");
       await invoke("cli_open", { target });
+      playLaunchTick(ENGINE_OPTS.launchTick);
       setRes("ok", `&rarr; opened <span class="link">${esc(target)}</span>`);
+      if (ENGINE_OPTS.autoDismissLaunch && !opts.background) {
+        await delay(280);
+        await hideLauncherWindow("launch");
+      }
     } catch (e) {
       setRes("err", esc(String(e)));
     }
-  });
+  }, { focusSteals: false });
 }
 
 function calcExpr(expr: string) {
@@ -957,10 +1399,20 @@ async function openDesktopFile() {
   return openFileTarget(joinPath(widgetsRoot(HOME || "C:\\"), "desktop\\index.html"), "desktop/index.html");
 }
 
-async function launchPreset(hit: Preset) {
+async function launchPreset(hit: Preset, opts: { background?: boolean } = {}) {
+  if (hit.t === "term") {
+    clearBlurTimer();
+    termSessionLabel = hit.n;
+    void saveLastTermSeed(ENGINE_ID, hit.target);
+    return void enterTerminal(hit.target);
+  }
+  lastLaunchError = null;
   await withBusy(async () => {
     try {
+      if (!hostAvailable) throw new Error("host unavailable — preview mode cannot launch");
       await invoke("cli_open", { target: hit.target });
+      void pushRecent(ENGINE_ID, hit.n);
+      playLaunchTick(ENGINE_OPTS.launchTick);
       if (hit.t === "web") {
         setRes("ok", `&rarr; opened <span class="link">${esc(hit.d)}</span>`);
       } else if (hit.t === "folder") {
@@ -968,10 +1420,20 @@ async function launchPreset(hit: Preset) {
       } else {
         setRes("ok", `&rarr; launching ${esc(hit.d)}`);
       }
+      if (ENGINE_OPTS.autoDismissLaunch && !opts.background) {
+        await delay(280);
+        await hideLauncherWindow("launch");
+      }
     } catch (e) {
-      setRes("err", esc(String(e)));
+      const msg = String(e);
+      lastLaunchError = { preset: hit, err: msg };
+      setRes("err", esc(msg));
+      showRows([
+        { c: `retry ${hit.n}`, d: "try again", cc: hit.n },
+        { c: "config", d: "edit shortcuts in index.html", cc: "config" },
+      ]);
     }
-  });
+  }, { focusSteals: false });
 }
 
 function expandHome(target: string, home: string): string {
@@ -1025,6 +1487,12 @@ async function loadUserShortcuts(): Promise<void> {
       const api = await invoke<{ base_url: string }>("get_api_info");
       const res = await fetch(`${api.base_url}/files/desktop/index.html`, { cache: "no-store" });
       if (res.ok) html = await res.text();
+    }
+    const inline = (window as unknown as { __VERSAILLES_BLOCK__?: { shortcuts?: Preset[] } })
+      .__VERSAILLES_BLOCK__;
+    if (inline && Array.isArray(inline.shortcuts)) {
+      USER_SHORTCUTS = inline.shortcuts.map((s) => normalizeUserShortcut(s, home));
+      return;
     }
     const block = html ? parseVersaillesBlock(html) : null;
     if (block && Array.isArray(block.shortcuts)) {
@@ -1106,6 +1574,19 @@ async function loadCatalog() {
 
 async function refreshPresets() {
   await loadUserShortcuts();
+  const dups = duplicateShortcutIds(USER_SHORTCUTS);
+  const bad = USER_SHORTCUTS.map((p) => validatePreset(p)).filter(Boolean) as string[];
+  if (dups.length || bad.length) {
+    const msg = [
+      dups.length ? `duplicate: ${dups.slice(0, 4).join(", ")}` : "",
+      bad.length ? bad.slice(0, 2).join(" · ") : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    setRes("err", esc(msg));
+  }
+  rebuildFuseIndex(PRESETS.length ? PRESETS : USER_SHORTCUTS);
+  ENGINE_RUNTIME = await loadEngineRuntime(ENGINE_ID);
   return loadCatalog();
 }
 
@@ -1206,8 +1687,19 @@ async function shellExec(cmd: string) {
   }, { focusSteals: false });
 }
 
-function run(c: string) {
+function run(c: string, background = false) {
+  const bg = { background };
   if (!c) return;
+  if (background && c.includes(" ")) {
+    const parts = c.split(/\s+/);
+    void (async () => {
+      for (const name of parts) {
+        const hit = findPreset(name);
+        if (hit) await launchPreset(hit, { background: true });
+      }
+    })();
+    return;
+  }
   if (c === "cls" || c === "clear") {
     clearRes();
     return defaults();
@@ -1216,6 +1708,8 @@ function run(c: string) {
   if (c.startsWith("?")) return void webSearch(c.slice(1).trim());
   if (c.startsWith("=")) return void calcExpr(c.slice(1).trim());
   if (c.startsWith("!!") || c.startsWith("!")) return void shellExec(c);
+  const typedUrl = looksLikeUrl(c);
+  if (typedUrl) return openTarget(typedUrl);
   const sp = c.split(/\s+/);
   const cmd = sp[0].toLowerCase();
   const arg = sp.slice(1).join(" ");
@@ -1324,10 +1818,9 @@ function run(c: string) {
     case "help":
       setRes("out", "type a shortcut name · or one of these");
       return showRows([
-        ...(sessionAlive
-          ? [{ c: "continue", d: "reattach terminal", cc: "continue" }]
-          : []),
+        ...(sessionAlive ? [continueRow()] : []),
         { c: "?", d: "search the web", cc: "? " },
+        { c: "https://", d: "open a URL", cc: "https://" },
         { c: "??", d: "search files", cc: "?? " },
         { c: "!!", d: "open a terminal", cc: "!!" },
         { c: "!", d: "run pwsh inline", cc: "! " },
@@ -1347,7 +1840,7 @@ function run(c: string) {
     case "get-childitem":
       return void lsCmd();
     case "exit":
-      return setRes("out", "alt+space hides · esc detaches terminal (keeps it running)");
+      return setRes("out", "alt+space hides · terminal stays running in the background");
     default: {
       // `personal mail` → shortcut inside profile; bare `personal` → browse.
       if (isProfileName(cmd)) {
@@ -1360,8 +1853,27 @@ function run(c: string) {
       }
       // Direct preset name — `open` is optional.
       const hit = findPreset(cmd);
-      if (hit && !arg) return void launchPreset(hit);
-      if (hit && arg && hit.n === cmd) return void launchPreset(hit);
+      if (hit && !arg) return void launchPreset(hit, bg);
+      if (hit && arg && hit.n === cmd) return void launchPreset(hit, bg);
+      if (cmd.startsWith("retry ") && lastLaunchError) return void launchPreset(lastLaunchError.preset);
+      if (cmd.startsWith("pin ") || cmd.startsWith("unpin ")) {
+        const name = cmd.split(/\s+/)[1] || "";
+        return void (async () => {
+          ENGINE_RUNTIME = await togglePin(ENGINE_ID, name);
+          setRes("ok", `&rarr; pins updated`);
+          defaults();
+        })();
+      }
+      if (!arg && !c.startsWith("!") && !c.startsWith("?") && !c.startsWith("=") && !/[\\/]/.test(c) && /^[\w.-]+$/i.test(cmd)) {
+        const near = PRESETS.filter((x) => presetMatches(x, cmd)).slice(0, 6);
+        if (near.length) {
+          setRes("err", `no shortcut '${esc(cmd)}' — did you mean?`);
+          showRows(near.map((x) => ({ c: x.n, d: `${x.cat} · ${x.d}`, cc: x.n })));
+          return;
+        }
+        setRes("err", `no shortcut '${esc(cmd)}' — try 'shortcuts'`);
+        return;
+      }
       return void shellExec(c);
     }
   }
@@ -1445,21 +1957,87 @@ inp.addEventListener("keydown", (e) => {
   } else if (e.key === "Enter") {
     e.preventDefault();
     if (rowSel >= 0 && rows[rowSel]) {
-      activateRow(rows[rowSel]);
+      activateRow(rows[rowSel], e.ctrlKey);
       return;
     }
-    submitCommand(inp.value);
+    submitCommand(inp.value, e.ctrlKey);
+  } else if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "l") {
+    e.preventDefault();
+    inp.value = "";
+    syncEcho();
+    clearRes();
+    defaults();
+  } else if (e.ctrlKey && !e.shiftKey && e.key === "p") {
+    e.preventDefault();
+    if (hist.length) {
+      hi = Math.min(hi + 1, hist.length);
+      inp.value = hist[hist.length - hi];
+      syncEcho();
+      refreshProposals();
+    }
+  } else if (e.ctrlKey && !e.shiftKey && e.key === "n") {
+    e.preventDefault();
+    if (hi > 0) {
+      hi--;
+      inp.value = hi ? hist[hist.length - hi] : "";
+      syncEcho();
+      refreshProposals();
+    }
+  } else if (e.altKey && /^[1-9]$/.test(e.key)) {
+    const pin = ENGINE_RUNTIME.pins[Number(e.key) - 1];
+    if (pin) {
+      e.preventDefault();
+      const hit = findPreset(pin);
+      if (hit) void launchPreset(hit);
+    }
+  } else if (e.ctrlKey && /^[1-9]$/.test(e.key)) {
+    e.preventDefault();
+    const idx = Number(e.key) - 1;
+    if (rows[idx]) activateRow(rows[idx], e.ctrlKey);
   }
 });
 
 document.addEventListener(
   "keydown",
   (e) => {
-    if (e.key !== "Escape") return;
-    if (mode === "terminal") {
+    if (mode === "terminal" && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
       e.preventDefault();
       e.stopPropagation();
-      void detachTerminal(true);
+      showTermFind();
+      return;
+    }
+    const esc = e.key === "Escape" || e.code === "Escape";
+    if (!esc) return;
+    const termOpen = mode === "terminal" || root?.dataset.mode === "terminal" || (termWrap && !termWrap.hidden);
+    if (termOpen) {
+      if (termFindOpen) {
+        e.preventDefault();
+        e.stopPropagation();
+        hideTermFind();
+        return;
+      }
+      const menu = document.getElementById("cli-term-menu");
+      if (menu?.classList.contains("on")) {
+        e.preventDefault();
+        e.stopPropagation();
+        hideTermMenu();
+        return;
+      }
+      return;
+    }
+    if (inp.value.trim()) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (escClearPending) {
+        escClearPending = false;
+        dismissAction("escape");
+        return;
+      }
+      escClearPending = true;
+      inp.value = "";
+      syncEcho();
+      clearRes();
+      defaults();
       return;
     }
     e.preventDefault();
@@ -1469,9 +2047,17 @@ document.addEventListener(
   true,
 );
 
-document.querySelector(".cli")!.addEventListener("click", () => {
+document.querySelector(".cli")!.addEventListener("click", (e) => {
+  e.stopPropagation();
+  clearBlurTimer();
   focusPrompt();
 });
+termWrap.addEventListener("mousedown", (e) => {
+  e.stopPropagation();
+  clearBlurTimer();
+  if (mode === "terminal") term?.focus();
+});
+root.addEventListener("mousedown", () => clearBlurTimer());
 
 void getCurrentWindow().onFocusChanged(({ payload: focused }) => {
   if (focused) {
@@ -1480,8 +2066,10 @@ void getCurrentWindow().onFocusChanged(({ payload: focused }) => {
     return;
   }
   // Terminal mode: keep session alive on focus flicker; only Action auto-dismisses.
-  if (mode === "terminal") return;
-  const blurDelay = busy ? Math.max(BLUR_DISMISS_MS, FOCUS_STEAL_GRACE_MS + 80) : BLUR_DISMISS_MS;
+  if (mode === "terminal" || sessionAlive) return;
+  const blurDelay = busy
+    ? Math.max(ENGINE_OPTS.blurDismissMs, FOCUS_STEAL_GRACE_MS + 80)
+    : ENGINE_OPTS.blurDismissMs;
   scheduleDismiss(blurDelay, "outside-blur");
 });
 
@@ -1521,6 +2109,16 @@ void (async () => {
   if (v?.waitForTauri) await v.waitForTauri();
   bindDom();
   bindUi();
+  try {
+    const ctx = await loadSpawnableEngineContext();
+    ENGINE_ID = ctx.id;
+    ENGINE_OPTS = ctx.opts;
+    ENGINE_RUNTIME = await loadEngineRuntime(ENGINE_ID);
+    hostAvailable = true;
+  } catch {
+    hostAvailable = typeof (window as unknown as { __TAURI__?: unknown }).__TAURI__ !== "undefined"
+      || !!(window as unknown as { versailles?: unknown }).versailles;
+  }
 
   const onShown = (ev: { payload?: string } | string) => {
     const seed = typeof ev === "string" ? ev : typeof ev?.payload === "string" ? ev.payload : "";

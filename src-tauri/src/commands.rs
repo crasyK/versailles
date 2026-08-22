@@ -407,6 +407,57 @@ pub fn open_log_folder(app: AppHandle) -> AppResult<String> {
     Ok(dir.display().to_string())
 }
 
+#[tauri::command]
+pub fn arm_overlay_focus_guard(ms: Option<u64>) -> AppResult<()> {
+    crate::window_manager::arm_overlay_focus_guard_ms(ms.unwrap_or(500));
+    Ok(())
+}
+
+#[tauri::command]
+pub fn focus_spawnable(app: AppHandle, id: String) -> AppResult<()> {
+    let state = app.state::<AppState>();
+    if crate::window_manager::hotkey_overlay_visible(&app) {
+        let label = crate::window_manager::widget_label(&id);
+        if let Some(w) = app.get_webview_window(&label) {
+            let _ = w.set_focus();
+        }
+        return Ok(());
+    }
+    crate::window_manager::reveal_overlay(&app, &state.window_manager, &id)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpawnableEngineContext {
+    pub id: String,
+    pub dismiss_on_blur: bool,
+    pub opts: crate::config::SpawnableEngineOpts,
+}
+
+#[tauri::command]
+pub fn get_spawnable_engine_context(
+    state: State<'_, AppState>,
+    id: String,
+) -> AppResult<SpawnableEngineContext> {
+    let user = state.store.lock().unwrap().load_user_config()?;
+    let cat = crate::desktop::page_catalog(&state);
+    let piece = cat
+        .spawnable(&id)
+        .ok_or_else(|| crate::error::AppError::msg(format!("unknown spawnable '{id}'")))?;
+    let dismiss = crate::page::piece_dismiss_on_blur(piece, &user);
+    let opts = user
+        .spawnables
+        .get(&id.trim().to_ascii_lowercase())
+        .or_else(|| user.spawnables.get(&id))
+        .and_then(|s| s.opts.clone())
+        .unwrap_or_default();
+    Ok(SpawnableEngineContext {
+        id: piece.id.clone(),
+        dismiss_on_blur: dismiss,
+        opts,
+    })
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApiInfo {

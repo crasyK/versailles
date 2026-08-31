@@ -1,5 +1,6 @@
 use crate::config::{AppConfig, ConfigStore};
 use crate::media::MediaState;
+use crate::page::PageCatalog;
 use crate::registry::WidgetRegistry;
 use crate::window_manager::WindowManager;
 use std::sync::Mutex;
@@ -13,4 +14,6 @@ pub struct AppState {
     pub window_manager: Mutex<WindowManager>,
     pub media: MediaState,
     pub tray_desktop_item: Mutex<Option<MenuItem<Wry>>>,
+    pub page_html: Mutex<String>,
+    pub page_catalog: Mutex<PageCatalog>,
 }

@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Versailles mark: top-down formal garden parterre.
+       Single-color on transparent so it tints for tray / installer / store. -->
+  <g fill="#1a1a1a">
+    <!-- central axis (vertical) -->
+    <polygon points="256,36 282,68 282,444 256,476 230,444 230,68"/>
+    <!-- cross path (horizontal, shorter) -->
+    <polygon points="76,256 104,230 408,230 436,256 408,282 104,282"/>
+    <!-- hedge drops, one per quadrant, tips facing the corners -->
+    <path transform="translate(368 144) rotate(45)"
+          d="M 0 -54 C 16 -30 32 -14 32 6 A 32 32 0 1 1 -32 6 C -32 -14 -16 -30 0 -54 Z"/>
+    <path transform="translate(144 144) rotate(-45)"
+          d="M 0 -54 C 16 -30 32 -14 32 6 A 32 32 0 1 1 -32 6 C -32 -14 -16 -30 0 -54 Z"/>
+    <path transform="translate(368 368) rotate(135)"
+          d="M 0 -54 C 16 -30 32 -14 32 6 A 32 32 0 1 1 -32 6 C -32 -14 -16 -30 0 -54 Z"/>
+    <path transform="translate(144 368) rotate(-135)"
+          d="M 0 -54 C 16 -30 32 -14 32 6 A 32 32 0 1 1 -32 6 C -32 -14 -16 -30 0 -54 Z"/>
+  </g>
+</svg>

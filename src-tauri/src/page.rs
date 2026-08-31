@@ -137,7 +137,20 @@ pub fn piece_is_overlay(piece: &PagePiece) -> bool {
     )
 }
 
+/// `tc` pins the overlay near the top (action-bar). Other overlay anchors are mid-screen.
+pub fn piece_overlay_top_pin(piece: &PagePiece) -> bool {
+    matches!(
+        piece
+            .anchor
+            .as_deref()
+            .map(|s| s.trim().to_ascii_lowercase())
+            .as_deref(),
+        Some("tc")
+    )
+}
+
 pub fn parse_page(html: &str) -> PageCatalog {
+    crate::boot::count_parse_page();
     let mut pieces = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     let bytes = html.as_bytes();
@@ -212,6 +225,14 @@ pub fn parse_page(html: &str) -> PageCatalog {
 /// Host enforcement: unscoped invokes (launcher engine) are allowed.
 /// A widget/spawnable `caller` must list the hook on `data-hooks`.
 pub fn enforce_caller_hook(html: &str, caller: Option<&str>, hook: &str) -> AppResult<()> {
+    enforce_caller_hook_catalog(&parse_page(html), caller, hook)
+}
+
+pub fn enforce_caller_hook_catalog(
+    cat: &PageCatalog,
+    caller: Option<&str>,
+    hook: &str,
+) -> AppResult<()> {
     let hook = hook.trim().to_ascii_lowercase();
     if !KNOWN_HOOKS.iter().any(|h| *h == hook) {
         return Err(AppError::msg(format!("Unknown hook '{hook}'")));
@@ -219,7 +240,6 @@ pub fn enforce_caller_hook(html: &str, caller: Option<&str>, hook: &str) -> AppR
     let Some(id) = caller.map(str::trim).filter(|s| !s.is_empty()) else {
         return Ok(());
     };
-    let cat = parse_page(html);
     let Some(piece) = cat.get(id) else {
         return Err(AppError::msg(format!(
             "hook '{hook}' rejected: unknown page piece '{id}'"
@@ -233,7 +253,8 @@ pub fn enforce_caller_hook(html: &str, caller: Option<&str>, hook: &str) -> AppR
     )))
 }
 
-/// Best-effort ACL when the command only has an optional `caller`.
+/// Best-effort ACL when the command only has an optional `caller` and no `AppState`.
+#[allow(dead_code)]
 pub fn enforce_hook_from_disk(caller: Option<&str>, hook: &str) -> Result<(), String> {
     let Ok(root) = crate::registry::widgets_root() else {
         return Ok(());
@@ -242,7 +263,16 @@ pub fn enforce_hook_from_disk(caller: Option<&str>, hook: &str) -> Result<(), St
     let Ok(page) = std::fs::read_to_string(path) else {
         return Ok(());
     };
+    crate::boot::count_html_read();
     enforce_caller_hook(&page, caller, hook).map_err(|e| e.to_string())
+}
+
+pub fn enforce_hook_cached(
+    cat: &PageCatalog,
+    caller: Option<&str>,
+    hook: &str,
+) -> Result<(), String> {
+    enforce_caller_hook_catalog(cat, caller, hook).map_err(|e| e.to_string())
 }
 
 fn class_has(tag_lower: &str, token: &str) -> bool {
@@ -311,12 +341,31 @@ pub fn piece_draggable(piece: &PagePiece, user: &UserConfig) -> bool {
     !piece_is_overlay(piece)
 }
 
+fn find_ignore_ascii_case(hay: &str, needle: &str) -> Option<usize> {
+    let h = hay.as_bytes();
+    let n = needle.as_bytes();
+    if n.is_empty() || n.len() > h.len() {
+        return None;
+    }
+    h.windows(n.len()).position(|w| w.eq_ignore_ascii_case(n))
+}
+
+fn rfind_ignore_ascii_case(hay: &str, needle: &str) -> Option<usize> {
+    let h = hay.as_bytes();
+    let n = needle.as_bytes();
+    if n.is_empty() || n.len() > h.len() {
+        return None;
+    }
+    h.windows(n.len())
+        .rposition(|w| w.eq_ignore_ascii_case(n))
+}
+
 /// Inner JSON of `<script type="application/json" id="versailles">…</script>`.
 /// The JSON must not contain the literal `</script>`.
+/// Scans in place — does not allocate a lowercased copy of `html`.
 pub fn extract_versailles_json(html: &str) -> Option<&str> {
-    let lower = html.to_ascii_lowercase();
     let mut search_from = 0;
-    while let Some(id_rel) = lower[search_from..].find("id=") {
+    while let Some(id_rel) = find_ignore_ascii_case(&html[search_from..], "id=") {
         let id_at = search_from + id_rel;
         let after = html.get(id_at + 3..).unwrap_or("").trim_start();
         let Some(quote) = after.chars().next() else {
@@ -336,7 +385,7 @@ pub fn extract_versailles_json(html: &str) -> Option<&str> {
             search_from = id_at + 3;
             continue;
         }
-        let Some(script_rel) = lower[..id_at].rfind("<script") else {
+        let Some(script_rel) = rfind_ignore_ascii_case(&html[..id_at], "<script") else {
             search_from = id_at + 3;
             continue;
         };
@@ -344,7 +393,7 @@ pub fn extract_versailles_json(html: &str) -> Option<&str> {
             return None;
         };
         let inner_start = script_rel + tag_end_rel + 1;
-        let Some(close_rel) = lower[inner_start..].find("</script>") else {
+        let Some(close_rel) = find_ignore_ascii_case(&html[inner_start..], "</script>") else {
             return None;
         };
         return Some(html[inner_start..inner_start + close_rel].trim());
@@ -374,6 +423,7 @@ mod tests {
         assert_eq!(cat.get("action-bar").unwrap().kind, PageKind::Spawnable);
         assert!(cat.hotkey_piece().is_some());
         assert!(cat.is_overlay("action-bar"));
+        assert!(!piece_overlay_top_pin(cat.get("action-bar").unwrap()));
         assert_eq!(
             cat.get("action-bar").unwrap().hotkey.as_deref(),
             Some("Alt+Space")
@@ -414,6 +464,19 @@ mod tests {
     }
 
     #[test]
+    fn top_pin_is_only_tc() {
+        let html = r#"
+<template class="spawnable" data-id="draw" data-anchor="c"></template>
+<template class="spawnable action-bar" data-id="action-bar" data-anchor="tc"></template>
+"#;
+        let cat = parse_page(html);
+        assert!(cat.is_overlay("draw"));
+        assert!(cat.is_overlay("action-bar"));
+        assert!(!piece_overlay_top_pin(cat.spawnable("draw").unwrap()));
+        assert!(piece_overlay_top_pin(cat.spawnable("action-bar").unwrap()));
+    }
+
+    #[test]
     fn binds_every_hotkey_spawnable() {
         let html = r#"
 <template class="spawnable" data-id="draw" data-hooks="layout,hotkey" data-hotkey="Ctrl+Shift+D" data-anchor="tr"></template>
@@ -444,6 +507,73 @@ mod tests {
         assert_eq!(
             cat.hotkey_bindings("Alt+Space"),
             vec![("Alt+Space".into(), "a".into())]
+        );
+    }
+
+    #[test]
+    fn extracts_versailles_json_case_insensitive_id() {
+        let html = r#"<html><head>
+<SCRIPT type="application/json" ID="Versailles">
+{ "autostart": false }
+</SCRIPT>
+</head></html>"#;
+        let json = extract_versailles_json(html).expect("block");
+        assert!(json.contains("\"autostart\": false"));
+    }
+
+    fn bulky_html(widgets: usize, pad: usize) -> String {
+        let mut s = String::with_capacity(widgets * (pad + 80) + 256);
+        s.push_str(
+            r#"<html><head><script type="application/json" id="versailles">{ "autostart": false }</script></head><body>"#,
+        );
+        let blob = "x".repeat(pad);
+        for i in 0..widgets {
+            s.push_str(&format!(
+                r#"<article class="widget" data-id="w{i}" data-hooks="media">{blob}</article>"#
+            ));
+        }
+        s.push_str(
+            r#"<template class="spawnable" data-id="action-bar" data-hooks="shell,hotkey" data-hotkey="Alt+Space"></template></body></html>"#,
+        );
+        s
+    }
+
+    #[test]
+    fn parse_page_and_extract_hold_on_large_html() {
+        let html = bulky_html(400, 500);
+        assert!(html.len() > 200_000, "fixture {} bytes", html.len());
+        let json = extract_versailles_json(&html).expect("json");
+        assert!(json.contains("autostart"));
+        let start = std::time::Instant::now();
+        let mut last = None;
+        for _ in 0..50 {
+            last = Some(parse_page(&html));
+        }
+        let ms = start.elapsed().as_millis();
+        eprintln!("parse_page x50 on {} bytes = {ms}ms", html.len());
+        let cat = last.expect("cat");
+        assert_eq!(cat.pieces.len(), 401);
+        assert!(ms < 5_000, "parse_page x50 took {ms}ms");
+    }
+
+    #[test]
+    fn cached_acl_is_cheaper_than_reparse() {
+        let html = bulky_html(400, 500);
+        let cat = parse_page(&html);
+        let cached_start = std::time::Instant::now();
+        for _ in 0..1_000 {
+            assert!(enforce_caller_hook_catalog(&cat, Some("w0"), "media").is_ok());
+        }
+        let cached = cached_start.elapsed();
+        let parsed_start = std::time::Instant::now();
+        for _ in 0..1_000 {
+            assert!(enforce_caller_hook(&html, Some("w0"), "media").is_ok());
+        }
+        let parsed = parsed_start.elapsed();
+        eprintln!("acl cached={cached:?} reparse={parsed:?}");
+        assert!(
+            cached.as_nanos() * 10 < parsed.as_nanos() || cached.as_micros() < 5_000,
+            "cached ACL should dwarf full reparse (cached={cached:?} parsed={parsed:?})"
         );
     }
 }

@@ -74,6 +74,15 @@ pub fn start_widget_watcher(app: AppHandle) {
                     }
                     last_emit = Instant::now();
 
+                    let touches_page = event.paths.iter().any(|p| {
+                        let s = p.to_string_lossy().replace('\\', "/").to_lowercase();
+                        s.ends_with("/desktop/index.html") || s.ends_with("/versailles.json")
+                    });
+                    if touches_page {
+                        let state = app.state::<AppState>();
+                        crate::desktop::refresh_page_cache(&state);
+                    }
+
                     // Rescan registry
                     {
                         let state = app.state::<AppState>();

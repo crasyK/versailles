@@ -27,11 +27,8 @@ fn persist_session(app: &AppHandle) -> AppResult<()> {
 }
 
 fn require_hook(state: &State<'_, AppState>, caller: &Option<String>, hook: &str) -> AppResult<()> {
-    crate::page::enforce_caller_hook(
-        &crate::desktop::read_desktop_html(state),
-        caller.as_deref(),
-        hook,
-    )
+    let cat = crate::desktop::page_catalog(state);
+    crate::page::enforce_caller_hook_catalog(&cat, caller.as_deref(), hook)
 }
 
 pub fn apply_autostart(app: &AppHandle, enabled: bool) -> AppResult<()> {
@@ -51,9 +48,9 @@ pub fn list_widgets(state: State<'_, AppState>) -> AppResult<RegistrySnapshot> {
     // In-memory snapshot only. The registry is scanned once at startup and
     // kept fresh by the file watcher, which emits "registry://changed".
     let mut snap = state.registry.lock().unwrap().snapshot();
-    let html = crate::desktop::read_desktop_html(&state);
+    let cat = crate::desktop::page_catalog(&state);
     for widget in &mut snap.widgets {
-        widget.embedded = crate::desktop::html_embeds_widget(&html, &widget.manifest.id);
+        widget.embedded = cat.is_desktop_widget(&widget.manifest.id);
     }
     Ok(snap)
 }
@@ -310,6 +307,7 @@ pub async fn media_now(
     state: State<'_, AppState>,
     caller: Option<String>,
 ) -> AppResult<MediaInfo> {
+    crate::boot::count_media_now();
     require_hook(&state, &caller, "media")?;
     Ok(state.media.snapshot())
 }

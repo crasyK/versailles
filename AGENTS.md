@@ -30,7 +30,7 @@ See [`docs/DIALECT.md`](docs/DIALECT.md).
 
 - `.widget` / `.spawnable` (optional `.action-bar` class)
 - `data-id` (required). `calc` aliases `calculator`.
-- `data-w` / `data-h` overlay size. `data-anchor` `c` = centered overlay; `tr` = docked slide-out.
+- `data-w` / `data-h` overlay size. `data-anchor` `c` = mid-screen overlay; `tc` = top-center overlay; `tr` = docked slide-out.
 - `data-hotkey` with the `hotkey` hook on any spawnable — each combo toggles that piece. Fallback for the first hook piece with no `data-hotkey`: `#versailles` / sidecar `launcher.hotkey`.
 - `data-hooks` allowlist: `media`, `mouse`, `layout`, `spawn`, `shell`, `hotkey`, `pty`
 

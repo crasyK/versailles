@@ -1,19 +1,29 @@
 //! Embedded ConPTY session for the Versailles Action Bar terminal mode.
 
 use crate::cli;
+use crate::state::AppState;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
+
+fn gate_pty(app_state: &AppState, caller: Option<&str>) -> Result<(), String> {
+    crate::page::enforce_hook_cached(
+        &crate::desktop::page_catalog(app_state),
+        caller,
+        "pty",
+    )
+}
 
 pub struct PtySession {
     master: Box<dyn MasterPty + Send>,
     /// Separate from session lock so write_all cannot stall resize / is_alive.
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
     killer: Box<dyn ChildKiller + Send + Sync>,
+    pid: Option<u32>,
     alive: Arc<AtomicBool>,
 }
 
@@ -32,9 +42,27 @@ impl Default for PtyState {
 fn close_inner(session: &mut Option<PtySession>) {
     if let Some(mut s) = session.take() {
         s.alive.store(false, Ordering::SeqCst);
+        // Kill the tree first while the shell PID still exists; TerminateProcess
+        // on pwsh alone leaves ssh / TUI children orphaned on Windows.
+        if let Some(pid) = s.pid {
+            kill_process_tree(pid);
+        }
         let _ = s.killer.kill();
     }
 }
+
+#[cfg(windows)]
+fn kill_process_tree(pid: u32) {
+    let _ = std::process::Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+}
+
+#[cfg(not(windows))]
+fn kill_process_tree(_pid: u32) {}
 
 /// Tear down any live PTY (hide launcher / leave terminal mode).
 pub fn close_pty_session(state: &PtyState) {
@@ -55,7 +83,7 @@ pub fn pty_open(
     rows: u16,
     caller: Option<String>,
 ) -> Result<(), String> {
-    crate::page::enforce_hook_from_disk(caller.as_deref(), "pty")?;
+    gate_pty(&app.state::<AppState>(), caller.as_deref())?;
     let mut guard = state.session.lock().map_err(|e| e.to_string())?;
     close_inner(&mut guard);
 
@@ -72,6 +100,8 @@ pub fn pty_open(
 
     let mut cmd = CommandBuilder::new(shell);
     cmd.arg("-NoLogo");
+    cmd.env("TERM", "xterm-256color");
+    cmd.env("COLORTERM", "truecolor");
     // Keep profile so user aliases/path work; interactive session.
     if let Some(dir) = cwd.as_ref().filter(|d| std::path::Path::new(d).is_dir()) {
         cmd.cwd(dir);
@@ -81,6 +111,7 @@ pub fn pty_open(
         .slave
         .spawn_command(cmd)
         .map_err(|e| format!("spawn {shell}: {e}"))?;
+    let pid = child.process_id();
     // Drop slave so only master remains attached.
     drop(pair.slave);
 
@@ -161,6 +192,7 @@ pub fn pty_open(
         master: pair.master,
         writer,
         killer,
+        pid,
         alive,
     });
     Ok(())
@@ -169,10 +201,11 @@ pub fn pty_open(
 #[tauri::command]
 pub fn pty_write(
     state: State<'_, PtyState>,
+    app_state: State<'_, AppState>,
     data: String,
     caller: Option<String>,
 ) -> Result<(), String> {
-    crate::page::enforce_hook_from_disk(caller.as_deref(), "pty")?;
+    gate_pty(&app_state, caller.as_deref())?;
     // Clone writer Arc under a short session lock, then write outside it.
     let writer = {
         let guard = state.session.lock().map_err(|e| e.to_string())?;
@@ -189,11 +222,12 @@ pub fn pty_write(
 #[tauri::command]
 pub fn pty_resize(
     state: State<'_, PtyState>,
+    app_state: State<'_, AppState>,
     cols: u16,
     rows: u16,
     caller: Option<String>,
 ) -> Result<(), String> {
-    crate::page::enforce_hook_from_disk(caller.as_deref(), "pty")?;
+    gate_pty(&app_state, caller.as_deref())?;
     let guard = state.session.lock().map_err(|e| e.to_string())?;
     let session = guard.as_ref().ok_or_else(|| "no pty session".to_string())?;
     session
@@ -210,9 +244,10 @@ pub fn pty_resize(
 #[tauri::command]
 pub fn pty_is_alive(
     state: State<'_, PtyState>,
+    app_state: State<'_, AppState>,
     caller: Option<String>,
 ) -> Result<bool, String> {
-    crate::page::enforce_hook_from_disk(caller.as_deref(), "pty")?;
+    gate_pty(&app_state, caller.as_deref())?;
     let guard = state.session.lock().map_err(|e| e.to_string())?;
     Ok(guard
         .as_ref()
@@ -221,8 +256,12 @@ pub fn pty_is_alive(
 }
 
 #[tauri::command]
-pub fn pty_close(state: State<'_, PtyState>, caller: Option<String>) -> Result<(), String> {
-    crate::page::enforce_hook_from_disk(caller.as_deref(), "pty")?;
+pub fn pty_close(
+    state: State<'_, PtyState>,
+    app_state: State<'_, AppState>,
+    caller: Option<String>,
+) -> Result<(), String> {
+    gate_pty(&app_state, caller.as_deref())?;
     close_pty_session(&state);
     Ok(())
 }

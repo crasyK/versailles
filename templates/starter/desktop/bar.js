@@ -113,9 +113,6 @@
   // scripts/bar-shims/fit.js
   var FitAddon = window.FitAddon?.FitAddon || window.FitAddon;
 
-  // scripts/bar-shims/webgl.js
-  var WebglAddon = window.WebglAddon?.WebglAddon || window.WebglAddon;
-
   // scripts/bar-shims/web-links.js
   var WebLinksAddon = window.WebLinksAddon?.WebLinksAddon || window.WebLinksAddon;
 
@@ -1927,6 +1924,19 @@
   var BLUR_DISMISS_MS = 280;
   var FOCUS_STEAL_GRACE_MS = 320;
   var BUSY_WATCHDOG_MS = 4500;
+  var LAUNCH_COOLDOWN_MS = 700;
+  function barWindow() {
+    return window;
+  }
+  function launchBlocked() {
+    const at = barWindow().__VERSAILLES_LAST_LAUNCH__ || 0;
+    return Date.now() - at < LAUNCH_COOLDOWN_MS;
+  }
+  function claimLaunch() {
+    if (launchBlocked()) return false;
+    barWindow().__VERSAILLES_LAST_LAUNCH__ = Date.now();
+    return true;
+  }
   var mode = "action";
   var term = null;
   var fitAddon = null;
@@ -2113,6 +2123,7 @@
       d.title = r.path || r.d || "";
       d.onmousedown = (e) => {
         e.preventDefault();
+        if (e.detail > 1 || launchBlocked()) return;
         activateRow(r);
       };
       sug.appendChild(d);
@@ -2145,7 +2156,7 @@
   }
   function submitCommand(raw, background = false) {
     const v = raw.trim();
-    if (busy) return;
+    if (busy || launchBlocked()) return;
     escClearPending = false;
     inp.value = "";
     syncEcho();
@@ -2381,7 +2392,7 @@
       modeLabel.textContent = "terminal";
       footL.textContent = "alt+space hide";
       footM.textContent = "ctrl+f find";
-      footHint.textContent = "esc \u2192 app";
+      footHint.textContent = "right-click session";
       footR.textContent = sessionAlive ? "live \xB7 background ok" : "right-click menu";
     } else {
       titleEl.textContent = "versailles";
@@ -2545,7 +2556,7 @@
     const menu = document.createElement("div");
     menu.id = "cli-term-menu";
     menu.className = "cli-term-menu";
-    menu.innerHTML = '<button type="button" data-act="copy">Copy</button><button type="button" data-act="paste">Paste</button><button type="button" data-act="select-all">Select All</button><button type="button" data-act="clear">Clear</button>';
+    menu.innerHTML = '<button type="button" data-act="copy">Copy</button><button type="button" data-act="paste">Paste</button><button type="button" data-act="select-all">Select All</button><button type="button" data-act="clear">Clear</button><button type="button" data-act="new">New session</button><button type="button" data-act="kill">Kill session</button>';
     document.body.appendChild(menu);
     menu.addEventListener("mousedown", (e) => e.stopPropagation());
     menu.addEventListener("click", (e) => {
@@ -2557,6 +2568,12 @@
       else if (act === "paste") void pasteToTerm();
       else if (act === "select-all") selectAllTerm();
       else if (act === "clear") clearTermBuffer();
+      else if (act === "new") {
+        forceIdle("term-new");
+        void enterTerminal(void 0, { fresh: true });
+      } else if (act === "kill") {
+        void closeTerminalFromCommand();
+      }
     });
     if (!termMenuBound) {
       termMenuBound = true;
@@ -2582,20 +2599,6 @@
   }
   function hideTermMenu() {
     document.getElementById("cli-term-menu")?.classList.remove("on");
-  }
-  function attachWebgl(t) {
-    try {
-      const addon = new WebglAddon();
-      addon.onContextLoss(() => {
-        try {
-          addon.dispose();
-        } catch {
-        }
-        attachWebgl(t);
-      });
-      t.loadAddon(addon);
-    } catch {
-    }
   }
   function bindTermChrome(t) {
     t.attachCustomKeyEventHandler((ev) => {
@@ -2729,7 +2732,6 @@
     } catch {
     }
     t.open(termHost);
-    attachWebgl(t);
     fitAddon = fit;
     term = t;
     if (typeof ResizeObserver !== "undefined") {
@@ -2786,10 +2788,11 @@
       fitAddon.fit();
       return;
     }
-    const hostW = termHost.clientWidth;
-    const cellW = proposed.cols > 0 ? hostW / (proposed.cols + 2) : 9;
-    const extra = cellW > 1 ? Math.round(14 / cellW) : 0;
-    const cols = Math.max(20, proposed.cols + extra);
+    const style = getComputedStyle(termHost);
+    const padX = (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
+    const cellW = proposed.cols > 0 && termHost.clientWidth > 0 ? termHost.clientWidth / proposed.cols : 9;
+    const padCols = cellW > 1 && padX > 0 ? Math.ceil(padX / cellW) : 0;
+    const cols = Math.max(20, proposed.cols - padCols - 1);
     const rows2 = Math.max(8, proposed.rows);
     if (term.cols !== cols || term.rows !== rows2) {
       term.resize(cols, rows2);
@@ -2811,6 +2814,20 @@
     fitTermExact();
     await delay(60);
     await fitAndResizePty();
+  }
+  function termSizeReady(t) {
+    return termHost.clientWidth > 0 && termHost.clientHeight > 0 && (t.cols || 0) >= 20 && (t.rows || 0) >= 8;
+  }
+  async function waitForTermSize(t) {
+    for (let i = 0; i < 16; i++) {
+      fitTermExact();
+      if (termSizeReady(t)) {
+        return { cols: t.cols, rows: t.rows };
+      }
+      await delay(40);
+    }
+    fitTermExact();
+    return { cols: Math.max(20, t.cols || 80), rows: Math.max(8, t.rows || 24) };
   }
   async function detachTerminal(focusAction = true) {
     if (mode !== "terminal") {
@@ -2855,6 +2872,22 @@
     if (term) {
       term.reset();
     }
+  }
+  async function closeTerminalFromCommand() {
+    forceIdle("term-kill");
+    await killTerminalSession();
+    termSessionLabel = "";
+    try {
+      await detachTerminal(false);
+    } catch {
+      mode = "action";
+      termWrap.hidden = true;
+    }
+    await refreshSessionAlive();
+    applyChrome("action");
+    defaults();
+    setRes("ok", "&rarr; background terminal closed");
+    inp.focus();
   }
   async function enterTerminal(seedCmd, opts = {}) {
     const fresh = opts.fresh === true;
@@ -2902,11 +2935,9 @@
         const t = ensureTerm();
         t.reset();
         clearPtyWriteBuf();
-        await settleTermSize();
-        const cols = t.cols || 80;
-        const rows2 = t.rows || 24;
+        const size = await waitForTermSize(t);
         await bindPtyListeners();
-        await invoke("pty_open", { cwd, cols, rows: rows2 });
+        await invoke("pty_open", { cwd, cols: size.cols, rows: size.rows });
         sessionAlive = true;
         await settleTermSize();
         t.focus();
@@ -2931,6 +2962,7 @@
     }, { focusSteals: false });
   }
   async function openPath(path) {
+    if (!claimLaunch()) return;
     await withBusy(async () => {
       try {
         await invoke("cli_open", { target: path });
@@ -2947,6 +2979,7 @@
     openTarget("https://www.google.com/search?q=" + encodeURIComponent(q));
   }
   function openTarget(target, opts = {}) {
+    if (!claimLaunch()) return;
     void withBusy(async () => {
       try {
         if (!hostAvailable) throw new Error("host unavailable \u2014 preview mode cannot launch");
@@ -3044,6 +3077,7 @@
     showRows(list.map((x) => ({ c: x.n, d: `${x.cat} \xB7 ${x.d}`, cc: x.n })));
   }
   async function openFileTarget(target, label2) {
+    if (!claimLaunch()) return;
     await withBusy(async () => {
       try {
         await invoke("cli_open", { target });
@@ -3084,9 +3118,10 @@
       clearBlurTimer();
       termSessionLabel = hit.n;
       void saveLastTermSeed(ENGINE_ID, hit.target);
-      return void enterTerminal(hit.target);
+      return void enterTerminal(hit.target, { fresh: true });
     }
     lastLaunchError = null;
+    if (!claimLaunch()) return;
     await withBusy(async () => {
       try {
         if (!hostAvailable) throw new Error("host unavailable \u2014 preview mode cannot launch");
@@ -3391,14 +3426,12 @@
       case "shell":
       case "ps": {
         const sub = arg.trim().toLowerCase();
-        if (sub === "new" || sub === "fresh") return void enterTerminal(void 0, { fresh: true });
+        if (sub === "new" || sub === "fresh") {
+          forceIdle("term-new");
+          return void enterTerminal(void 0, { fresh: true });
+        }
         if (sub === "kill" || sub === "close") {
-          return void (async () => {
-            await killTerminalSession();
-            setRes("ok", "&rarr; background terminal closed");
-            applyChrome("action");
-            defaults();
-          })();
+          return void closeTerminalFromCommand();
         }
         return void enterTerminal();
       }
@@ -3604,6 +3637,8 @@
         }
       } else if (e.key === "Enter") {
         e.preventDefault();
+        e.stopImmediatePropagation();
+        if (e.repeat || launchBlocked()) return;
         if (rowSel >= 0 && rows[rowSel]) {
           activateRow(rows[rowSel], e.ctrlKey);
           return;
@@ -3741,59 +3776,63 @@
     syncEcho();
     refreshProposals();
   }
-  void (async () => {
-    const v = window.versailles;
-    if (v?.waitForTauri) await v.waitForTauri();
-    bindDom();
-    bindUi();
-    try {
-      const ctx = await loadSpawnableEngineContext();
-      ENGINE_ID = ctx.id;
-      ENGINE_OPTS = ctx.opts;
-      ENGINE_RUNTIME = await loadEngineRuntime(ENGINE_ID);
-      hostAvailable = true;
-    } catch {
-      hostAvailable = typeof window.__TAURI__ !== "undefined" || !!window.versailles;
-    }
-    const onShown = (ev) => {
-      const seed = typeof ev === "string" ? ev : typeof ev?.payload === "string" ? ev.payload : "";
-      void resetBar(seed);
-    };
-    await listen("overlay://shown", onShown);
-    await listen("launcher://shown", onShown);
-    await listen("overlay://hidden", () => {
-      forceIdle("hidden");
-      void (async () => {
-        if (mode === "terminal") await detachTerminal(false);
-        inp.value = "";
-        syncEcho();
-        clearRes();
-        applyChrome("action");
-      })();
-    });
-    await listen("launcher://hidden", () => {
-      forceIdle("hidden");
-      void (async () => {
-        if (mode === "terminal") await detachTerminal(false);
-        inp.value = "";
-        syncEcho();
-        clearRes();
-        applyChrome("action");
-      })();
-    });
-    try {
-      HOME = await invoke("cli_home");
-    } catch {
-      HOME = "";
-    }
-    if (!HOME) HOME = "C:\\";
-    cwd = HOME;
-    PRESETS = builtinPresets(HOME);
-    await refreshPresets();
-    await refreshSessionAlive();
-    applyChrome("action");
-    setPrompt();
-    defaults();
-    focusPrompt();
-  })();
+  var _barBoot = barWindow();
+  if (!_barBoot.__VERSAILLES_BAR_BOUND__) {
+    _barBoot.__VERSAILLES_BAR_BOUND__ = true;
+    void (async () => {
+      const v = window.versailles;
+      if (v?.waitForTauri) await v.waitForTauri();
+      bindDom();
+      bindUi();
+      try {
+        const ctx = await loadSpawnableEngineContext();
+        ENGINE_ID = ctx.id;
+        ENGINE_OPTS = ctx.opts;
+        ENGINE_RUNTIME = await loadEngineRuntime(ENGINE_ID);
+        hostAvailable = true;
+      } catch {
+        hostAvailable = typeof window.__TAURI__ !== "undefined" || !!window.versailles;
+      }
+      const onShown = (ev) => {
+        const seed = typeof ev === "string" ? ev : typeof ev?.payload === "string" ? ev.payload : "";
+        void resetBar(seed);
+      };
+      await listen("overlay://shown", onShown);
+      await listen("launcher://shown", onShown);
+      await listen("overlay://hidden", () => {
+        forceIdle("hidden");
+        void (async () => {
+          if (mode === "terminal") await detachTerminal(false);
+          inp.value = "";
+          syncEcho();
+          clearRes();
+          applyChrome("action");
+        })();
+      });
+      await listen("launcher://hidden", () => {
+        forceIdle("hidden");
+        void (async () => {
+          if (mode === "terminal") await detachTerminal(false);
+          inp.value = "";
+          syncEcho();
+          clearRes();
+          applyChrome("action");
+        })();
+      });
+      try {
+        HOME = await invoke("cli_home");
+      } catch {
+        HOME = "";
+      }
+      if (!HOME) HOME = "C:\\";
+      cwd = HOME;
+      PRESETS = builtinPresets(HOME);
+      await refreshPresets();
+      await refreshSessionAlive();
+      applyChrome("action");
+      setPrompt();
+      defaults();
+      focusPrompt();
+    })();
+  }
 })();

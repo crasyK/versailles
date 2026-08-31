@@ -489,8 +489,7 @@ fn resolve_open_spec(
     always_on_top: Option<bool>,
 ) -> AppResult<OpenSpec> {
     let state = app.state::<AppState>();
-    let html = crate::desktop::read_desktop_html(&state);
-    let cat = crate::page::parse_page(&html);
+    let cat = crate::desktop::page_catalog(&state);
 
     if always_on_top != Some(true) && cat.is_desktop_widget(id) {
         return Err(AppError::msg(format!(
@@ -1021,15 +1020,20 @@ pub fn hotkey_overlay_visible(app: &AppHandle) -> bool {
         .unwrap_or(false)
 }
 
-fn overlay_center_position(app: &AppHandle, width: u32, _height: u32) -> Position {
+fn overlay_center_position(app: &AppHandle, piece: &crate::page::PagePiece) -> Position {
     let window = app.webview_windows().into_values().next();
     let Some(window) = window else {
         return Position { x: 40, y: 80 };
     };
-    let (left, top, mon_w, _mon_h, scale) = launcher_monitor_bounds(&window);
-    let bar_w = (width as f64 * scale) as i32;
+    let (left, top, mon_w, mon_h, scale) = launcher_monitor_bounds(&window);
+    let bar_w = (piece.width as f64 * scale) as i32;
+    let bar_h = (piece.height as f64 * scale) as i32;
     let x = left + (mon_w as i32 - bar_w) / 2;
-    let y = top + (120.0 * scale) as i32;
+    let y = if crate::page::piece_overlay_top_pin(piece) {
+        top + (120.0 * scale) as i32
+    } else {
+        top + (mon_h as i32 - bar_h) / 2
+    };
     Position { x, y }
 }
 
@@ -1084,7 +1088,7 @@ pub fn reveal_overlay(
         .spawnable(id)
         .ok_or_else(|| crate::page::unknown_spawn(id))?;
     let pos = if crate::page::piece_is_overlay(piece) {
-        overlay_center_position(app, piece.width, piece.height)
+        overlay_center_position(app, piece)
     } else {
         dock_slideout_position(app, piece.width, piece.height)
     };
@@ -1443,6 +1447,7 @@ pub fn ensure_desktop_window(app: &AppHandle, _page_url: Option<String>) -> AppR
     window.show()?;
     pin_desktop_above_shell(&window);
     start_desktop_zorder_keeper(app);
+    crate::boot::mark_desktop_window();
     Ok(())
 }
 
@@ -1612,20 +1617,20 @@ pub fn apply_layout_template(
     manager: &Mutex<WindowManager>,
     layout: &LayoutTemplate,
 ) -> AppResult<Vec<OpenWidgetState>> {
-    let html = {
+    let cat = {
         let state = app.state::<AppState>();
-        crate::desktop::read_desktop_html(&state)
+        crate::desktop::page_catalog(&state)
     };
     let open_ids: Vec<String> = manager.lock().unwrap().open.keys().cloned().collect();
     for id in open_ids {
-        if crate::desktop::html_embeds_widget(&html, &id) || !layout.widgets.contains_key(&id) {
+        if cat.is_desktop_widget(&id) || !layout.widgets.contains_key(&id) {
             close_widget_window(app, manager, &id)?;
         }
     }
 
     let mut opened = Vec::new();
     for (id, placement) in &layout.widgets {
-        if crate::desktop::html_embeds_widget(&html, id) {
+        if cat.is_desktop_widget(id) {
             continue;
         }
         let state = open_widget_window(

@@ -1,8 +1,10 @@
+use crate::state::AppState;
 use serde::Serialize;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
+use tauri::State;
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -118,9 +120,22 @@ fn spawn_shell(script: &str, cwd: &Option<String>) -> Result<Child, String> {
         .map_err(|e| format!("failed to spawn {}: {e}", cfg.exe))
 }
 
+fn gate_shell(app_state: &AppState, caller: Option<&str>) -> Result<(), String> {
+    crate::page::enforce_hook_cached(
+        &crate::desktop::page_catalog(app_state),
+        caller,
+        "shell",
+    )
+}
+
 #[tauri::command]
-pub fn cli_exec(cmd: String, cwd: Option<String>, caller: Option<String>) -> Result<CliOutput, String> {
-    crate::page::enforce_hook_from_disk(caller.as_deref(), "shell")?;
+pub fn cli_exec(
+    cmd: String,
+    cwd: Option<String>,
+    caller: Option<String>,
+    app_state: State<'_, AppState>,
+) -> Result<CliOutput, String> {
+    gate_shell(&app_state, caller.as_deref())?;
     let mut child = spawn_shell(&cmd, &cwd)?;
     let stdout_pipe = child
         .stdout
@@ -312,23 +327,42 @@ pub fn cli_home() -> Result<String, String> {
         .ok_or_else(|| "could not resolve home directory".to_string())
 }
 
-#[tauri::command]
-pub fn cli_open(target: String, caller: Option<String>) -> Result<(), String> {
-    if let Ok(root) = crate::registry::widgets_root() {
-        // Best-effort page allowlist; launcher engine omits caller.
-        if let Some(page) = std::fs::read_to_string(root.join("desktop").join("index.html")).ok() {
-            if let Err(err) = crate::page::enforce_caller_hook(&page, caller.as_deref(), "shell") {
-                return Err(err.to_string());
-            }
+/// Same target within this window is a double Enter/click from the action bar.
+const OPEN_DEBOUNCE: Duration = Duration::from_millis(650);
+
+fn should_skip_duplicate_open(target: &str) -> bool {
+    static LAST: Mutex<Option<(String, Instant)>> = Mutex::new(None);
+    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((prev, at)) = last.as_ref() {
+        if prev == target && at.elapsed() < OPEN_DEBOUNCE {
+            return true;
         }
     }
+    *last = Some((target.to_string(), Instant::now()));
+    false
+}
+
+#[tauri::command]
+pub fn cli_open(
+    target: String,
+    caller: Option<String>,
+    app_state: State<'_, AppState>,
+) -> Result<(), String> {
+    gate_shell(&app_state, caller.as_deref())?;
     let resolved = crate::apps::resolve_launch_target(&target)?;
+    if should_skip_duplicate_open(&resolved) {
+        return Ok(());
+    }
     open_target(&resolved)
 }
 
 #[tauri::command]
-pub fn cli_search_files(query: String, caller: Option<String>) -> Result<Vec<String>, String> {
-    crate::page::enforce_hook_from_disk(caller.as_deref(), "shell")?;
+pub fn cli_search_files(
+    query: String,
+    caller: Option<String>,
+    app_state: State<'_, AppState>,
+) -> Result<Vec<String>, String> {
+    gate_shell(&app_state, caller.as_deref())?;
     let q = query.trim().to_lowercase();
     if q.is_empty() {
         return Ok(Vec::new());
@@ -481,5 +515,35 @@ pub fn show_desktop() -> Result<(), String> {
     #[cfg(not(windows))]
     {
         Err("show desktop is Windows-only".into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_skip_duplicate_open;
+
+    #[test]
+    fn duplicate_open_is_debounced() {
+        let t = format!(
+            "https://versailles.test/debounce-{}-{}",
+            std::process::id(),
+            "same"
+        );
+        assert!(!should_skip_duplicate_open(&t));
+        assert!(should_skip_duplicate_open(&t));
+    }
+
+    #[test]
+    fn different_targets_are_not_debounced() {
+        let a = format!(
+            "https://versailles.test/debounce-{}-a",
+            std::process::id()
+        );
+        let b = format!(
+            "https://versailles.test/debounce-{}-b",
+            std::process::id()
+        );
+        assert!(!should_skip_duplicate_open(&a));
+        assert!(!should_skip_duplicate_open(&b));
     }
 }

@@ -28,7 +28,10 @@ struct ApiState {
 /// `/files` + `/health` always run so widgets can load even when control API is disabled.
 /// Returns the port that was successfully bound.
 pub fn start_api_server(app: AppHandle, config: &mut AppConfig) -> AppResult<u16> {
-    let preferred = config.api_port;
+    let preferred = std::env::var("VERSAILLES_API_PORT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(config.api_port);
     let (std_listener, port) = bind_with_fallback(preferred)?;
     if port != preferred {
         tracing::warn!("API port {preferred} busy; using {port}");
@@ -37,6 +40,7 @@ pub fn start_api_server(app: AppHandle, config: &mut AppConfig) -> AppResult<u16
 
     let token = config.api_token.clone();
     let control_enabled = config.api_enabled;
+    let bench = crate::boot::is_bench();
     tauri::async_runtime::spawn(async move {
         let state = ApiState { app, token };
 
@@ -50,6 +54,13 @@ pub fn start_api_server(app: AppHandle, config: &mut AppConfig) -> AppResult<u16
             .route("/weather", get(weather))
             .route("/weather/text", get(weather_text))
             .route("/quote", get(quote));
+
+        if bench {
+            router = router
+                .route("/debug/boot", get(debug_boot))
+                .route("/debug/boot/nav", post(debug_boot_nav))
+                .route("/debug/boot/loaded", post(debug_boot_loaded));
+        }
 
         if control_enabled {
             router = router
@@ -84,6 +95,7 @@ pub fn start_api_server(app: AppHandle, config: &mut AppConfig) -> AppResult<u16
         }
     });
 
+    crate::boot::mark_api_bound();
     Ok(port)
 }
 
@@ -397,4 +409,18 @@ fn persist_session(app: &AppHandle) -> AppResult<()> {
     config.session_widgets = session;
     let result = state.store.lock().unwrap().save_runtime_from_app(&config);
     result
+}
+
+async fn debug_boot() -> Json<crate::boot::BootSnapshot> {
+    Json(crate::boot::snapshot())
+}
+
+async fn debug_boot_nav() -> StatusCode {
+    crate::boot::count_iframe_nav();
+    StatusCode::NO_CONTENT
+}
+
+async fn debug_boot_loaded() -> StatusCode {
+    crate::boot::mark_wallpaper_loaded();
+    StatusCode::NO_CONTENT
 }

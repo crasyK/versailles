@@ -17,7 +17,7 @@ Required on the opening tag: `data-id`. Optional: `data-w`, `data-h`, `data-anch
 
 `data-hooks` is a comma list from: `media`, `mouse`, `layout`, `spawn`, `shell`, `hotkey`, `pty`. The host never grants more than that list. `calc` aliases `calculator`.
 
-`data-anchor="c"` (or `center` / `overlay`) = centered overlay with dim. `tr` = docked slide-out.
+`data-anchor="c"` (or `center` / `overlay`) = mid-screen overlay with dim. `tc` = top-center overlay. `tr` = docked slide-out.
 
 The first spawnable with the `hotkey` hook is the tray left-click target. Every spawnable with that hook and `data-hotkey` gets its own global shortcut. Engine/JS for an example bar lives in the page (`desktop/bar.js`), not the host.
 

@@ -4,6 +4,7 @@
 //!   3 overlay                — hotkey spawnable (Alt+Space)
 
 use crate::error::AppResult;
+use crate::page::PageCatalog;
 use crate::protocol::widget_http_url;
 use crate::state::AppState;
 use crate::window_manager::{
@@ -47,8 +48,32 @@ pub fn page_url(state: &AppState) -> Option<String> {
     surface_url(state, "desktop", None)
 }
 
-pub fn page_catalog(state: &AppState) -> crate::page::PageCatalog {
-    crate::page::parse_page(&read_desktop_html(state))
+pub fn refresh_page_cache(state: &AppState) {
+    let page = state.config.lock().unwrap().desktop.page.clone();
+    let html = load_page_file(&page);
+    let cat = crate::page::parse_page(&html);
+    *state.page_html.lock().unwrap() = html;
+    *state.page_catalog.lock().unwrap() = cat;
+}
+
+fn load_page_file(page_rel: &str) -> String {
+    crate::boot::count_html_read();
+    let Ok(root) = crate::registry::widgets_root() else {
+        return String::new();
+    };
+    fs::read_to_string(root.join(page_rel)).unwrap_or_default()
+}
+
+pub fn page_catalog(state: &AppState) -> PageCatalog {
+    {
+        let html = state.page_html.lock().unwrap();
+        let cat = state.page_catalog.lock().unwrap();
+        if !html.is_empty() || !cat.pieces.is_empty() {
+            return cat.clone();
+        }
+    }
+    refresh_page_cache(state);
+    state.page_catalog.lock().unwrap().clone()
 }
 
 pub fn desktop_tray_label(visible: bool) -> &'static str {
@@ -73,8 +98,6 @@ pub fn reveal_desktop_window(app: &AppHandle) -> AppResult<()> {
     ensure_desktop_window(app, url)?;
     close_page_embedded_windows(app);
     emit_layout(app);
-    // Desktop iframe may have failed if it raced the file server on first boot.
-    let _ = app.emit("desktop://reload", true);
     set_desktop_tray_label(app, true);
     Ok(())
 }
@@ -86,29 +109,25 @@ pub fn hide_desktop_window(app: &AppHandle) -> AppResult<()> {
 }
 
 pub fn read_desktop_html(state: &AppState) -> String {
-    let page = state.config.lock().unwrap().desktop.page.clone();
-    let Ok(root) = crate::registry::widgets_root() else {
-        return String::new();
-    };
-    fs::read_to_string(root.join(page)).unwrap_or_default()
-}
-
-pub fn html_embeds_widget(html: &str, id: &str) -> bool {
-    if id.is_empty() {
-        return false;
+    {
+        let cached = state.page_html.lock().unwrap();
+        if !cached.is_empty() {
+            return cached.clone();
+        }
     }
-    crate::page::parse_page(html).is_desktop_widget(id)
+    refresh_page_cache(state);
+    state.page_html.lock().unwrap().clone()
 }
 
 fn close_page_embedded_windows(app: &AppHandle) {
     let state = app.state::<AppState>();
-    let html = read_desktop_html(&state);
+    let cat = page_catalog(&state);
     let ids: Vec<String> = {
         let mgr = state.window_manager.lock().unwrap();
         mgr.open_widgets()
             .into_iter()
             .map(|w| w.id)
-            .filter(|id| html_embeds_widget(&html, id))
+            .filter(|id| cat.is_desktop_widget(id))
             .collect()
     };
     for id in ids {
@@ -134,6 +153,7 @@ fn persist_desktop_enabled(state: &State<'_, AppState>, enabled: bool) -> AppRes
 fn emit_layout(app: &AppHandle) {
     let layout = layout_from(&app.state::<AppState>());
     let _ = app.emit("desktop://layout", layout);
+    crate::boot::mark_layout_emitted();
 }
 
 #[tauri::command]

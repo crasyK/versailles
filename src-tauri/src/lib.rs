@@ -1,5 +1,6 @@
 mod api;
 mod apps;
+mod boot;
 mod cli;
 mod commands;
 mod config;
@@ -41,6 +42,8 @@ use tauri_plugin_log::{Target, TargetKind};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    crate::boot::note_start();
+    let bench = crate::boot::is_bench();
     // Never attach a console in release — stdout logging was popping a terminal on boot.
     #[cfg(all(windows, not(debug_assertions)))]
     {
@@ -71,17 +74,20 @@ pub fn run() {
         b
     };
 
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(log_builder.build())
         .plugin(
             tauri_plugin_autostart::Builder::new()
                 .args(["--autostart"])
                 .build(),
-        )
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        );
+    if !bench {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             let _ = window_manager::show_launcher(app);
-        }))
+        }));
+    }
+    builder
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .register_uri_scheme_protocol("widget", |_ctx, request| {
             protocol::serve_widget_request(request)
@@ -97,6 +103,9 @@ pub fn run() {
             start_media_listener(app.handle().clone(), media.clone());
 
             let mut config = config;
+            if crate::boot::is_bench() {
+                config.desktop.enabled = true;
+            }
             config.api_bound_port = None;
             // Bind file/API server BEFORE session restore so widget URLs work.
             match start_api_server(app.handle().clone(), &mut config) {
@@ -117,8 +126,11 @@ pub fn run() {
                 window_manager: Mutex::new(WindowManager::default()),
                 media,
                 tray_desktop_item: Mutex::new(None),
+                page_html: Mutex::new(String::new()),
+                page_catalog: Mutex::new(crate::page::PageCatalog::default()),
             });
             app.manage(pty::PtyState::default());
+            desktop::refresh_page_cache(&app.state::<AppState>());
 
             spawn_webview_prewarm(app.handle());
 
@@ -181,14 +193,27 @@ pub fn run() {
                 .build(app)?;
 
             // Spawnable hotkeys (data-hotkey on pieces with the hotkey hook).
-            if let Err(err) = register_page_hotkeys(app.handle()) {
-                tracing::warn!("page hotkeys failed: {err}");
+            if !crate::boot::is_bench() {
+                if let Err(err) = register_page_hotkeys(app.handle()) {
+                    tracing::warn!("page hotkeys failed: {err}");
+                }
+                let _ = crate::commands::apply_autostart(app.handle(), config.autostart);
             }
-            let _ = crate::commands::apply_autostart(app.handle(), config.autostart);
+
+            let desktop_enabled = {
+                app.state::<AppState>().config.lock().unwrap().desktop.enabled
+            };
+            if desktop_enabled {
+                if let Err(err) = desktop::reveal_desktop_window(app.handle()) {
+                    tracing::warn!("desktop surface restore failed: {err}");
+                    desktop::set_desktop_tray_label(app.handle(), false);
+                }
+            }
 
             // Pre-create the dim window off the hotkey path so Alt+Space only
             // shows existing surfaces (creating WebView2 on the UI thread hangs Windows).
-            let prewarm = app.handle().clone();
+            if !crate::boot::is_bench() {
+                let prewarm = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
                 let app = prewarm.clone();
@@ -212,6 +237,7 @@ pub fn run() {
                     }
                 });
             });
+            }
 
             // Plugin creates a visible 15×15 WS_POPUP at (0,0); hide with retries.
             single_instance_fixup::schedule_hide_helpers();
@@ -219,31 +245,31 @@ pub fn run() {
             watcher::start_widget_watcher(app.handle().clone());
 
             // Session restore off the setup path; bounded to 2 concurrent WebView2
-            // creations to avoid the documented deadlock risk.
+            // creations to avoid the documented deadlock risk. Desktop wallpaper
+            // is already revealed above — do not wait on floating widgets.
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                // Brief settle delay: the file server is already bound in setup,
-                // so only wait for monitors so clamp/restore use real geometry.
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                let (session, page_html) = {
+                let (session, cat) = {
                     let state = handle.state::<AppState>();
-                    let html = crate::desktop::read_desktop_html(&state);
                     let session = state.config.lock().unwrap().session_widgets.clone();
-                    (session, html)
+                    let cat = crate::desktop::page_catalog(&state);
+                    (session, cat)
                 };
+                let restore: Vec<_> = session
+                    .into_iter()
+                    .filter(|widget| {
+                        !cat.is_desktop_widget(&widget.id) && cat.spawnable(&widget.id).is_none()
+                    })
+                    .collect();
+                if restore.is_empty() {
+                    return;
+                }
+
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
                 let semaphore = Arc::new(Semaphore::new(2));
                 let mut join_set = JoinSet::new();
-                for widget in session {
-                    if crate::desktop::html_embeds_widget(&page_html, &widget.id) {
-                        continue;
-                    }
-                    if crate::page::parse_page(&page_html)
-                        .spawnable(&widget.id)
-                        .is_some()
-                    {
-                        continue;
-                    }
+                for widget in restore.clone() {
                     let app_handle = handle.clone();
                     let semaphore = Arc::clone(&semaphore);
                     let id = widget.id.clone();
@@ -286,24 +312,8 @@ pub fn run() {
 
                 while join_set.join_next().await.is_some() {}
 
-                // Final pass: re-apply saved physical positions after all windows exist
-                // (creation/show can nudge them once).
                 tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-                let session = {
-                    let state = handle.state::<AppState>();
-                    let config = state.config.lock().unwrap();
-                    config.session_widgets.clone()
-                };
-                for widget in session {
-                    if crate::desktop::html_embeds_widget(&page_html, &widget.id) {
-                        continue;
-                    }
-                    if crate::page::parse_page(&page_html)
-                        .spawnable(&widget.id)
-                        .is_some()
-                    {
-                        continue;
-                    }
+                for widget in restore {
                     let app = handle.clone();
                     let id = widget.id.clone();
                     let x = widget.position.x;
@@ -317,21 +327,6 @@ pub fn run() {
                             x,
                             y,
                         );
-                    });
-                }
-
-                let desktop_enabled = {
-                    let state = handle.state::<AppState>();
-                    let enabled = state.config.lock().unwrap().desktop.enabled;
-                    enabled
-                };
-                if desktop_enabled {
-                    let app = handle.clone();
-                    let _ = handle.run_on_main_thread(move || {
-                        if let Err(err) = desktop::reveal_desktop_window(&app) {
-                            tracing::warn!("desktop surface restore failed: {err}");
-                            desktop::set_desktop_tray_label(&app, false);
-                        }
                     });
                 }
             });

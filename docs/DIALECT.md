@@ -21,7 +21,7 @@ The host is a small windowing + hooks layer. Pieces on the page are the product.
 | `data-id` | yes | Catalog id. Unique, case-insensitive. `calc` aliases `calculator`. |
 | `data-w` | no | Window width in CSS pixels. Default 280. |
 | `data-h` | no | Window height. Default 200. |
-| `data-anchor` | no | Placement. `c` / `center` / `tc` / `overlay` = centered overlay (covers apps, dim, hide/show). `tr` = docked top-right slide-out. |
+| `data-anchor` | no | Placement. `c` / `center` / `overlay` = mid-screen overlay (covers apps, dim). `tc` = top-center overlay (action bar). `tr` = docked top-right slide-out. |
 | `data-hotkey` | no | Global accelerator for this spawnable when `data-hooks` includes `hotkey`. Format: Tauri accelerators (`Alt+Space`, `Ctrl+Shift+D`, `CommandOrControl+K`). Duplicate combos: first piece on the page wins. A hook piece with no `data-hotkey` uses `#versailles` `launcher.hotkey` (once). |
 | `data-hooks` | no | Comma-separated allowlist. See [`HOOKS.md`](HOOKS.md). |
 
@@ -31,7 +31,7 @@ Duplicate `data-id` values are ignored after the first.
 
 A spawnable with `data-anchor="c"` (or `center` / `tc` / `overlay`) is an overlay:
 
-- Centered on the monitor under the cursor
+- Mid-screen on the monitor under the cursor (`tc` stays near the top, action-bar style)
 - Dim behind it (`launcher-dim`)
 - Blur / click-dim dismisses
 - Hide/show (not destroy) so an embedded PTY survives Alt+Space
@@ -42,7 +42,7 @@ Every spawnable with `hotkey` in `data-hooks` can bind its own combo. Pressing t
 
 ```html
 <template class="spawnable action-bar" data-id="action-bar"
-          data-hooks="shell,hotkey,pty" data-hotkey="Alt+Space" data-anchor="c"
+          data-hooks="shell,hotkey,pty" data-hotkey="Alt+Space" data-anchor="tc"
           data-w="640" data-h="420"></template>
 <template class="spawnable" data-id="draw"
           data-hooks="layout,hotkey" data-hotkey="Ctrl+Shift+D" data-anchor="tr"

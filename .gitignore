@@ -22,4 +22,7 @@ src-tauri/gen
 .env
 .env.*
 
+# Local bench output
+scripts/bench-boot.last.json
+
 # Versailles local (lives under Documents/Widgets/.versailles, not in app)

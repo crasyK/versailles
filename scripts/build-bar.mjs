@@ -1,17 +1,14 @@
 #!/usr/bin/env node
 /**
- * Bundle command-bar engine (launcher.ts + engine/*) into IIFE for desktop/index.html.
- * Only replaces content between <!-- BAR_ENGINE_START --> and <!-- BAR_ENGINE_END -->.
- * Never deletes the action-bar DOM (#cli-root).
+ * Bundle command-bar engine (launcher.ts + engine/*) into desktop/bar.js.
+ * Wallpaper HTML must load this file from the action-bar spawn template only.
  */
 import * as esbuild from "esbuild";
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const START = "<!-- BAR_ENGINE_START -->";
-const END = "<!-- BAR_ENGINE_END -->";
 
 const result = await esbuild.build({
   entryPoints: [join(root, "src/launcher.ts")],
@@ -41,26 +38,12 @@ const outStarter = join(root, "templates/starter/desktop/bar.js");
 writeFileSync(outStarter, bundle, "utf8");
 console.log("wrote", outStarter, bundle.length, "bytes");
 
-const userDesktop = join(root, "..", "desktop", "index.html");
+const userBar = join(root, "..", "desktop", "bar.js");
 try {
-  let html = readFileSync(userDesktop, "utf8");
-  if (!html.includes('id="cli-root"')) {
-    throw new Error("refusing to inject: #cli-root missing from action-bar template");
-  }
-  const start = html.indexOf(START);
-  const end = html.indexOf(END);
-  if (start < 0 || end < 0 || end <= start) {
-    throw new Error("BAR_ENGINE_START/END markers missing — fix index.html first");
-  }
-  html =
-    html.slice(0, start + START.length) +
-    "\n" +
-    bundle +
-    "\n" +
-    html.slice(end);
-  writeFileSync(userDesktop, html, "utf8");
-  console.log("injected engine into", userDesktop, html.length, "chars");
+  mkdirSync(dirname(userBar), { recursive: true });
+  writeFileSync(userBar, bundle, "utf8");
+  console.log("wrote", userBar, bundle.length, "bytes");
 } catch (e) {
-  console.warn("user desktop inject skipped:", e.message);
+  console.warn("user desktop bar.js skipped:", e.message);
   process.exitCode = 1;
 }

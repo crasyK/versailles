@@ -96,7 +96,7 @@
       .action-bar          optional example class on a spawnable
       data-id              catalog id (calc aliases calculator)
       data-w / data-h      overlay size
-      data-anchor          c/center/overlay = centered overlay; tr = docked slide-out
+      data-anchor          c/center/overlay = mid-screen overlay; tc = top-center; tr = docked slide-out
       data-hotkey          global accelerator when data-hooks includes hotkey
                            (any spawnable; Alt+Space, Ctrl+Shift+D, CommandOrControl+K)
       data-hooks           allowlist: media, mouse, layout, spawn, shell, hotkey, pty
@@ -245,33 +245,43 @@
         color: var(--ink); border: var(--stroke-dashed); border-radius: 16px; padding: 18px;
       }
 
-      .draw-pad { display: flex; flex-direction: column; gap: 10px; height: 100%; min-height: 0; overflow: hidden; cursor: default; }
-      .spawn-surface:not(.solo) .draw-pad { width: 448px; height: 328px; }
+      .draw-pad { position: relative; display: flex; flex-direction: column; gap: 10px; height: 100%; min-height: 0; overflow: hidden; cursor: default; }
+      .spawn-surface:not(.solo) .draw-pad { width: 560px; height: 400px; }
       .spawn-surface.solo:has(.draw-pad) {
-        display: flex; flex-direction: column; padding: 12px; overflow: hidden; min-height: 0;
+        display: flex; flex-direction: column; padding: 8px; overflow: hidden; min-height: 0;
       }
-      .draw-tools { display: flex; flex-wrap: wrap; gap: 8px; flex: none; align-items: center; cursor: grab; }
-      .draw-tools button {
-        height: 32px; padding: 0 12px; border-radius: var(--radius-pill);
+      .draw-tools {
+        display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px;
+        flex: none; touch-action: manipulation;
+      }
+      .draw-group { display: inline-flex; align-items: center; gap: 6px; }
+      .draw-tools .icon-btn {
+        width: 32px; height: 32px; min-width: 32px; padding: 0; border-radius: 9999px;
         border: var(--stroke-dashed); background: var(--paper); color: var(--ink);
-        font: 600 11px/1 var(--font-sans); letter-spacing: 0.08em; text-transform: uppercase;
-        cursor: pointer;
+        display: grid; place-items: center; cursor: pointer; touch-action: manipulation;
       }
-      .draw-tools button:hover { background: var(--chip); }
-      .draw-tools button.on { background: #141414; color: #f9fafb; border-style: solid; }
+      .draw-tools .icon-btn:hover { background: var(--chip); }
+      .draw-tools .icon-btn.on { background: #141414; color: #f9fafb; border-style: solid; }
+      .draw-tools .icon-btn.danger:hover { background: #141414; color: #f9fafb; border-style: solid; }
+      .draw-tools .icon-btn svg { width: 15px; height: 15px; display: block; }
       .draw-colors { display: inline-flex; gap: 6px; align-items: center; }
       .draw-colors .swatch {
-        width: 18px; height: 18px; padding: 0; border-radius: 50%;
-        border: 2px solid var(--ink); background: var(--c); cursor: pointer;
+        width: 18px; height: 18px; min-width: 18px; padding: 0; border-radius: 50%;
+        border: 2px dashed var(--ink); background: var(--c); cursor: pointer;
       }
-      .draw-colors .swatch.on { box-shadow: 0 0 0 2px var(--paper), 0 0 0 4px var(--ink); }
-      .draw-tools .draw-close { margin-left: auto; width: 32px; padding: 0; font-size: 14px; border-style: solid; }
-      .draw-tools .draw-close:hover { background: var(--ink); color: var(--paper); }
+      .draw-colors .swatch.on { border-style: solid; }
+      .draw-page {
+        min-width: 28px; text-align: center;
+        font: 600 10px/1 var(--font-sans); letter-spacing: 0.08em; text-transform: uppercase;
+        color: var(--ink-mut);
+      }
       .draw-board-wrap {
-        flex: 1; min-height: 0; border: var(--stroke); border-radius: 12px;
+        flex: 1; min-width: 0; min-height: 0; border: var(--stroke); border-radius: 12px;
         background: #15161a; overflow: hidden; position: relative; cursor: crosshair;
+        touch-action: none; overscroll-behavior: none; user-select: none; -webkit-user-select: none;
       }
-      .draw-board-wrap svg { display: block; width: 100%; height: 100%; cursor: crosshair; touch-action: none; pointer-events: none; }
+      .draw-board-wrap.is-pan { cursor: grab; }
+      .draw-board-wrap svg { display: block; width: 100%; height: 100%; cursor: inherit; touch-action: none; pointer-events: none; }
 
       .cli {
         width: 100%; height: 100%; overflow: hidden; background: var(--paper);
@@ -337,12 +347,12 @@
       .cl-s:hover span { color: var(--ink-mut); }
       .cl-s.on span, .cl-s.on:hover span { color: var(--paper); }
       .cli-term-wrap {
-        display: none; flex: 1; min-height: 0; margin: 4px 14px 10px; position: relative;
+        display: none; flex: 1; min-height: 0; min-width: 0; margin: 4px 14px 10px; padding: 8px 14px 6px 12px; position: relative;
         background: var(--dark-card); border-radius: 16px; box-shadow: inset 0 0 0 2px #141414; overflow: hidden;
       }
       .cli[data-mode="terminal"] .cli-term-wrap { display: flex; flex-direction: column; }
       .cli-term-wrap[hidden] { display: none !important; }
-      .cli-term { flex: 1; min-height: 0; width: 100%; padding: 8px 12px 6px; background: var(--dark-card); color-scheme: dark; touch-action: pan-y; overscroll-behavior: contain; }
+      .cli-term { flex: 1; min-width: 0; min-height: 0; width: auto; padding: 0; overflow: hidden; background: var(--dark-card); color-scheme: dark; touch-action: pan-y; overscroll-behavior: contain; }
       .cli-term .xterm { width: 100%; height: 100%; }
       .cli-term .xterm-viewport {
         overflow-y: scroll !important; background: transparent !important;
@@ -352,7 +362,7 @@
       .cli-term .xterm-viewport::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
       .cli-term .xterm-viewport::-webkit-scrollbar-track { background: transparent; }
       .cli-term .xterm-viewport::-webkit-scrollbar-thumb { background: #3f3f3f; border-radius: 9999px; }
-      .cli-term .xterm-screen { padding-right: 4px; }
+      .cli-term .xterm-screen { padding-right: 0; }
       .cli-term-find {
         position: absolute; top: 10px; right: 12px; z-index: 6;
         display: none; align-items: center; gap: 6px;
@@ -410,12 +420,15 @@
       </article>
     </section>
 
-    <template class="spawnable" data-id="draw" data-w="480" data-h="360" data-anchor="tr" data-hooks="layout,spawn">
+    <template class="spawnable" data-id="draw" data-w="920" data-h="660" data-anchor="c" data-dismiss-on-blur="false" data-hooks="layout,spawn">
       <div class="draw-pad">
         <div class="draw-tools" data-no-drag>
-          <button type="button" class="on" data-tool="pen">Pen</button>
-          <button type="button" data-tool="highlighter">Highlight</button>
-          <button type="button" data-tool="eraser">Eraser</button>
+          <span class="draw-group">
+            <button type="button" class="icon-btn on" data-tool="pen" aria-label="Pen" title="Pen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg></button>
+            <button type="button" class="icon-btn" data-tool="highlighter" aria-label="Highlight" title="Highlight"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20h16"/><path d="M9 4l8 8-4 4-8-8 4-4z"/></svg></button>
+            <button type="button" class="icon-btn" data-tool="eraser" aria-label="Eraser" title="Eraser"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 21h10"/><path d="M4 14l7-7 7 7-4 4H8l-4-4z"/></svg></button>
+            <button type="button" class="icon-btn on" data-action="stabilize" aria-label="Smooth" title="Smooth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 14c4-8 12-8 16 0"/></svg></button>
+          </span>
           <span class="draw-colors">
             <button type="button" class="swatch on" data-color="#f9fafb" style="--c:#f9fafb" title="White"></button>
             <button type="button" class="swatch" data-color="#ffd60a" style="--c:#ffd60a" title="Yellow"></button>
@@ -423,8 +436,30 @@
             <button type="button" class="swatch" data-color="#64d2ff" style="--c:#64d2ff" title="Blue"></button>
             <button type="button" class="swatch" data-color="#30d158" style="--c:#30d158" title="Green"></button>
           </span>
-          <button type="button" data-action="clear">Clear</button>
-          <button type="button" class="draw-close" data-action="close" title="Close">&times;</button>
+          <span class="draw-group">
+            <button type="button" class="icon-btn" data-action="size-down" aria-label="Thinner" title="Thinner"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
+            <button type="button" class="icon-btn" data-action="size-up" aria-label="Thicker" title="Thicker"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+          </span>
+          <span class="draw-group">
+            <button type="button" class="icon-btn" data-action="undo" aria-label="Undo" title="Undo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M3 13a9 9 0 1 0 3-7"/></svg></button>
+            <button type="button" class="icon-btn" data-action="redo" aria-label="Redo" title="Redo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7v6h-6"/><path d="M21 13a9 9 0 1 1-3-7"/></svg></button>
+          </span>
+          <span class="draw-group">
+            <button type="button" class="icon-btn" data-action="prev" aria-label="Previous page" title="Previous page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 6l-6 6 6 6"/></svg></button>
+            <span class="draw-page" id="draw-page">1 / 1</span>
+            <button type="button" class="icon-btn" data-action="next" aria-label="Next page" title="Next page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg></button>
+            <button type="button" class="icon-btn" data-action="add-page" aria-label="Add page" title="Add page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+          </span>
+          <span class="draw-group">
+            <button type="button" class="icon-btn" data-action="reset-view" aria-label="Reset view" title="Reset view"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2"/></svg></button>
+            <button type="button" class="icon-btn" data-action="export-svg" aria-label="Export SVG" title="Export SVG"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg></button>
+            <button type="button" class="icon-btn" data-action="export-png" aria-label="Export PNG" title="Export PNG"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.5"/><path d="M4 16l5-4 4 3 3-2 4 3"/></svg></button>
+            <button type="button" class="icon-btn" data-action="pin" aria-label="Pin to desktop" title="Pin to desktop"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 17v5"/><path d="M8 3h8l-1 7a4 4 0 1 1-6 0L8 3z"/></svg></button>
+          </span>
+          <span class="draw-group">
+            <button type="button" class="icon-btn danger" data-action="clear" aria-label="Clear" title="Clear"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg></button>
+            <button type="button" class="icon-btn" data-action="close" aria-label="Close" title="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+          </span>
         </div>
         <div class="draw-board-wrap" data-no-drag id="draw-board-wrap"></div>
       </div>
@@ -434,56 +469,270 @@
           var root = (script && script.closest('.spawn-surface')) ||
             document.querySelector('.spawn-surface[data-id="draw"]');
           if (!root) return;
-          var KEY = 'deck-draw-svg-v2';
-          var BOARD = '#15161a';
+          var pad = root.querySelector('.draw-pad');
           var wrap = root.querySelector('#draw-board-wrap');
-          var tools = root.querySelector('.draw-tools');
-          if (!wrap || !tools) return;
+          var rail = root.querySelector('.draw-tools');
+          var pageEl = root.querySelector('#draw-page');
+          if (!pad || !wrap || !rail) return;
+          var KEY = 'deck-draw-doc-v3';
+          var OLD_KEY = 'deck-draw-svg-v2';
+          var PIN_KEY = 'deck-draw-pins-v1';
+          var BOARD = '#15161a';
+          var PALM_MS = 800;
           var NS = 'http://www.w3.org/2000/svg';
           var svg = document.createElementNS(NS, 'svg');
           svg.setAttribute('width', '100%');
           svg.setAttribute('height', '100%');
+          svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
           wrap.appendChild(svg);
-          var tool = 'pen', color = '#f9fafb', drawing = false, line = null, saveTimer = null;
 
-          function styleFor(el) {
-            var stroke = color, width = 3, opacity = 1;
-            if (tool === 'highlighter') { width = 16; opacity = 0.35; }
-            else if (tool === 'eraser') { stroke = BOARD; width = 24; }
+          function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+          function emptyPage() { return { id: uid(), svg: '', cam: { x: 0, y: 0, z: 1 } }; }
+          var doc = { pages: [emptyPage()], page: 0, size: 3, stabilize: true };
+          var tool = 'pen', color = '#f9fafb';
+          var drawing = false, panning = false, line = null, saveTimer = null;
+          var activeId = null, lastPenAt = 0, rawPts = [];
+          var undo = [], redo = [];
+          var cam = { x: 0, y: 0, z: 1 };
+          var viewW = 720, viewH = 460;
+          var pointers = {};
+          var pinch = null;
+
+          function currentPage() { return doc.pages[doc.page] || doc.pages[0]; }
+          function applyCam() {
+            var z = Math.max(0.25, Math.min(6, cam.z || 1));
+            cam.z = z;
+            svg.setAttribute('viewBox', cam.x + ' ' + cam.y + ' ' + (viewW / z) + ' ' + (viewH / z));
+          }
+          function measureView() {
+            var r = wrap.getBoundingClientRect();
+            if (r.width < 2 || r.height < 2) return;
+            viewW = r.width;
+            viewH = r.height;
+            applyCam();
+          }
+          function worldPos(e) {
+            var r = wrap.getBoundingClientRect();
+            var z = cam.z || 1;
+            return {
+              x: cam.x + (e.clientX - r.left) * (viewW / z) / r.width,
+              y: cam.y + (e.clientY - r.top) * (viewH / z) / r.height
+            };
+          }
+          function persist() {
+            currentPage().svg = svg.innerHTML;
+            currentPage().cam = { x: cam.x, y: cam.y, z: cam.z };
+            clearTimeout(saveTimer);
+            saveTimer = setTimeout(function () {
+              try { localStorage.setItem(KEY, JSON.stringify(doc)); } catch (_) {}
+            }, 280);
+          }
+          function renderPageLabel() {
+            if (pageEl) pageEl.textContent = (doc.page + 1) + ' / ' + doc.pages.length;
+          }
+          function loadPage() {
+            var p = currentPage();
+            svg.innerHTML = p.svg || '';
+            cam = { x: p.cam && p.cam.x || 0, y: p.cam && p.cam.y || 0, z: p.cam && p.cam.z || 1 };
+            undo = [];
+            redo = [];
+            applyCam();
+            renderPageLabel();
+          }
+          function snapshot() {
+            undo.push(svg.innerHTML);
+            if (undo.length > 40) undo.shift();
+            redo = [];
+          }
+
+          try {
+            var raw = localStorage.getItem(KEY);
+            if (raw) {
+              var parsed = JSON.parse(raw);
+              if (parsed && Array.isArray(parsed.pages) && parsed.pages.length) {
+                doc.pages = parsed.pages;
+                doc.page = Math.min(parsed.page || 0, doc.pages.length - 1);
+                doc.size = parsed.size || 3;
+                doc.stabilize = parsed.stabilize !== false;
+              }
+            } else {
+              var legacy = localStorage.getItem(OLD_KEY);
+              if (legacy) doc.pages[0].svg = legacy;
+            }
+          } catch (_) {}
+
+          var stabBtn = rail.querySelector('[data-action="stabilize"]');
+          if (stabBtn) stabBtn.classList.toggle('on', doc.stabilize);
+          loadPage();
+          measureView();
+          requestAnimationFrame(measureView);
+          if (typeof ResizeObserver === 'function') new ResizeObserver(measureView).observe(wrap);
+
+          function baseWidth() {
+            var n = doc.size || 3;
+            if (tool === 'highlighter') return 8 + n * 3;
+            if (tool === 'eraser') return 12 + n * 4;
+            return Math.max(1, n);
+          }
+          function widthFor(e) {
+            var w = baseWidth();
+            if (e && e.pointerType === 'pen') {
+              var p = e.pressure;
+              if (!(p > 0)) p = 0.5;
+              w = Math.max(1, w * (0.35 + p * 1.3));
+            }
+            return w;
+          }
+          function styleFor(el, e) {
+            var stroke = color, opacity = 1;
+            if (tool === 'highlighter') opacity = 0.35;
+            else if (tool === 'eraser') stroke = BOARD;
             el.setAttribute('stroke', stroke);
-            el.setAttribute('stroke-width', String(width));
+            el.setAttribute('stroke-width', String(widthFor(e)));
             el.setAttribute('stroke-opacity', String(opacity));
             el.setAttribute('fill', 'none');
             el.setAttribute('stroke-linecap', 'round');
             el.setAttribute('stroke-linejoin', 'round');
           }
-
-          function pos(e) {
-            var r = wrap.getBoundingClientRect();
-            return { x: e.clientX - r.left, y: e.clientY - r.top };
+          function smooth(p) {
+            if (!doc.stabilize) return p;
+            rawPts.push(p);
+            if (rawPts.length > 5) rawPts.shift();
+            var x = 0, y = 0, i;
+            for (i = 0; i < rawPts.length; i++) { x += rawPts[i].x; y += rawPts[i].y; }
+            return { x: x / rawPts.length, y: y / rawPts.length };
           }
-
-          function persist() {
-            clearTimeout(saveTimer);
-            saveTimer = setTimeout(function () {
-              try { localStorage.setItem(KEY, svg.innerHTML); } catch (_) {}
-            }, 300);
+          function markOn(sel, btn) {
+            rail.querySelectorAll(sel).forEach(function (b) { b.classList.toggle('on', b === btn); });
           }
-
-          try {
-            var saved = localStorage.getItem(KEY);
-            if (saved) svg.innerHTML = saved;
-          } catch (_) {}
-
-          function markOn(selector, btn) {
-            tools.querySelectorAll(selector).forEach(function (b) {
-              b.classList.toggle('on', b === btn);
+          function download(name, blob) {
+            var a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = name;
+            a.click();
+            setTimeout(function () { URL.revokeObjectURL(a.href); }, 1500);
+          }
+          function svgMarkup() {
+            var vb = svg.getAttribute('viewBox') || ('0 0 ' + viewW + ' ' + viewH);
+            return '<svg xmlns="' + NS + '" viewBox="' + vb + '" width="' + Math.round(viewW) + '" height="' + Math.round(viewH) + '">' +
+              '<rect width="100%" height="100%" fill="' + BOARD + '"/>' + svg.innerHTML + '</svg>';
+          }
+          function exportPng() {
+            var img = new Image();
+            var url = URL.createObjectURL(new Blob([svgMarkup()], { type: 'image/svg+xml' }));
+            img.onload = function () {
+              var c = document.createElement('canvas');
+              c.width = Math.max(2, Math.round(viewW));
+              c.height = Math.max(2, Math.round(viewH));
+              var ctx = c.getContext('2d');
+              ctx.fillStyle = BOARD;
+              ctx.fillRect(0, 0, c.width, c.height);
+              ctx.drawImage(img, 0, 0, c.width, c.height);
+              c.toBlob(function (blob) {
+                if (blob) download('draw-page-' + (doc.page + 1) + '.png', blob);
+                URL.revokeObjectURL(url);
+              }, 'image/png');
+            };
+            img.src = url;
+          }
+          function pinDesktop() {
+            var pins = [];
+            try { pins = JSON.parse(localStorage.getItem(PIN_KEY) || '[]'); } catch (_) {}
+            if (!Array.isArray(pins)) pins = [];
+            pins.push({
+              id: uid(),
+              svg: svg.innerHTML,
+              viewBox: svg.getAttribute('viewBox') || ('0 0 ' + viewW + ' ' + viewH),
+              x: 400 + (pins.length % 5) * 24,
+              y: 70 + (pins.length % 5) * 24,
+              z: 20 + pins.length
             });
+            try { localStorage.setItem(PIN_KEY, JSON.stringify(pins)); } catch (_) {}
           }
 
-          tools.addEventListener('click', function (e) {
-            var btn = e.target && e.target.closest ? e.target.closest('button') : null;
-            if (!btn) return;
+          function runAction(a) {
+            if (a === 'size-down') {
+              doc.size = Math.max(1, (doc.size || 3) - 1);
+              persist();
+              return;
+            }
+            if (a === 'size-up') {
+              doc.size = Math.min(8, (doc.size || 3) + 1);
+              persist();
+              return;
+            }
+            if (a === 'stabilize') {
+              doc.stabilize = !doc.stabilize;
+              if (stabBtn) stabBtn.classList.toggle('on', doc.stabilize);
+              persist();
+              return;
+            }
+            if (a === 'undo') {
+              if (!undo.length) return;
+              redo.push(svg.innerHTML);
+              svg.innerHTML = undo.pop();
+              persist();
+              return;
+            }
+            if (a === 'redo') {
+              if (!redo.length) return;
+              undo.push(svg.innerHTML);
+              svg.innerHTML = redo.pop();
+              persist();
+              return;
+            }
+            if (a === 'prev') {
+              persist();
+              doc.page = (doc.page - 1 + doc.pages.length) % doc.pages.length;
+              loadPage();
+              persist();
+              return;
+            }
+            if (a === 'next') {
+              persist();
+              doc.page = (doc.page + 1) % doc.pages.length;
+              loadPage();
+              persist();
+              return;
+            }
+            if (a === 'add-page') {
+              persist();
+              doc.pages.splice(doc.page + 1, 0, emptyPage());
+              doc.page += 1;
+              loadPage();
+              persist();
+              return;
+            }
+            if (a === 'reset-view') {
+              cam = { x: 0, y: 0, z: 1 };
+              applyCam();
+              persist();
+              return;
+            }
+            if (a === 'export-svg') {
+              download('draw-page-' + (doc.page + 1) + '.svg', new Blob([svgMarkup()], { type: 'image/svg+xml' }));
+              return;
+            }
+            if (a === 'export-png') { exportPng(); return; }
+            if (a === 'pin') { persist(); pinDesktop(); return; }
+            if (a === 'clear') {
+              snapshot();
+              svg.innerHTML = '';
+              persist();
+              return;
+            }
+            if (a === 'close') {
+              persist();
+              try {
+                var v = window.versailles || window.deck;
+                if (v && v.closeWidget) v.closeWidget();
+              } catch (_) {}
+            }
+          }
+
+          function handleChrome(e) {
+            var btn = e.target && e.target.closest ? e.target.closest('button, [data-action]') : null;
+            if (!btn || !pad.contains(btn)) return false;
             var t = btn.getAttribute('data-tool');
             var c = btn.getAttribute('data-color');
             var a = btn.getAttribute('data-action');
@@ -495,44 +744,185 @@
               markOn('[data-color]', btn);
               if (tool === 'eraser') {
                 tool = 'pen';
-                var pen = tools.querySelector('[data-tool="pen"]');
+                var pen = rail.querySelector('[data-tool="pen"]');
                 if (pen) markOn('[data-tool]', pen);
               }
-            } else if (a === 'clear') {
-              svg.innerHTML = '';
-              try { localStorage.removeItem(KEY); } catch (_) {}
-            } else if (a === 'close') {
-              try {
-                var v = window.versailles || window.deck;
-                if (v && v.closeWidget) v.closeWidget();
-              } catch (_) {}
+            } else if (a) runAction(a);
+            else return false;
+            return true;
+          }
+          function bindTap(el) {
+            if (!el) return;
+            var last = 0;
+            el.addEventListener('pointerdown', function (e) {
+              e.stopPropagation();
+              if (e.pointerType !== 'mouse') e.preventDefault();
+            }, true);
+            el.addEventListener('pointerup', function (e) {
+              last = Date.now();
+              if (handleChrome(e)) {
+                e.preventDefault();
+                e.stopPropagation();
+              }
+            }, true);
+            el.addEventListener('click', function (e) {
+              e.preventDefault();
+              e.stopPropagation();
+              if (Date.now() - last < 400) return;
+              handleChrome(e);
+            });
+          }
+          bindTap(rail);
+
+          function rejectPalm(e) {
+            return e.pointerType === 'touch' && (Date.now() - lastPenAt) < PALM_MS;
+          }
+          function markPen(e) {
+            if (e && e.pointerType === 'pen') lastPenAt = Date.now();
+          }
+          function touchIds() {
+            return Object.keys(pointers).filter(function (id) { return pointers[id].type === 'touch'; });
+          }
+          function startPan(e) {
+            panning = true;
+            drawing = false;
+            line = null;
+            activeId = e.pointerId;
+            wrap.classList.add('is-pan');
+          }
+          function endPan() {
+            panning = false;
+            pinch = null;
+            wrap.classList.remove('is-pan');
+            persist();
+          }
+
+          wrap.addEventListener('pointerdown', function (e) {
+            if (rejectPalm(e)) return;
+            pointers[e.pointerId] = { x: e.clientX, y: e.clientY, type: e.pointerType, _lx: e.clientX, _ly: e.clientY };
+            var touches = touchIds();
+            if (touches.length >= 2) {
+              var a = pointers[touches[0]], b = pointers[touches[1]];
+              pinch = {
+                d: Math.hypot(b.x - a.x, b.y - a.y),
+                z: cam.z,
+                mx: (a.x + b.x) / 2,
+                my: (a.y + b.y) / 2,
+                cx: cam.x,
+                cy: cam.y
+              };
+              if (drawing) { drawing = false; if (line && line.parentNode) line.parentNode.removeChild(line); line = null; }
+              startPan(e);
+              e.preventDefault();
+              return;
             }
+            if (e.button === 1 || (e.button === 0 && (e.altKey || e.spaceKey))) {
+              startPan(e);
+              e.preventDefault();
+              return;
+            }
+            if (e.button !== 0) return;
+            if (drawing) return;
+            e.preventDefault();
+            markPen(e);
+            snapshot();
+            drawing = true;
+            activeId = e.pointerId;
+            rawPts = [];
+            try { wrap.setPointerCapture(e.pointerId); } catch (_) {}
+            var p = smooth(worldPos(e));
+            line = document.createElementNS(NS, 'polyline');
+            styleFor(line, e);
+            line.setAttribute('points', p.x + ',' + p.y);
+            svg.appendChild(line);
+          }, { passive: false });
+
+          wrap.addEventListener('pointermove', function (e) {
+            if (pointers[e.pointerId]) {
+              pointers[e.pointerId].x = e.clientX;
+              pointers[e.pointerId].y = e.clientY;
+            }
+            var touches = touchIds();
+            if (panning && pinch && touches.length >= 2) {
+              var a = pointers[touches[0]], b = pointers[touches[1]];
+              var d = Math.hypot(b.x - a.x, b.y - a.y);
+              var mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+              if (pinch.d > 8) cam.z = Math.max(0.25, Math.min(6, pinch.z * (d / pinch.d)));
+              var r = wrap.getBoundingClientRect();
+              cam.x = pinch.cx - (mx - pinch.mx) * (viewW / cam.z) / r.width;
+              cam.y = pinch.cy - (my - pinch.my) * (viewH / cam.z) / r.height;
+              applyCam();
+              return;
+            }
+            if (panning && pointers[activeId]) {
+              var r2 = wrap.getBoundingClientRect();
+              var last = pointers[activeId];
+              cam.x -= (e.clientX - last._lx) * (viewW / cam.z) / r2.width;
+              cam.y -= (e.clientY - last._ly) * (viewH / cam.z) / r2.height;
+              last._lx = e.clientX;
+              last._ly = e.clientY;
+              applyCam();
+              return;
+            }
+            if (!drawing || !line || e.pointerId !== activeId) return;
+            if (rejectPalm(e)) return;
+            markPen(e);
+            var events = (typeof e.getCoalescedEvents === 'function') ? e.getCoalescedEvents() : [];
+            if (!events.length) events = [e];
+            var pts = line.getAttribute('points') || '';
+            for (var i = 0; i < events.length; i++) {
+              var p = smooth(worldPos(events[i]));
+              pts += ' ' + p.x + ',' + p.y;
+            }
+            line.setAttribute('points', pts);
+            if (e.pointerType === 'pen') line.setAttribute('stroke-width', String(widthFor(e)));
           });
 
           wrap.addEventListener('pointerdown', function (e) {
-            if (e.button !== 0) return;
-            e.preventDefault();
-            drawing = true;
-            try { wrap.setPointerCapture(e.pointerId); } catch (_) {}
-            var p = pos(e);
-            line = document.createElementNS(NS, 'polyline');
-            styleFor(line);
-            line.setAttribute('points', p.x + ',' + p.y);
-            svg.appendChild(line);
+            if (pointers[e.pointerId]) {
+              pointers[e.pointerId]._lx = e.clientX;
+              pointers[e.pointerId]._ly = e.clientY;
+            }
           });
-          wrap.addEventListener('pointermove', function (e) {
-            if (!drawing || !line) return;
-            var p = pos(e);
-            line.setAttribute('points', line.getAttribute('points') + ' ' + p.x + ',' + p.y);
-          });
-          function endStroke() {
+
+          function forget(e) {
+            delete pointers[e.pointerId];
+            if (e && activeId != null && e.pointerId !== activeId && drawing) return;
+            markPen(e || {});
+            if (panning && touchIds().length < 2 && !drawing) endPan();
             if (!drawing) return;
             drawing = false;
+            activeId = null;
             line = null;
+            rawPts = [];
             persist();
           }
-          wrap.addEventListener('pointerup', endStroke);
-          wrap.addEventListener('pointercancel', endStroke);
+          wrap.addEventListener('pointerup', forget);
+          wrap.addEventListener('pointercancel', forget);
+          wrap.addEventListener('lostpointercapture', function (e) {
+            delete pointers[e.pointerId];
+          });
+
+          wrap.addEventListener('wheel', function (e) {
+            if (!e.ctrlKey && !e.metaKey && Math.abs(e.deltaY) < 40) return;
+            e.preventDefault();
+            var r = wrap.getBoundingClientRect();
+            var before = worldPos(e);
+            cam.z = Math.max(0.25, Math.min(6, cam.z * (e.deltaY > 0 ? 0.9 : 1.1)));
+            applyCam();
+            var after = worldPos(e);
+            cam.x += before.x - after.x;
+            cam.y += before.y - after.y;
+            applyCam();
+            persist();
+          }, { passive: false });
+
+          window.addEventListener('keydown', function (e) {
+            var z = e.ctrlKey || e.metaKey;
+            if (z && e.key.toLowerCase() === 'z') { e.preventDefault(); runAction(e.shiftKey ? 'redo' : 'undo'); }
+            else if (z && e.key.toLowerCase() === 'y') { e.preventDefault(); runAction('redo'); }
+            else if (z && e.key === '0') { e.preventDefault(); runAction('reset-view'); }
+          });
         })();
       </script>
     </template>
@@ -541,7 +931,7 @@
               data-id="action-bar"
               data-hooks="shell,hotkey,pty"
               data-hotkey="Alt+Space"
-              data-anchor="c"
+              data-anchor="tc"
               data-w="640"
               data-h="420">
       <div class="cli" id="cli-root" data-mode="action" data-search-hf="https://huggingface.co/models?search={q}">
@@ -570,6 +960,8 @@
       </div>
       <script>
         (function loadBar() {
+          if (window.__VERSAILLES_BAR_LOADING__) return;
+          window.__VERSAILLES_BAR_LOADING__ = true;
           var sdk = location.protocol === 'file:' ? '../.sdk/' : '/files/.sdk/';
           var desk = location.protocol === 'file:' ? '' : '/files/desktop/';
           if (!document.querySelector('link[data-xterm]')) {

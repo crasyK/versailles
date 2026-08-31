@@ -4,7 +4,6 @@ import { LogicalSize, PhysicalPosition } from "@tauri-apps/api/dpi";
 import { getCurrentWindow, currentMonitor } from "@tauri-apps/api/window";
 import { Terminal } from "xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import { WebglAddon } from "@xterm/addon-webgl";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { SearchAddon } from "@xterm/addon-search";
 import "xterm/css/xterm.css";
@@ -122,6 +121,32 @@ const BLUR_DISMISS_MS = 280;
 const FOCUS_STEAL_GRACE_MS = 320;
 /** Failsafe — must exceed cli_exec timeout (4s). */
 const BUSY_WATCHDOG_MS = 4500;
+/**
+ * Auto-dismiss calls forceIdle at 280ms, which is inside Windows key-repeat
+ * (~250ms) and double-click (~500ms). A second Enter/click then launches again.
+ * This cooldown survives forceIdle and is shared across a double-bound engine.
+ */
+const LAUNCH_COOLDOWN_MS = 700;
+
+type BarWindow = Window & {
+  __VERSAILLES_BAR_BOUND__?: boolean;
+  __VERSAILLES_LAST_LAUNCH__?: number;
+};
+
+function barWindow(): BarWindow {
+  return window as BarWindow;
+}
+
+function launchBlocked(): boolean {
+  const at = barWindow().__VERSAILLES_LAST_LAUNCH__ || 0;
+  return Date.now() - at < LAUNCH_COOLDOWN_MS;
+}
+
+function claimLaunch(): boolean {
+  if (launchBlocked()) return false;
+  barWindow().__VERSAILLES_LAST_LAUNCH__ = Date.now();
+  return true;
+}
 
 let mode: LauncherMode = "action";
 let term: Terminal | null = null;
@@ -292,6 +317,7 @@ function showRows(list: Row[]) {
     d.title = r.path || r.d || "";
     d.onmousedown = (e) => {
       e.preventDefault();
+      if (e.detail > 1 || launchBlocked()) return;
       activateRow(r);
     };
     sug.appendChild(d);
@@ -329,7 +355,7 @@ function commandFromRow(r: Row): string | null {
 
 function submitCommand(raw: string, background = false) {
   const v = raw.trim();
-  if (busy) return;
+  if (busy || launchBlocked()) return;
   escClearPending = false;
   inp.value = "";
   syncEcho();
@@ -614,7 +640,7 @@ function applyChrome(next: LauncherMode) {
     modeLabel.textContent = "terminal";
     footL.textContent = "alt+space hide";
     footM.textContent = "ctrl+f find";
-    footHint.textContent = "esc → app";
+    footHint.textContent = "right-click session";
     footR.textContent = sessionAlive ? "live · background ok" : "right-click menu";
   } else {
     titleEl.textContent = "versailles";
@@ -802,7 +828,9 @@ function ensureTermMenu() {
     '<button type="button" data-act="copy">Copy</button>' +
     '<button type="button" data-act="paste">Paste</button>' +
     '<button type="button" data-act="select-all">Select All</button>' +
-    '<button type="button" data-act="clear">Clear</button>';
+    '<button type="button" data-act="clear">Clear</button>' +
+    '<button type="button" data-act="new">New session</button>' +
+    '<button type="button" data-act="kill">Kill session</button>';
   document.body.appendChild(menu);
   menu.addEventListener("mousedown", (e) => e.stopPropagation());
   menu.addEventListener("click", (e) => {
@@ -814,6 +842,12 @@ function ensureTermMenu() {
     else if (act === "paste") void pasteToTerm();
     else if (act === "select-all") selectAllTerm();
     else if (act === "clear") clearTermBuffer();
+    else if (act === "new") {
+      forceIdle("term-new");
+      void enterTerminal(undefined, { fresh: true });
+    } else if (act === "kill") {
+      void closeTerminalFromCommand();
+    }
   });
   if (!termMenuBound) {
     termMenuBound = true;
@@ -841,23 +875,6 @@ function showTermMenu(x: number, y: number) {
 
 function hideTermMenu() {
   document.getElementById("cli-term-menu")?.classList.remove("on");
-}
-
-function attachWebgl(t: Terminal) {
-  try {
-    const addon = new WebglAddon();
-    addon.onContextLoss(() => {
-      try {
-        addon.dispose();
-      } catch {
-        /* ignore */
-      }
-      attachWebgl(t);
-    });
-    t.loadAddon(addon);
-  } catch {
-    /* canvas / DOM renderer fallback */
-  }
 }
 
 function bindTermChrome(t: Terminal) {
@@ -996,7 +1013,6 @@ function ensureTerm(): Terminal {
     /* addon not loaded */
   }
   t.open(termHost);
-  attachWebgl(t);
   fitAddon = fit;
   term = t;
 
@@ -1067,11 +1083,17 @@ function fitTermExact() {
     fitAddon.fit();
     return;
   }
-  // addon-fit reserves 14px for an overview ruler we do not show (~1–2 cols).
-  const hostW = termHost.clientWidth;
-  const cellW = proposed.cols > 0 ? hostW / (proposed.cols + 2) : 9;
-  const extra = cellW > 1 ? Math.round(14 / cellW) : 0;
-  const cols = Math.max(20, proposed.cols + extra);
+  // FitAddon uses the host's border box, so host padding is counted as cells.
+  // Those extra cols wrap a full-width TUI row and the top line walks to the bottom.
+  const style = getComputedStyle(termHost);
+  const padX =
+    (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
+  const cellW =
+    proposed.cols > 0 && termHost.clientWidth > 0
+      ? termHost.clientWidth / proposed.cols
+      : 9;
+  const padCols = cellW > 1 && padX > 0 ? Math.ceil(padX / cellW) : 0;
+  const cols = Math.max(20, proposed.cols - padCols - 1);
   const rows = Math.max(8, proposed.rows);
   if (term.cols !== cols || term.rows !== rows) {
     term.resize(cols, rows);
@@ -1096,6 +1118,28 @@ async function settleTermSize() {
   fitTermExact();
   await delay(60);
   await fitAndResizePty();
+}
+
+function termSizeReady(t: Terminal): boolean {
+  return (
+    termHost.clientWidth > 0 &&
+    termHost.clientHeight > 0 &&
+    (t.cols || 0) >= 20 &&
+    (t.rows || 0) >= 8
+  );
+}
+
+/** Wait until the canvas host has a real fit — a 0-size PTY leaves Ink TUIs blank. */
+async function waitForTermSize(t: Terminal): Promise<{ cols: number; rows: number }> {
+  for (let i = 0; i < 16; i++) {
+    fitTermExact();
+    if (termSizeReady(t)) {
+      return { cols: t.cols, rows: t.rows };
+    }
+    await delay(40);
+  }
+  fitTermExact();
+  return { cols: Math.max(20, t.cols || 80), rows: Math.max(8, t.rows || 24) };
 }
 
 /** Hide terminal UI but keep the PTY (and xterm scrollback) alive. */
@@ -1146,6 +1190,23 @@ async function killTerminalSession() {
   if (term) {
     term.reset();
   }
+}
+
+async function closeTerminalFromCommand() {
+  forceIdle("term-kill");
+  await killTerminalSession();
+  termSessionLabel = "";
+  try {
+    await detachTerminal(false);
+  } catch {
+    mode = "action";
+    termWrap.hidden = true;
+  }
+  await refreshSessionAlive();
+  applyChrome("action");
+  defaults();
+  setRes("ok", "&rarr; background terminal closed");
+  inp.focus();
 }
 
 async function enterTerminal(seedCmd?: string, opts: { fresh?: boolean } = {}) {
@@ -1200,11 +1261,9 @@ async function enterTerminal(seedCmd?: string, opts: { fresh?: boolean } = {}) {
       const t = ensureTerm();
       t.reset();
       clearPtyWriteBuf();
-      await settleTermSize();
-      const cols = t.cols || 80;
-      const rows = t.rows || 24;
+      const size = await waitForTermSize(t);
       await bindPtyListeners();
-      await invoke("pty_open", { cwd, cols, rows });
+      await invoke("pty_open", { cwd, cols: size.cols, rows: size.rows });
       sessionAlive = true;
       await settleTermSize();
       t.focus();
@@ -1231,6 +1290,7 @@ async function enterTerminal(seedCmd?: string, opts: { fresh?: boolean } = {}) {
 }
 
 async function openPath(path: string) {
+  if (!claimLaunch()) return;
   await withBusy(async () => {
     try {
       await invoke("cli_open", { target: path });
@@ -1249,6 +1309,7 @@ function webSearch(q: string) {
 }
 
 function openTarget(target: string, opts: { background?: boolean } = {}) {
+  if (!claimLaunch()) return;
   void withBusy(async () => {
     try {
       if (!hostAvailable) throw new Error("host unavailable — preview mode cannot launch");
@@ -1357,6 +1418,7 @@ function presetRows(filter?: string) {
 }
 
 async function openFileTarget(target: string, label: string) {
+  if (!claimLaunch()) return;
   await withBusy(async () => {
     try {
       await invoke("cli_open", { target });
@@ -1404,9 +1466,10 @@ async function launchPreset(hit: Preset, opts: { background?: boolean } = {}) {
     clearBlurTimer();
     termSessionLabel = hit.n;
     void saveLastTermSeed(ENGINE_ID, hit.target);
-    return void enterTerminal(hit.target);
+    return void enterTerminal(hit.target, { fresh: true });
   }
   lastLaunchError = null;
+  if (!claimLaunch()) return;
   await withBusy(async () => {
     try {
       if (!hostAvailable) throw new Error("host unavailable — preview mode cannot launch");
@@ -1731,14 +1794,12 @@ function run(c: string, background = false) {
     case "shell":
     case "ps": {
       const sub = arg.trim().toLowerCase();
-      if (sub === "new" || sub === "fresh") return void enterTerminal(undefined, { fresh: true });
+      if (sub === "new" || sub === "fresh") {
+        forceIdle("term-new");
+        return void enterTerminal(undefined, { fresh: true });
+      }
       if (sub === "kill" || sub === "close") {
-        return void (async () => {
-          await killTerminalSession();
-          setRes("ok", "&rarr; background terminal closed");
-          applyChrome("action");
-          defaults();
-        })();
+        return void closeTerminalFromCommand();
       }
       // `term` alone reattaches if a session is live; otherwise opens fresh.
       return void enterTerminal();
@@ -1956,6 +2017,8 @@ inp.addEventListener("keydown", (e) => {
     }
   } else if (e.key === "Enter") {
     e.preventDefault();
+    e.stopImmediatePropagation();
+    if (e.repeat || launchBlocked()) return;
     if (rowSel >= 0 && rows[rowSel]) {
       activateRow(rows[rowSel], e.ctrlKey);
       return;
@@ -2104,6 +2167,9 @@ function applySeed(seed?: string) {
   refreshProposals();
 }
 
+const _barBoot = barWindow();
+if (!_barBoot.__VERSAILLES_BAR_BOUND__) {
+  _barBoot.__VERSAILLES_BAR_BOUND__ = true;
 void (async () => {
   const v = (window as unknown as { versailles?: { waitForTauri?: () => Promise<unknown> } }).versailles;
   if (v?.waitForTauri) await v.waitForTauri();
@@ -2164,3 +2230,4 @@ void (async () => {
   defaults();
   focusPrompt();
 })();
+}

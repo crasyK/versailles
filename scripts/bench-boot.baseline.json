@@ -1,0 +1,12 @@
+{
+  "slack": 1.4,
+  "ciCeilingMs": 15000,
+  "engine": {
+    "medianMs": 2239,
+    "p95Ms": 2391
+  },
+  "user": {
+    "medianMs": 2230,
+    "p95Ms": 2872
+  }
+}

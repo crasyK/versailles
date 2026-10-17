@@ -31,6 +31,8 @@ npm run tauri:dev
 
 Or run [`dev.cmd`](dev.cmd) — it prepends `%USERPROFILE%\.cargo\bin`. Close and reopen the terminal if you just installed Rust.
 
+The example command bar's `desktop/bar.js` is generated from [`src/launcher.ts`](src/launcher.ts): `npm run build:bar` writes `templates/starter/desktop/bar.js`; add `-- --install` to also copy it into `%USERPROFILE%\Documents\Widgets\desktop`. The shipped widget SDK is [`templates/starter/.sdk/versailles.js`](templates/starter/.sdk/versailles.js) (plain script, no build step).
+
 Edit `Documents\Widgets\desktop\index.html`. Preview via the file server (accurate) or by opening the file (hooks stub `{ host: false }`):
 
 | Query | Surface |

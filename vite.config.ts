@@ -23,7 +23,6 @@ export default defineConfig({
   build: {
     rollupOptions: {
       input: {
-        launcher: resolve(__dirname, "launcher.html"),
         "launcher-dim": resolve(__dirname, "launcher-dim.html"),
         desktop: resolve(__dirname, "desktop.html"),
         guides: resolve(__dirname, "guides.html"),

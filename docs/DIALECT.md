@@ -21,9 +21,10 @@ The host is a small windowing + hooks layer. Pieces on the page are the product.
 | `data-id` | yes | Catalog id. Unique, case-insensitive. `calc` aliases `calculator`. |
 | `data-w` | no | Window width in CSS pixels. Default 280. |
 | `data-h` | no | Window height. Default 200. |
-| `data-anchor` | no | Placement. `c` / `center` / `overlay` = mid-screen overlay (covers apps, dim). `tc` = top-center overlay (action bar). `tr` = docked top-right slide-out. |
+| `data-anchor` | no | Placement. `c` / `center` / `overlay` = mid-screen overlay (covers apps, dim). `tc` = top-center overlay (action bar): horizontally centered, pinned at a fixed 120 px (logical) from the top of the monitor. `tr` = docked top-right slide-out. |
 | `data-hotkey` | no | Global accelerator for this spawnable when `data-hooks` includes `hotkey`. Format: Tauri accelerators (`Alt+Space`, `Ctrl+Shift+D`, `CommandOrControl+K`). Duplicate combos: first piece on the page wins. A hook piece with no `data-hotkey` uses `#versailles` `launcher.hotkey` (once). |
 | `data-hooks` | no | Comma-separated allowlist. See [`HOOKS.md`](HOOKS.md). |
+| `data-dismiss-on-blur` | no | Overlays only. `true` / `false`: hide the overlay when its window loses focus. Wins over `#versailles` `spawnables.<id>.overlay.dismissOnBlur`. Default `true`, except pieces with the `pty` hook default to `false` (a terminal survives focus flicker). |
 
 Duplicate `data-id` values are ignored after the first.
 
@@ -33,7 +34,7 @@ A spawnable with `data-anchor="c"` (or `center` / `tc` / `overlay`) is an overla
 
 - Mid-screen on the monitor under the cursor (`tc` stays near the top, action-bar style)
 - Dim behind it (`launcher-dim`)
-- Blur / click-dim dismisses
+- Click-dim dismisses; blur dismisses unless `data-dismiss-on-blur="false"` (default off for `pty` pieces)
 - Hide/show (not destroy) so an embedded PTY survives Alt+Space
 
 `data-anchor="tr"` stays a docked slide-out. Toggle closes it.
@@ -77,9 +78,36 @@ Host knobs are not visual pieces. Put them in `<head>`:
 
 The widget/spawnable parser ignores this. The JSON must not contain the literal `</script>`. Sidecar `versailles.json` is fallback only. The host never rewrites this file.
 
+### Per-spawnable settings
+
+`spawnables.<id>` (id lower-case) tunes one spawnable without touching its tag:
+
+```json
+"spawnables": {
+  "action-bar": {
+    "overlay": { "dismissOnBlur": false, "dismissOnDimClick": true, "draggable": false, "dim": true },
+    "opts": {
+      "blurDismissMs": 280,
+      "suggestionLimit": 12,
+      "compact": false,
+      "launchTick": false,
+      "searchHf": "https://huggingface.co/models?search={q}",
+      "timeAwareDefaults": true,
+      "autoDismissLaunch": true
+    }
+  }
+}
+```
+
+`overlay.*` is read by the host. `opts` is handed to the piece's page JS (the example bar reads it via `get_spawnable_engine_context`); the host does not interpret it. A `data-dismiss-on-blur` attribute on the tag beats `overlay.dismissOnBlur`.
+
 ## Example command bar
 
 The starter ships a command bar as page JS (`desktop/bar.js`), not a host feature. Its `#cli-*` ids are that example’s contract. Grammar lives in `bar.js`: `!` inline pwsh, `!!` detachable PTY, shortcuts from `#versailles` in the same HTML file.
+
+`bar.js` is generated. Its source is [`src/launcher.ts`](../src/launcher.ts) (+ `src/engine/*`) in this repo; `npm run build:bar` bundles it into `templates/starter/desktop/bar.js`. `npm run build:bar -- --install` also copies it to `%USERPROFILE%\Documents\Widgets\desktop\bar.js`. Do not hand-edit `bar.js`.
+
+The bar sizes itself from its tag (`data-w` / `data-h` / `data-anchor`) when it leaves terminal mode, shows its own `data-hotkey` in the footer, and honours `data-dismiss-on-blur`. The command line is a plain visible `<input id="cli-in">` after the `#cli-ps` prompt; `#cli-echo` / `.cli-caret` from older pages are optional and ignored.
 
 ## Scripts inside templates
 

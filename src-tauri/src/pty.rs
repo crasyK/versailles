@@ -1,27 +1,52 @@
 //! Embedded ConPTY session for the Versailles Action Bar terminal mode.
+//!
+//! Events (shared contract with the frontend):
+//! - `pty://data` → `{ "session": u64, "data": "<base64>" }`
+//! - `pty://exit` → `{ "session": u64 }`
+//!
+//! Every session gets a fresh id from a counter starting at 1; reader threads
+//! only ever tag events with their own session's id, so output from a killed
+//! session can never be mistaken for the new one.
 
 use crate::cli;
+use crate::page::HookClass;
 use crate::state::AppState;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
+use serde::Serialize;
 use std::io::{Read, Write};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State, Webview};
 
-fn gate_pty(app_state: &AppState, caller: Option<&str>) -> Result<(), String> {
-    crate::page::enforce_hook_cached(
-        &crate::desktop::page_catalog(app_state),
-        caller,
-        "pty",
-    )
+/// `pty_*` only from a spawn window whose piece declares `pty` (never the wallpaper).
+fn gate_pty(app_state: &AppState, webview: &Webview, caller: Option<&str>) -> Result<(), String> {
+    crate::commands::require_hook(app_state, webview, caller, "pty", HookClass::Exec)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Clone, Serialize)]
+struct PtyData {
+    session: u64,
+    data: String,
+}
+
+#[derive(Clone, Serialize)]
+struct PtyExit {
+    session: u64,
 }
 
 pub struct PtySession {
+    id: u64,
     master: Box<dyn MasterPty + Send>,
-    /// Separate from session lock so write_all cannot stall resize / is_alive.
-    writer: Arc<Mutex<Box<dyn Write + Send>>>,
+    /// Keystrokes go to a dedicated writer thread in arrival order; `pty_write`
+    /// never blocks the main thread on a full ConPTY input pipe.
+    input: Sender<Vec<u8>>,
     killer: Box<dyn ChildKiller + Send + Sync>,
     pid: Option<u32>,
     alive: Arc<AtomicBool>,
@@ -42,22 +67,29 @@ impl Default for PtyState {
 fn close_inner(session: &mut Option<PtySession>) {
     if let Some(mut s) = session.take() {
         s.alive.store(false, Ordering::SeqCst);
+        // taskkill waits for a child process: run it off the calling thread.
         // Kill the tree first while the shell PID still exists; TerminateProcess
         // on pwsh alone leaves ssh / TUI children orphaned on Windows.
-        if let Some(pid) = s.pid {
-            kill_process_tree(pid);
-        }
-        let _ = s.killer.kill();
+        let pid = s.pid;
+        std::thread::spawn(move || {
+            if let Some(pid) = pid {
+                kill_process_tree(pid);
+            }
+            let _ = s.killer.kill();
+            tracing::debug!("pty session {} closed", s.id);
+        });
     }
 }
 
 #[cfg(windows)]
 fn kill_process_tree(pid: u32) {
+    use std::os::windows::process::CommandExt;
     let _ = std::process::Command::new("taskkill")
         .args(["/PID", &pid.to_string(), "/T", "/F"])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
+        .creation_flags(0x08000000) // CREATE_NO_WINDOW
         .status();
 }
 
@@ -74,20 +106,28 @@ pub fn close_pty_session(state: &PtyState) {
 const PTY_BATCH_MAX: usize = 16 * 1024;
 const PTY_BATCH_MS: Duration = Duration::from_millis(8);
 
+/// Returns the new session id (JSON number).
 #[tauri::command]
-pub fn pty_open(
+pub async fn pty_open(
     app: AppHandle,
-    state: State<'_, PtyState>,
+    webview: Webview,
+    app_state: State<'_, AppState>,
     cwd: Option<String>,
     cols: u16,
     rows: u16,
     caller: Option<String>,
-) -> Result<(), String> {
-    gate_pty(&app.state::<AppState>(), caller.as_deref())?;
+) -> Result<u64, String> {
+    gate_pty(&app_state, &webview, caller.as_deref())?;
+    // Shell probe + ConPTY spawn can take hundreds of ms: keep the UI thread free.
+    cli::blocking(move || open_session(&app, cwd, cols, rows)).await
+}
+
+fn open_session(app: &AppHandle, cwd: Option<String>, cols: u16, rows: u16) -> Result<u64, String> {
+    let shell = cli::shell_exe()?;
+    let state = app.state::<PtyState>();
     let mut guard = state.session.lock().map_err(|e| e.to_string())?;
     close_inner(&mut guard);
 
-    let shell = cli::shell_exe()?;
     let pty_system = native_pty_system();
     let pair = pty_system
         .openpty(PtySize {
@@ -119,22 +159,43 @@ pub fn pty_open(
         .master
         .try_clone_reader()
         .map_err(|e| format!("clone reader: {e}"))?;
-    let writer = Arc::new(Mutex::new(
-        pair.master
-            .take_writer()
-            .map_err(|e| format!("take writer: {e}"))?,
-    ));
+    let mut writer = pair
+        .master
+        .take_writer()
+        .map_err(|e| format!("take writer: {e}"))?;
     let killer = child.clone_killer();
+    let session = NEXT_SESSION.fetch_add(1, Ordering::SeqCst);
     let alive = Arc::new(AtomicBool::new(true));
-    let alive_r = alive.clone();
-    let app_r = app.clone();
+
+    // Writer thread: drains keystrokes in order; ends when the session (and
+    // with it the Sender) is dropped or the pipe breaks.
+    let (input, input_rx) = channel::<Vec<u8>>();
+    std::thread::spawn(move || {
+        for chunk in input_rx {
+            if writer.write_all(&chunk).is_err() {
+                break;
+            }
+            let _ = writer.flush();
+        }
+    });
 
     // Coalesce ConPTY output (~16KB / 8ms) so floods don't emit per-4KB IPC events.
     let pending = Arc::new(Mutex::new(Vec::<u8>::new()));
     let pending_r = pending.clone();
     let pending_f = pending.clone();
+    let alive_r = alive.clone();
     let alive_f = alive.clone();
+    let app_r = app.clone();
     let app_f = app.clone();
+    let emit_data = move |app: &AppHandle, bytes: &[u8]| {
+        let _ = app.emit(
+            "pty://data",
+            PtyData {
+                session,
+                data: STANDARD.encode(bytes),
+            },
+        );
+    };
 
     std::thread::spawn(move || {
         while alive_f.load(Ordering::SeqCst) {
@@ -147,11 +208,9 @@ pub fn pty_open(
                 if p.is_empty() {
                     continue;
                 }
-                let out = STANDARD.encode(&*p);
-                p.clear();
-                out
+                std::mem::take(&mut *p)
             };
-            let _ = app_f.emit("pty://data", chunk);
+            emit_data(&app_f, &chunk);
         }
     });
 
@@ -161,16 +220,15 @@ pub fn pty_open(
             match reader.read(&mut buf) {
                 Ok(0) => break,
                 Ok(n) => {
-                    let mut emit_now: Option<String> = None;
+                    let mut emit_now: Option<Vec<u8>> = None;
                     if let Ok(mut p) = pending_r.lock() {
                         p.extend_from_slice(&buf[..n]);
                         if p.len() >= PTY_BATCH_MAX {
-                            emit_now = Some(STANDARD.encode(&*p));
-                            p.clear();
+                            emit_now = Some(std::mem::take(&mut *p));
                         }
                     }
                     if let Some(chunk) = emit_now {
-                        let _ = app_r.emit("pty://data", chunk);
+                        emit_data(&app_r, &chunk);
                     }
                 }
                 Err(_) => break,
@@ -179,55 +237,55 @@ pub fn pty_open(
         // Flush remainder before exit signal.
         if let Ok(mut p) = pending_r.lock() {
             if !p.is_empty() {
-                let chunk = STANDARD.encode(&*p);
-                p.clear();
-                let _ = app_r.emit("pty://data", chunk);
+                let chunk = std::mem::take(&mut *p);
+                emit_data(&app_r, &chunk);
             }
         }
-        let _ = app_r.emit("pty://exit", true);
+        let _ = app_r.emit("pty://exit", PtyExit { session });
         alive_r.store(false, Ordering::SeqCst);
     });
 
     *guard = Some(PtySession {
+        id: session,
         master: pair.master,
-        writer,
+        input,
         killer,
         pid,
         alive,
     });
-    Ok(())
+    Ok(session)
 }
 
+/// Stays a sync command on purpose: IPC messages are handled in order on the
+/// main thread, so keystrokes reach the writer channel in order. The send never
+/// blocks — the per-session writer thread does the actual pipe write.
 #[tauri::command]
 pub fn pty_write(
+    webview: Webview,
     state: State<'_, PtyState>,
     app_state: State<'_, AppState>,
     data: String,
     caller: Option<String>,
 ) -> Result<(), String> {
-    gate_pty(&app_state, caller.as_deref())?;
-    // Clone writer Arc under a short session lock, then write outside it.
-    let writer = {
-        let guard = state.session.lock().map_err(|e| e.to_string())?;
-        let session = guard.as_ref().ok_or_else(|| "no pty session".to_string())?;
-        session.writer.clone()
-    };
-    let mut w = writer.lock().map_err(|e| e.to_string())?;
-    w.write_all(data.as_bytes())
-        .map_err(|e| format!("pty write: {e}"))?;
-    let _ = w.flush();
-    Ok(())
+    gate_pty(&app_state, &webview, caller.as_deref())?;
+    let guard = state.session.lock().map_err(|e| e.to_string())?;
+    let session = guard.as_ref().ok_or_else(|| "no pty session".to_string())?;
+    session
+        .input
+        .send(data.into_bytes())
+        .map_err(|_| "pty write: session closed".to_string())
 }
 
 #[tauri::command]
 pub fn pty_resize(
+    webview: Webview,
     state: State<'_, PtyState>,
     app_state: State<'_, AppState>,
     cols: u16,
     rows: u16,
     caller: Option<String>,
 ) -> Result<(), String> {
-    gate_pty(&app_state, caller.as_deref())?;
+    gate_pty(&app_state, &webview, caller.as_deref())?;
     let guard = state.session.lock().map_err(|e| e.to_string())?;
     let session = guard.as_ref().ok_or_else(|| "no pty session".to_string())?;
     session
@@ -243,11 +301,12 @@ pub fn pty_resize(
 
 #[tauri::command]
 pub fn pty_is_alive(
+    webview: Webview,
     state: State<'_, PtyState>,
     app_state: State<'_, AppState>,
     caller: Option<String>,
 ) -> Result<bool, String> {
-    gate_pty(&app_state, caller.as_deref())?;
+    gate_pty(&app_state, &webview, caller.as_deref())?;
     let guard = state.session.lock().map_err(|e| e.to_string())?;
     Ok(guard
         .as_ref()
@@ -257,11 +316,29 @@ pub fn pty_is_alive(
 
 #[tauri::command]
 pub fn pty_close(
+    webview: Webview,
     state: State<'_, PtyState>,
     app_state: State<'_, AppState>,
     caller: Option<String>,
 ) -> Result<(), String> {
-    gate_pty(&app_state, caller.as_deref())?;
+    gate_pty(&app_state, &webview, caller.as_deref())?;
     close_pty_session(&state);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn event_payloads_match_frontend_contract() {
+        let data = serde_json::to_value(PtyData {
+            session: 7,
+            data: STANDARD.encode(b"hi"),
+        })
+        .unwrap();
+        assert_eq!(data, serde_json::json!({ "session": 7, "data": "aGk=" }));
+        let exit = serde_json::to_value(PtyExit { session: 7 }).unwrap();
+        assert_eq!(exit, serde_json::json!({ "session": 7 }));
+    }
 }

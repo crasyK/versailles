@@ -3,7 +3,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "camelCase")]
@@ -178,15 +180,6 @@ impl Default for ShortcutsSpec {
     }
 }
 
-impl ShortcutsSpec {
-    pub fn as_list(&self) -> Option<&[ShortcutEntry]> {
-        match self {
-            Self::List(v) => Some(v),
-            Self::Path(_) => None,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct UserConfig {
@@ -329,6 +322,19 @@ impl AppConfig {
         }
     }
 
+    /// Re-apply the user part after `#versailles` / `versailles.json` changed on
+    /// disk. Runtime state, the API port/enable flag and the page path are kept
+    /// (the server is already bound; the page path scopes `/files`).
+    pub fn apply_user_config(&mut self, user: UserConfig) {
+        self.version = user.version;
+        self.theme = user.theme;
+        self.shortcuts = user.shortcuts;
+        self.autostart = user.autostart;
+        self.snap_threshold = user.snap_threshold;
+        self.launcher_hotkey = user.launcher.hotkey;
+        self.launcher_primary = user.launcher.primary;
+    }
+
     pub fn to_user_config(&self) -> UserConfig {
         UserConfig {
             version: self.version.clone(),
@@ -389,10 +395,16 @@ pub struct LayoutTemplate {
 pub struct ConfigStore {
     widgets_root: PathBuf,
     root: PathBuf,
+    /// Set when `config.json` could not be read at boot (locked by OneDrive / AV):
+    /// the app runs on in-memory defaults and must not overwrite the real file
+    /// (token, session) with them.
+    runtime_read_only: AtomicBool,
 }
 
 impl ConfigStore {
-    pub fn new(widgets_root: &Path) -> AppResult<Self> {
+    /// Never fails: a folder that cannot be created is logged and the store
+    /// keeps working in memory (writes report their own errors).
+    pub fn new(widgets_root: &Path) -> Self {
         let root = widgets_root.join(".versailles");
         let legacy = widgets_root.join(".deck");
         if legacy.is_dir() && !root.exists() {
@@ -400,11 +412,19 @@ impl ConfigStore {
                 tracing::warn!("Could not migrate .deck → .versailles: {err}");
             }
         }
-        fs::create_dir_all(root.join("layouts"))?;
-        Ok(Self {
+        if let Err(err) = fs::create_dir_all(root.join("layouts")) {
+            tracing::error!("Cannot create {}: {err}", root.display());
+        }
+        Self {
             widgets_root: widgets_root.to_path_buf(),
             root,
-        })
+            runtime_read_only: AtomicBool::new(false),
+        }
+    }
+
+    /// Stop writing `config.json` for this session (see `runtime_read_only`).
+    pub fn set_runtime_read_only(&self) {
+        self.runtime_read_only.store(true, Ordering::SeqCst);
     }
 
     pub fn runtime_path(&self) -> PathBuf {
@@ -451,7 +471,12 @@ impl ConfigStore {
                 match serde_json::from_str::<UserConfig>(json) {
                     Ok(cfg) => return Ok(cfg),
                     Err(err) => {
-                        tracing::warn!("Invalid #versailles JSON ({err}); trying sidecar versailles.json")
+                        tracing::warn!(
+                            "Invalid #versailles JSON in {} (line {}, column {}: {err}); trying sidecar versailles.json",
+                            html_path.display(),
+                            err.line(),
+                            err.column()
+                        )
                     }
                 }
             }
@@ -479,32 +504,58 @@ impl ConfigStore {
         atomic_write(&self.user_config_path(), &serde_json::to_string_pretty(config)?)
     }
 
+    /// Read `config.json`. Missing/empty → fresh defaults (best-effort save).
+    /// Corrupt → back up to `config.json.corrupt-<unix-ts>`, salvage `apiToken`,
+    /// reset the rest. An unreadable file (locked) is an error so boot can fall
+    /// back to memory without clobbering it.
     pub fn load_runtime_state(&self) -> AppResult<RuntimeState> {
         let path = self.runtime_path();
         if !path.exists() {
             let cfg = RuntimeState::default();
-            self.save_runtime_state(&cfg)?;
+            if let Err(err) = self.save_runtime_state(&cfg) {
+                tracing::warn!("Could not create {}: {err}", path.display());
+            }
             return Ok(cfg);
         }
-        let raw = fs::read_to_string(&path)?;
+        let raw = read_with_retry(&path)?;
         let trimmed = raw.trim();
         if trimmed.is_empty() {
             let cfg = RuntimeState::default();
-            self.save_runtime_state(&cfg)?;
+            if let Err(err) = self.save_runtime_state(&cfg) {
+                tracing::warn!("Could not reset empty {}: {err}", path.display());
+            }
             return Ok(cfg);
         }
         match serde_json::from_str::<RuntimeState>(trimmed) {
             Ok(cfg) => Ok(cfg),
             Err(err) => {
-                tracing::warn!("Invalid runtime config ({err}); recreating defaults");
-                let cfg = RuntimeState::default();
-                self.save_runtime_state(&cfg)?;
+                let backup = backup_corrupt(&path);
+                let mut cfg = RuntimeState::default();
+                let salvaged = salvage_api_token(trimmed);
+                if let Some(token) = salvaged.clone() {
+                    cfg.api_token = token;
+                }
+                tracing::warn!(
+                    "Invalid runtime config ({err}); backed up to {} and reset (API token {})",
+                    backup
+                        .as_ref()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_else(|| "<backup failed>".into()),
+                    if salvaged.is_some() { "kept" } else { "rotated" }
+                );
+                if let Err(err) = self.save_runtime_state(&cfg) {
+                    tracing::warn!("Could not rewrite {}: {err}", path.display());
+                }
                 Ok(cfg)
             }
         }
     }
 
     pub fn save_runtime_state(&self, config: &RuntimeState) -> AppResult<()> {
+        if self.runtime_read_only.load(Ordering::SeqCst) {
+            tracing::debug!("config.json was unreadable at boot; not overwriting it");
+            return Ok(());
+        }
         atomic_write(&self.runtime_path(), &serde_json::to_string_pretty(config)?)
     }
 
@@ -558,20 +609,105 @@ fn sanitize(name: &str) -> String {
         .collect()
 }
 
+/// Read a file, retrying briefly: OneDrive / AV scanners hold short locks.
+fn read_with_retry(path: &Path) -> AppResult<String> {
+    let mut last = None;
+    for attempt in 0..3 {
+        match fs::read_to_string(path) {
+            Ok(raw) => return Ok(raw),
+            Err(err) if err.kind() == std::io::ErrorKind::InvalidData => {
+                // Not UTF-8: treat as corrupt content, not as a lock.
+                return Ok(String::from_utf8_lossy(&fs::read(path)?).into_owned());
+            }
+            Err(err) => last = Some(err),
+        }
+        if attempt < 2 {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+        }
+    }
+    Err(last.map(AppError::from).unwrap_or_else(|| AppError::msg("read failed")))
+}
+
+/// Copy a corrupt file aside as `<name>.corrupt-<unix-ts>`; returns the copy.
+pub(crate) fn backup_corrupt(path: &Path) -> Option<PathBuf> {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let name = path.file_name()?.to_string_lossy().into_owned();
+    let backup = path.with_file_name(format!("{name}.corrupt-{ts}"));
+    match fs::copy(path, &backup) {
+        Ok(_) => Some(backup),
+        Err(err) => {
+            tracing::warn!("Could not back up {}: {err}", path.display());
+            None
+        }
+    }
+}
+
+/// Pull `"apiToken": "<value>"` out of a config that no longer parses, so a
+/// corrupt file does not rotate the token scripts / the SDK already use.
+fn salvage_api_token(raw: &str) -> Option<String> {
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) {
+        return value
+            .get("apiToken")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|t| is_plausible_token(t))
+            .map(str::to_string);
+    }
+    let at = raw.find("\"apiToken\"")?;
+    let rest = raw[at + "\"apiToken\"".len()..].trim_start();
+    let rest = rest.strip_prefix(':')?.trim_start();
+    let rest = rest.strip_prefix('"')?;
+    let end = rest.find('"')?;
+    let token = rest[..end].trim();
+    is_plausible_token(token).then(|| token.to_string())
+}
+
+fn is_plausible_token(t: &str) -> bool {
+    (8..=256).contains(&t.len())
+        && t.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+}
+
+/// Write via a unique temp file (pid + counter, so concurrent writers never share
+/// one), `sync_all`, then rename over the target. Renames are retried briefly
+/// because OneDrive / AV can hold the destination open.
 pub fn atomic_write(path: &Path, content: &str) -> AppResult<()> {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
     let parent = path
         .parent()
         .ok_or_else(|| AppError::msg("Invalid config path"))?;
     fs::create_dir_all(parent)?;
     let tmp = parent.join(format!(
-        ".{}.tmp",
+        ".{}.{}.{}.tmp",
         path.file_name()
             .and_then(|n| n.to_str())
-            .unwrap_or("versailles")
+            .unwrap_or("versailles"),
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
     ));
-    fs::write(&tmp, content)?;
-    fs::rename(&tmp, path)?;
-    Ok(())
+    let written = (|| -> std::io::Result<()> {
+        let mut file = fs::File::create(&tmp)?;
+        file.write_all(content.as_bytes())?;
+        file.sync_all()
+    })();
+    if let Err(err) = written {
+        let _ = fs::remove_file(&tmp);
+        return Err(err.into());
+    }
+    let mut last = None;
+    for attempt in 0..3 {
+        match fs::rename(&tmp, path) {
+            Ok(()) => return Ok(()),
+            Err(err) => last = Some(err),
+        }
+        if attempt < 2 {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
+    let _ = fs::remove_file(&tmp);
+    Err(last.map(AppError::from).unwrap_or_else(|| AppError::msg("rename failed")))
 }
 
 #[cfg(test)]
@@ -598,12 +734,17 @@ mod tests {
             r#"{ "autostart": true, "api": { "port": 47831 }, "shortcuts": "shortcuts.json" }"#,
         )
         .unwrap();
-        let store = ConfigStore::new(&root).unwrap();
+        let store = ConfigStore::new(&root);
         let user = store.load_user_config().unwrap();
         assert!(!user.autostart);
         assert_eq!(user.api.port, 47899);
-        assert_eq!(user.shortcuts.as_list().unwrap().len(), 1);
-        assert_eq!(user.shortcuts.as_list().unwrap()[0].n, "mail");
+        match &user.shortcuts {
+            ShortcutsSpec::List(list) => {
+                assert_eq!(list.len(), 1);
+                assert_eq!(list[0].n, "mail");
+            }
+            ShortcutsSpec::Path(_) => panic!("expected inline shortcuts"),
+        }
         let _ = fs::remove_dir_all(root);
     }
 
@@ -620,7 +761,7 @@ mod tests {
             r#"{ "autostart": false, "api": { "port": 47001 }, "shortcuts": "shortcuts.json" }"#,
         )
         .unwrap();
-        let store = ConfigStore::new(&root).unwrap();
+        let store = ConfigStore::new(&root);
         let user = store.load_user_config().unwrap();
         assert!(!user.autostart);
         assert_eq!(user.api.port, 47001);
@@ -634,11 +775,82 @@ mod tests {
     #[test]
     fn load_defaults_when_nothing_exists() {
         let root = temp_root();
-        let store = ConfigStore::new(&root).unwrap();
+        let store = ConfigStore::new(&root);
         let user = store.load_user_config().unwrap();
         assert!(user.autostart);
         assert_eq!(user.api.port, 47831);
         assert!(!store.user_config_path().exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn corrupt_runtime_config_is_backed_up_and_token_salvaged() {
+        let root = temp_root();
+        let store = ConfigStore::new(&root);
+        let token = "0b9d3f8e-1111-2222-3333-444455556666";
+        fs::write(
+            store.runtime_path(),
+            format!("{{ \"apiToken\": \"{token}\", \"sessionWidgets\": [ {{ \"id\": "),
+        )
+        .unwrap();
+        let cfg = store.load_runtime_state().unwrap();
+        assert_eq!(cfg.api_token, token);
+        let backups: Vec<_> = fs::read_dir(root.join(".versailles"))
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with("config.json.corrupt-"))
+            .collect();
+        assert_eq!(backups.len(), 1);
+        // Rewritten file parses again and keeps the token.
+        let again = store.load_runtime_state().unwrap();
+        assert_eq!(again.api_token, token);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn salvage_handles_wrong_types_and_garbage() {
+        assert_eq!(
+            salvage_api_token(r#"{"apiToken":"abcdefgh-1234","sessionWidgets":5}"#).as_deref(),
+            Some("abcdefgh-1234")
+        );
+        assert_eq!(salvage_api_token("not json at all"), None);
+        assert_eq!(salvage_api_token(r#"{"apiToken": "x"}"#), None);
+        assert_eq!(salvage_api_token(r#"{"apiToken": "abc def ghi jkl"#), None);
+    }
+
+    #[test]
+    fn read_only_store_does_not_overwrite_runtime_file() {
+        let root = temp_root();
+        let store = ConfigStore::new(&root);
+        fs::write(store.runtime_path(), r#"{ "apiToken": "keep-me-1234" }"#).unwrap();
+        store.set_runtime_read_only();
+        store.save_runtime_state(&RuntimeState::default()).unwrap();
+        assert!(fs::read_to_string(store.runtime_path()).unwrap().contains("keep-me-1234"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn atomic_write_uses_unique_temp_files() {
+        let root = temp_root();
+        let path = root.join("x.json");
+        let handles: Vec<_> = (0..8)
+            .map(|i| {
+                let path = path.clone();
+                std::thread::spawn(move || atomic_write(&path, &format!("{{\"n\":{i}}}")))
+            })
+            .collect();
+        for h in handles {
+            // Concurrent renames may lose the race on Windows, but never corrupt.
+            let _ = h.join().unwrap();
+        }
+        let raw = fs::read_to_string(&path).unwrap();
+        assert!(serde_json::from_str::<serde_json::Value>(&raw).is_ok(), "{raw}");
+        let leftovers = fs::read_dir(&root)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+            .count();
+        assert_eq!(leftovers, 0);
         let _ = fs::remove_dir_all(root);
     }
 }

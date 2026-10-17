@@ -1,12 +1,12 @@
 //! Per-spawnable engine runtime (recents, pins) stored under `.versailles/engines.json`.
 
-use crate::error::{AppError, AppResult};
+use crate::error::AppResult;
 use crate::state::AppState;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::State;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
@@ -31,25 +31,35 @@ fn engines_path(state: &AppState) -> PathBuf {
 }
 
 fn load_file(state: &AppState) -> AppResult<EngineRuntimeFile> {
-    let path = engines_path(state);
+    load_path(&engines_path(state))
+}
+
+/// Missing / empty → defaults. Corrupt → back up as `engines.json.corrupt-<ts>`
+/// and start fresh (recents/pins are convenience data; never fail the bar).
+fn load_path(path: &Path) -> AppResult<EngineRuntimeFile> {
     if !path.exists() {
         return Ok(EngineRuntimeFile::default());
     }
-    let raw = fs::read_to_string(&path)?;
+    let raw = String::from_utf8_lossy(&fs::read(path)?).into_owned();
     if raw.trim().is_empty() {
         return Ok(EngineRuntimeFile::default());
     }
-    serde_json::from_str(&raw).map_err(|e| AppError::msg(format!("invalid engines.json: {e}")))
+    match serde_json::from_str(&raw) {
+        Ok(file) => Ok(file),
+        Err(err) => {
+            let backup = crate::config::backup_corrupt(path);
+            tracing::warn!(
+                "invalid engines.json ({err}); backed up to {:?} and reset",
+                backup
+            );
+            Ok(EngineRuntimeFile::default())
+        }
+    }
 }
 
 fn save_file(state: &AppState, file: &EngineRuntimeFile) -> AppResult<()> {
-    let path = engines_path(state);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
     let json = serde_json::to_string_pretty(file)?;
-    fs::write(path, json)?;
-    Ok(())
+    crate::config::atomic_write(&engines_path(state), &json)
 }
 
 fn norm_id(id: &str) -> String {
@@ -125,4 +135,26 @@ pub fn patch_engine_runtime(
     let out = entry.clone();
     save_file(&state, &file).map_err(|e| e.to_string())?;
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn corrupt_engines_json_self_heals() {
+        let dir = std::env::temp_dir().join(format!("versailles-eng-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("engines.json");
+        fs::write(&path, "{ \"engines\": { \"action-bar\": { \"recents\": [").unwrap();
+        let file = load_path(&path).unwrap();
+        assert!(file.engines.is_empty());
+        let backups = fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with("engines.json.corrupt-"))
+            .count();
+        assert_eq!(backups, 1);
+        let _ = fs::remove_dir_all(dir);
+    }
 }

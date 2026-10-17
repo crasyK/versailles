@@ -126,6 +126,73 @@ fn is_url_or_protocol(t: &str) -> bool {
         || lower.starts_with("onenote:")
 }
 
+/// URL handlers that turn "open this link" into code execution or credential
+/// leaks (Follina `ms-msdt:`, `search-ms:` lures, Office `|u|` / `ofe|` URL forms,
+/// App Installer). Matched on the scheme, case-insensitively.
+const DENIED_SCHEMES: &[&str] = &[
+    "ms-msdt",
+    "search-ms",
+    "search",
+    "ms-officecmd",
+    "ms-word",
+    "ms-excel",
+    "ms-powerpoint",
+    "ms-visio",
+    "ms-access",
+    "ms-project",
+    "ms-publisher",
+    "ms-spd",
+    "ms-infopath",
+    "ms-officeapp",
+    "ms-appinstaller",
+    "ms-cxh",
+    "ms-cxh-full",
+];
+
+/// `\\server\share`, `//server/share`, `\\?\UNC\…`, `\\.\device`: touching
+/// these (even `Path::exists`) makes Windows authenticate over SMB and leak the
+/// user's NTLM hash. Checked before any filesystem call.
+fn is_unc_like(t: &str) -> bool {
+    let t = t.trim_start();
+    t.starts_with("\\\\") || t.starts_with("//") || t.starts_with("\\/") || t.starts_with("/\\")
+}
+
+/// Reason a launch target is refused, if it is. Pure; unit-tested below.
+pub(crate) fn denied_target(t: &str) -> Option<&'static str> {
+    let t = t.trim();
+    if is_unc_like(t) {
+        return Some("network (UNC) paths are not allowed");
+    }
+    let lower = t.to_ascii_lowercase();
+    if let Some((scheme, rest)) = lower.split_once(':') {
+        // Drive letters (`C:\…`) are paths, not schemes.
+        let is_scheme = scheme.len() > 1
+            && scheme
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
+        if is_scheme {
+            if DENIED_SCHEMES.contains(&scheme) {
+                return Some("this URL handler is not allowed");
+            }
+            if scheme.starts_with("ms-")
+                && (rest.contains("|u|") || rest.contains("ofe|") || rest.contains("ofv|") || rest.contains("nft|"))
+            {
+                return Some("Office URL commands are not allowed");
+            }
+            if scheme == "file" {
+                let after = rest.trim_start_matches(['/', '\\']);
+                let slashes = rest.len() - after.len();
+                // `file://host/…` (or `file:\\\\host`) reaches out over SMB; `file:///C:/…` is local.
+                let host_form = slashes == 2 || slashes == 4 || (slashes >= 2 && !after.get(1..2).is_some_and(|c| c == ":"));
+                if host_form && !after.starts_with("localhost/") {
+                    return Some("file URLs with a host are not allowed");
+                }
+            }
+        }
+    }
+    None
+}
+
 fn skip_dir(name: &str) -> bool {
     let n = name.to_ascii_lowercase();
     SKIP_DIRS.iter().any(|s| n == *s)
@@ -436,6 +503,10 @@ pub fn resolve_launch_target(target: &str) -> Result<String, String> {
     if t.is_empty() {
         return Err("cli_open: empty target".into());
     }
+    // Before any Path::exists(): UNC probes leak NTLM credentials.
+    if let Some(reason) = denied_target(t) {
+        return Err(format!("refused to open '{t}': {reason}"));
+    }
     if is_url_or_protocol(t) {
         return Ok(t.to_string());
     }
@@ -445,6 +516,9 @@ pub fn resolve_launch_target(target: &str) -> Result<String, String> {
     }
     let apps = scan_raw();
     if let Some(hit) = find_in_raw(&apps, t) {
+        if denied_target(&hit.target).is_some() {
+            return Err(format!("refused to open '{t}': shortcut points to a network path"));
+        }
         let p = Path::new(&hit.target);
         if p.exists() {
             return Ok(unwrap_console_shim(p).to_string_lossy().into_owned());
@@ -479,17 +553,30 @@ fn decorate(apps: Vec<RawApp>, catalog: &CatalogState) -> Vec<CatalogEntry> {
         .collect()
 }
 
-#[tauri::command]
-pub fn list_catalog(state: State<'_, AppState>) -> AppResult<Vec<CatalogEntry>> {
+/// Start Menu / Desktop walk off the UI thread (cold scans take a while).
+async fn scan_raw_async() -> AppResult<Vec<RawApp>> {
+    tauri::async_runtime::spawn_blocking(scan_raw)
+        .await
+        .map_err(|e| crate::error::AppError::msg(format!("catalog scan failed: {e}")))
+}
+
+fn visible_entries(state: &AppState, apps: Vec<RawApp>) -> Vec<CatalogEntry> {
     let catalog = state.config.lock().unwrap().catalog.clone();
-    let mut entries = decorate(scan_raw(), &catalog);
+    let mut entries = decorate(apps, &catalog);
     entries.retain(|e| !e.hidden);
-    Ok(entries)
+    entries
 }
 
 #[tauri::command]
-pub fn ack_catalog(state: State<'_, AppState>) -> AppResult<Vec<CatalogEntry>> {
-    let ids: Vec<String> = scan_raw().into_iter().map(|a| a.id).collect();
+pub async fn list_catalog(state: State<'_, AppState>) -> AppResult<Vec<CatalogEntry>> {
+    let apps = scan_raw_async().await?;
+    Ok(visible_entries(&state, apps))
+}
+
+#[tauri::command]
+pub async fn ack_catalog(state: State<'_, AppState>) -> AppResult<Vec<CatalogEntry>> {
+    let apps = scan_raw_async().await?;
+    let ids: Vec<String> = apps.iter().map(|a| a.id.clone()).collect();
     {
         let mut config = state.config.lock().unwrap();
         let mut set: HashSet<String> = config.catalog.seen_ids.iter().cloned().collect();
@@ -505,11 +592,11 @@ pub fn ack_catalog(state: State<'_, AppState>) -> AppResult<Vec<CatalogEntry>> {
             state.store.lock().unwrap().save_runtime_from_app(&config)?;
         }
     }
-    list_catalog(state)
+    Ok(visible_entries(&state, apps))
 }
 
 #[tauri::command]
-pub fn hide_catalog_entry(
+pub async fn hide_catalog_entry(
     state: State<'_, AppState>,
     id: String,
 ) -> AppResult<Vec<CatalogEntry>> {
@@ -526,12 +613,82 @@ pub fn hide_catalog_entry(
         }
     }
     invalidate_cache();
-    list_catalog(state)
+    let apps = scan_raw_async().await?;
+    Ok(visible_entries(&state, apps))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn refuses_unc_before_touching_the_filesystem() {
+        for t in [
+            r"\\attacker\share\x.exe",
+            r"\\?\UNC\attacker\share",
+            r"\\.\pipe\x",
+            "//attacker/share/x",
+            r"\/attacker/share",
+            "  \\\\attacker\\share",
+        ] {
+            assert!(denied_target(t).is_some(), "{t}");
+            assert!(resolve_launch_target(t).is_err(), "{t}");
+        }
+    }
+
+    #[test]
+    fn refuses_dangerous_url_handlers() {
+        for t in [
+            "ms-msdt:/id PCWDiagnostic /skip force",
+            "MS-MSDT:foo",
+            "search-ms:query=x&crumb=location:\\\\attacker\\s",
+            "search:query=x",
+            "ms-officecmd:{\"id\":3}",
+            "ms-word:ofe|u|https://attacker/x.docx",
+            "ms-excel:ofv|u|https://attacker/x.xlsx",
+            "ms-powerpoint:nft|u|https://attacker/x",
+            "ms-appinstaller:?source=https://attacker/x.appinstaller",
+            "ms-somethingnew:ofe|u|https://attacker/x",
+            "file://attacker/share/x",
+            "FILE:\\\\attacker\\share",
+        ] {
+            assert!(denied_target(t).is_some(), "{t}");
+            assert!(resolve_launch_target(t).is_err(), "{t}");
+        }
+    }
+
+    #[test]
+    fn live_desktop_shortcut_targets_still_pass_the_filter() {
+        // Every shortcut target in the user's `#versailles` block (and bar.js presets).
+        for t in [
+            "https://mail.google.com/mail/u/0/#inbox",
+            "https://www.figma.com/files/team/907966426820539674/recents-and-sharing?fuid=907966424690731585",
+            "http://homeserver-laptop-mark.tail186368.ts.net/#/",
+            "https://owa.kit.edu/owa/#path=/mail",
+            "ms-settings:",
+            "ms-settings:display",
+            "mailto:someone@example.com",
+            "shell:Downloads",
+            "steam://run/1",
+            "onenote:",
+            r"C:\Users\me\Downloads",
+            r"C:\Users\me\Documents\Projects",
+            "C:/Users/me/Pictures",
+            "calc.exe",
+            "cursor",
+            "code",
+            "notepad",
+            "explorer",
+            "taskmgr",
+            "wt",
+            "file:///C:/Users/me/a.txt",
+        ] {
+            assert!(denied_target(t).is_none(), "{t}");
+        }
+        assert!(resolve_launch_target("https://github.com/").is_ok());
+        assert!(resolve_launch_target("ms-settings:").is_ok());
+        assert!(resolve_launch_target("notepad").is_ok());
+    }
 
     #[test]
     fn strips_versions_and_parentheses() {

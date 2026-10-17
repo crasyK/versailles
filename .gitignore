@@ -26,3 +26,6 @@ src-tauri/gen
 scripts/bench-boot.last.json
 
 # Versailles local (lives under Documents/Widgets/.versailles, not in app)
+.versailles/
+**/local-restore.json
+design-tests/

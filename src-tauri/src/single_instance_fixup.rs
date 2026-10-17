@@ -54,57 +54,78 @@ fn delete_taskbar_tab(hwnd: windows::Win32::Foundation::HWND) {
     }
 }
 
-/// Hide / de-taskbar the single-instance and Tao helper windows.
+/// Top-level windows of `class` (and optional `title`) owned by THIS process.
+/// `FindWindowW` is system-wide: every other tao/Tauri app has a
+/// "Tao Thread Event Target" too, and we must never restyle theirs.
+#[cfg(windows)]
+fn own_windows(
+    class: windows::core::PCWSTR,
+    title: windows::core::PCWSTR,
+) -> Vec<windows::Win32::Foundation::HWND> {
+    use windows::Win32::System::Threading::GetCurrentProcessId;
+    use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, GetWindowThreadProcessId};
+
+    let me = unsafe { GetCurrentProcessId() };
+    let mut out = Vec::new();
+    let mut after = None;
+    // Bounded walk: there are only ever a handful of these per desktop.
+    for _ in 0..256 {
+        let Ok(hwnd) = (unsafe { FindWindowExW(None, after, class, title) }) else {
+            break;
+        };
+        let mut pid = 0u32;
+        unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+        if pid == me {
+            out.push(hwnd);
+        }
+        after = Some(hwnd);
+    }
+    out
+}
+
+/// Hide / de-taskbar the single-instance and Tao helper windows (this process only).
 #[cfg(windows)]
 pub fn hide_single_instance_helper() {
-    use windows::core::w;
-    use windows::Win32::Foundation::RECT;
-    use windows::Win32::UI::WindowsAndMessaging::{
-        FindWindowW, GetWindowRect, IsWindowVisible, ShowWindow, SW_HIDE,
-    };
+    use windows::core::{w, PCWSTR};
+    use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE};
 
     unsafe {
         // Single-instance IPC target - safe to fully hide; WM_COPYDATA still works.
-        match FindWindowW(w!("com.versailles.widgets-sic"), w!("com.versailles.widgets-siw")) {
-            Ok(hwnd) => {
-                let mut rect = RECT::default();
-                let _ = GetWindowRect(hwnd, &mut rect);
-                let _vis = IsWindowVisible(hwnd).as_bool();
-                make_layered_invisible(hwnd);
-                add_toolwindow_exstyle(hwnd);
-                delete_taskbar_tab(hwnd);
-                let _ = ShowWindow(hwnd, SW_HIDE);
-                tracing::info!("hid helper window (single-instance)");
-            }
-            Err(_) => {
-                tracing::debug!("single-instance helper HWND not found");
-            }
+        let helpers = own_windows(w!("com.versailles.widgets-sic"), w!("com.versailles.widgets-siw"));
+        if helpers.is_empty() {
+            tracing::debug!("single-instance helper HWND not found");
+        }
+        for hwnd in helpers {
+            make_layered_invisible(hwnd);
+            add_toolwindow_exstyle(hwnd);
+            delete_taskbar_tab(hwnd);
+            let _ = ShowWindow(hwnd, SW_HIDE);
+            tracing::info!("hid helper window (single-instance)");
         }
 
         // tao event-loop target must stay "visible" for WM_PAINT; do not SW_HIDE.
         // Park it off-screen + fully transparent so it never greets the user as a speck/console.
-        match FindWindowW(w!("Tao Thread Event Target"), None) {
-            Ok(hwnd) => {
-                make_layered_invisible(hwnd);
-                add_toolwindow_exstyle(hwnd);
-                delete_taskbar_tab(hwnd);
-                use windows::Win32::UI::WindowsAndMessaging::{
-                    SetWindowPos, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER,
-                };
-                let _ = SetWindowPos(
-                    hwnd,
-                    None,
-                    -32000,
-                    -32000,
-                    0,
-                    0,
-                    SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
-                );
-                tracing::info!("soft-hid helper window (tao-event-target)");
-            }
-            Err(_) => {
-                tracing::debug!("tao event-target HWND not found");
-            }
+        let targets = own_windows(w!("Tao Thread Event Target"), PCWSTR::null());
+        if targets.is_empty() {
+            tracing::debug!("tao event-target HWND not found");
+        }
+        for hwnd in targets {
+            use windows::Win32::UI::WindowsAndMessaging::{
+                SetWindowPos, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER,
+            };
+            make_layered_invisible(hwnd);
+            add_toolwindow_exstyle(hwnd);
+            delete_taskbar_tab(hwnd);
+            let _ = SetWindowPos(
+                hwnd,
+                None,
+                -32000,
+                -32000,
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+            );
+            tracing::info!("soft-hid helper window (tao-event-target)");
         }
     }
 }

@@ -13,6 +13,8 @@ use tauri::{
     WebviewWindowBuilder,
 };
 
+/// Position and size are both physical pixels (snap math runs against physical
+/// monitor rects).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OpenWidgetState {
@@ -23,6 +25,21 @@ pub struct OpenWidgetState {
     pub width: u32,
     pub height: u32,
     pub always_on_top: bool,
+}
+
+/// Physical outer size of a widget window; falls back to scaling the logical
+/// spec size when the window cannot report it yet.
+fn physical_size(window: &WebviewWindow, width: u32, height: u32) -> (u32, u32) {
+    if let Ok(size) = window.outer_size() {
+        if size.width > 0 && size.height > 0 {
+            return (size.width, size.height);
+        }
+    }
+    let scale = window.scale_factor().unwrap_or(1.0);
+    (
+        (width as f64 * scale).round() as u32,
+        (height as f64 * scale).round() as u32,
+    )
 }
 
 #[derive(Debug, Default)]
@@ -232,7 +249,7 @@ pub(crate) fn persistable_session(app: &AppHandle) -> Vec<SessionWidget> {
         .collect()
 }
 
-fn persist_session(app: &AppHandle) {
+pub(crate) fn persist_session(app: &AppHandle) {
     let state = app.state::<AppState>();
     // persistable_session → page_catalog → read_desktop_html locks config.
     // Snapshot first: std Mutex is not reentrant, so holding it here deadlocks
@@ -621,8 +638,7 @@ pub fn open_widget_window(
 
     let label = widget_label(id);
     if let Some(existing) = app.get_webview_window(&label) {
-        let width = spec.width;
-        let height = spec.height;
+        let (width, height) = physical_size(&existing, spec.width, spec.height);
         // Prefer an explicit restore position over wherever the window currently sits.
         let raw_pos = position
             .clone()
@@ -816,13 +832,14 @@ pub fn open_widget_window(
     defer_raise_widget(window.clone(), Some(pos.clone()));
     force_borderless(&window);
 
+    let (width, height) = physical_size(&window, spec.width, spec.height);
     let state = OpenWidgetState {
         id: id.to_string(),
         label,
         x: pos.x,
         y: pos.y,
-        width: spec.width,
-        height: spec.height,
+        width,
+        height,
         always_on_top: on_top,
     };
 
@@ -1065,15 +1082,36 @@ fn overlay_spawn_ids(app: &AppHandle) -> Vec<String> {
         .collect()
 }
 
+/// `overlay://shown` payload. Every webview receives it; listeners filter on
+/// `id`. `launcher://shown` keeps the bare seed string for older bar.js copies.
+#[derive(Debug, Clone, Serialize)]
+struct OverlayShown {
+    id: String,
+    seed: String,
+}
+
+/// `overlay://hidden` payload. `id` is `null` when only the backdrop was hidden
+/// (no overlay was visible). `launcher://hidden` keeps sending `true`.
+#[derive(Debug, Clone, Serialize)]
+struct OverlayHidden {
+    id: Option<String>,
+}
+
 fn emit_overlay_shown(app: &AppHandle, id: &str) {
-    let seed = take_launcher_seed().unwrap_or_default();
-    let _ = app.emit("overlay://shown", &seed);
-    let _ = app.emit("launcher://shown", seed);
+    let payload = OverlayShown {
+        id: id.to_string(),
+        seed: take_launcher_seed().unwrap_or_default(),
+    };
+    let _ = app.emit("overlay://shown", &payload);
+    let _ = app.emit("launcher://shown", &payload.seed);
     let _ = app.emit("overlay://id", id);
 }
 
-fn emit_overlay_hidden(app: &AppHandle) {
-    let _ = app.emit("overlay://hidden", true);
+fn emit_overlay_hidden(app: &AppHandle, id: Option<&str>) {
+    let payload = OverlayHidden {
+        id: id.map(str::to_string),
+    };
+    let _ = app.emit("overlay://hidden", &payload);
     let _ = app.emit("launcher://hidden", true);
 }
 
@@ -1137,7 +1175,7 @@ fn conceal_overlay(app: &AppHandle, id: &str) -> AppResult<()> {
             if let Some(window) = handle.get_webview_window(&widget_label(&id)) {
                 let _ = window.hide();
             }
-            emit_overlay_hidden(&handle);
+            emit_overlay_hidden(&handle, Some(&id));
         });
     });
     Ok(())
@@ -1256,7 +1294,7 @@ pub fn hide_launcher(app: &AppHandle) -> AppResult<()> {
             let handle = app.clone();
             let _ = app.run_on_main_thread(move || {
                 hide_overlay_dim(&handle);
-                emit_overlay_hidden(&handle);
+                emit_overlay_hidden(&handle, None);
             });
         });
     }
@@ -1419,7 +1457,7 @@ fn place_desktop_window(window: &WebviewWindow) {
     pin_desktop_above_shell(window);
 }
 
-pub fn ensure_desktop_window(app: &AppHandle, _page_url: Option<String>) -> AppResult<()> {
+pub fn ensure_desktop_window(app: &AppHandle) -> AppResult<()> {
     if let Some(window) = app.get_webview_window("desktop") {
         place_desktop_window(&window);
         let _ = window.show();
@@ -1482,12 +1520,15 @@ pub fn dock_slideout_position(app: &AppHandle, width: u32, height: u32) -> Posit
         return Position { x: 40, y: 80 };
     };
     let (left, top, mon_w, mon_h, scale) = launcher_monitor_bounds(&window);
+    // Monitor bounds are physical; piece width/height are logical (CSS px).
+    let width = (width as f64 * scale).round() as i32;
+    let height = (height as f64 * scale).round() as i32;
     // Keep slide-outs below the native top taskbar/hud area.
     let hud = (56.0 * scale).round() as i32;
     let gap = (14.0 * scale).round() as i32;
-    let x = left + mon_w as i32 - width as i32 - gap;
+    let x = left + mon_w as i32 - width - gap;
     let y = top + hud + gap;
-    let max_y = top + mon_h as i32 - height as i32 - gap;
+    let max_y = top + mon_h as i32 - height - gap;
     Position {
         x,
         y: y.min(max_y).max(top + hud + gap),
@@ -1544,12 +1585,7 @@ pub fn toggle_slideout_widget(
 }
 
 pub fn collect_monitor_rects(app: &AppHandle) -> Vec<Rect> {
-    let Some(window) = app
-        .webview_windows()
-        .into_values()
-        .next()
-        .or_else(|| app.get_webview_window("main"))
-    else {
+    let Some(window) = app.webview_windows().into_values().next() else {
         return vec![Rect {
             x: 0,
             y: 0,

@@ -2,11 +2,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { LogicalSize, PhysicalPosition } from "@tauri-apps/api/dpi";
 import { getCurrentWindow, currentMonitor } from "@tauri-apps/api/window";
-import { Terminal } from "xterm";
+import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { SearchAddon } from "@xterm/addon-search";
-import "xterm/css/xterm.css";
 import {
   loadSpawnableEngineContext,
   loadEngineRuntime,
@@ -26,6 +25,14 @@ import {
   orderDefaults,
   playLaunchTick,
 } from "./engine/search";
+import {
+  parsePinCommand,
+  overlayEventId,
+  ptyEventSession,
+  ptyEventData,
+  hotkeyLabel,
+  sameOverlayId,
+} from "./engine/commands";
 
 type CliOutput = { stdout: string; stderr: string; code: number };
 
@@ -72,7 +79,8 @@ let footHint!: HTMLSpanElement;
 let footR!: HTMLSpanElement;
 let inp!: HTMLInputElement;
 let psEl!: HTMLSpanElement;
-let echoEl!: HTMLSpanElement;
+/** Legacy mirror span (old markup draws the text here); optional — the input is the visible field now. */
+let echoEl: HTMLSpanElement | null = null;
 let sug!: HTMLDivElement;
 let res!: HTMLDivElement;
 let headDot!: HTMLElement;
@@ -95,7 +103,7 @@ function bindDom() {
   footR = mustEl("cli-foot-r");
   inp = mustEl("cli-in");
   psEl = mustEl("cli-ps");
-  echoEl = mustEl("cli-echo");
+  echoEl = document.getElementById("cli-echo") as HTMLSpanElement | null;
   sug = mustEl("cli-sug");
   res = mustEl("cli-res");
   headDot = root.querySelector(".cli-head i") as HTMLElement;
@@ -178,6 +186,24 @@ let hostAvailable = true;
 /** Coalesce pty://data into one term.write per animation frame. */
 let ptyWriteBuf = "";
 let ptyRaf: number | null = null;
+/** Session id from pty_open (newer host). null = legacy host, or unknown after a reload (adopted on first event). */
+let ptySession: number | null = null;
+/** pty_open in flight: session-tagged events wait here until the new id is known. */
+let ptyOpening = false;
+let ptyHeld: Array<{ kind: "data" | "exit"; payload: unknown }> = [];
+/** The PTY behind the visible terminal exited — Esc returns to actions. */
+let termExited = false;
+/** This piece's template attributes (data-w / data-h / data-anchor / data-hotkey). */
+let PIECE = { w: 640, h: 420, anchor: "tc", hotkey: "" };
+/** `data-dismiss-on-blur` / host overlay config. PTY pieces default to false (host rule). */
+let DISMISS_ON_BLUR = false;
+/** Bumped per show/hide so a slow background refresh cannot touch a newer session. */
+let resetGen = 0;
+const HIST_MAX = 200;
+/** Host debounces cli_open at 650 ms — space explicit multi-launches past that. */
+const BATCH_STAGGER_MS = 700;
+/** Dedupe window for overlay events that carry no id (legacy host). */
+const OVERLAY_DEDUPE_MS = 50;
 
 const WEB_TLDS = new Set([
   "com", "org", "net", "io", "dev", "app", "ai", "co", "me", "tv", "gg", "to",
@@ -251,8 +277,21 @@ function scheduleDismiss(ms: number, reason: string) {
 function setPrompt() {
   psEl.textContent = `PS ${cwd}>`;
 }
+/** Old markup mirrors the text into #cli-echo; harmless when that span is hidden or gone. */
 function syncEcho() {
-  echoEl.textContent = inp.value;
+  if (echoEl) echoEl.textContent = inp.value;
+}
+/** Replace the command text: caret at the end, scrolled into view. */
+function setInput(v: string) {
+  inp.value = v;
+  syncEcho();
+  const n = v.length;
+  try {
+    inp.setSelectionRange(n, n);
+  } catch {
+    /* not focusable yet */
+  }
+  inp.scrollLeft = inp.scrollWidth;
 }
 function setRes(cls: "ok" | "err" | "out", html: string) {
   res.className = `cli-res on ${cls}`;
@@ -333,8 +372,7 @@ function pick(r: Row) {
     return;
   }
   if (r.cc !== undefined) {
-    inp.value = r.cc;
-    syncEcho();
+    setInput(r.cc);
     inp.focus();
     refreshProposals();
   } else if (r.path) {
@@ -357,10 +395,12 @@ function submitCommand(raw: string, background = false) {
   const v = raw.trim();
   if (busy || launchBlocked()) return;
   escClearPending = false;
-  inp.value = "";
-  syncEcho();
+  setInput("");
   rowSel = -1;
-  if (v) hist.push(v);
+  if (v && hist[hist.length - 1] !== v) {
+    hist.push(v);
+    if (hist.length > HIST_MAX) hist.splice(0, hist.length - HIST_MAX);
+  }
   hi = 0;
   run(v, background);
 }
@@ -535,7 +575,7 @@ function suggestions(raw: string): Row[] {
       .forEach((x) =>
         out.push({
           c: commandForQuery(x, low),
-          d: `${x.cat} · ${x.d} · ${esc(x.target).slice(0, 48)}`,
+          d: `${x.cat} · ${x.d} · ${x.target.slice(0, 48)}`,
         }),
       );
   }
@@ -637,11 +677,15 @@ function applyChrome(next: LauncherMode) {
   if (next === "terminal") {
     const label = termSessionLabel || "pwsh";
     titleEl.textContent = `versailles · ${label}`;
-    modeLabel.textContent = "terminal";
-    footL.textContent = "alt+space hide";
+    modeLabel.textContent = termExited ? "ended" : "terminal";
+    footL.textContent = `${hideKeyLabel()} hide`;
     footM.textContent = "ctrl+f find";
-    footHint.textContent = "right-click session";
-    footR.textContent = sessionAlive ? "live · background ok" : "right-click menu";
+    footHint.textContent = termExited ? "esc actions" : "right-click session";
+    footR.textContent = termExited
+      ? "session ended"
+      : sessionAlive
+        ? "live · background ok"
+        : "right-click menu";
   } else {
     titleEl.textContent = "versailles";
     modeLabel.textContent = sessionAlive ? "live" : "actions";
@@ -664,6 +708,66 @@ async function refreshSessionAlive() {
   }
 }
 
+function showEndedRows() {
+  if (termSessionLabel) {
+    setRes("out", "terminal ended");
+    const hit = findPreset(termSessionLabel);
+    if (hit) showRows([{ c: hit.n, d: `reopen · ${hit.d}`, cc: hit.n }]);
+    else defaults();
+  } else defaults();
+}
+
+function handlePtyData(payload: unknown) {
+  const b64 = ptyEventData(payload);
+  if (b64 == null) return;
+  try {
+    enqueuePtyData(b64ToUtf8(b64));
+  } catch {
+    /* ignore decode glitches */
+  }
+}
+
+function handlePtyExit() {
+  sessionAlive = false;
+  termExited = true;
+  term?.writeln("\r\n\x1b[90m[session ended — esc returns to actions]\x1b[0m");
+  if (mode === "terminal") {
+    applyChrome("terminal");
+    return;
+  }
+  applyChrome("action");
+  showEndedRows();
+}
+
+/**
+ * Legacy payloads (bare base64 / `true`) carry no session and always apply.
+ * Tagged payloads must match the session pty_open returned — a killed
+ * session's late output or exit must not land in the new terminal.
+ */
+function routePtyEvent(kind: "data" | "exit", payload: unknown) {
+  const session = ptyEventSession(payload);
+  if (session != null) {
+    if (ptyOpening) {
+      ptyHeld.push({ kind, payload });
+      return;
+    }
+    if (ptySession == null) ptySession = session; // reattached after a reload: adopt the live one
+    else if (session !== ptySession) return;
+  } else if (kind === "exit" && ptyOpening) {
+    return; // legacy host: exit of the session pty_open is replacing
+  }
+  if (kind === "data") handlePtyData(payload);
+  else handlePtyExit();
+}
+
+function releaseHeldPtyEvents(session: number | null) {
+  ptyOpening = false;
+  ptySession = session;
+  const held = ptyHeld;
+  ptyHeld = [];
+  for (const ev of held) routePtyEvent(ev.kind, ev.payload);
+}
+
 async function bindPtyListeners() {
   if (ptyDataUnlisten) {
     ptyDataUnlisten();
@@ -673,26 +777,8 @@ async function bindPtyListeners() {
     ptyExitUnlisten();
     ptyExitUnlisten = null;
   }
-  ptyDataUnlisten = await listen<string>("pty://data", (ev) => {
-    try {
-      enqueuePtyData(b64ToUtf8(ev.payload));
-    } catch {
-      /* ignore decode glitches */
-    }
-  });
-  ptyExitUnlisten = await listen("pty://exit", () => {
-    sessionAlive = false;
-    term?.writeln("\r\n\x1b[90m[session ended — esc returns to actions]\x1b[0m");
-    if (mode === "action") {
-      applyChrome("action");
-      if (termSessionLabel) {
-        setRes("out", "terminal ended");
-        const hit = findPreset(termSessionLabel);
-        if (hit) showRows([{ c: hit.n, d: `reopen · ${hit.d}`, cc: hit.n }]);
-        else defaults();
-      } else defaults();
-    }
-  });
+  ptyDataUnlisten = await listen<unknown>("pty://data", (ev) => routePtyEvent("data", ev.payload));
+  ptyExitUnlisten = await listen<unknown>("pty://exit", (ev) => routePtyEvent("exit", ev.payload));
 }
 
 const SEARCH_DECO = {
@@ -716,6 +802,11 @@ async function copyTermSelection(): Promise<boolean> {
   }
 }
 
+/**
+ * Context-menu Paste. term.paste applies bracketed-paste mode and CRLF→CR,
+ * then emits onData once → one pty_write. Keyboard pastes never come here:
+ * they ride the browser's native paste event into xterm's own handler.
+ */
 async function pasteToTerm(): Promise<boolean> {
   let text = "";
   try {
@@ -723,9 +814,17 @@ async function pasteToTerm(): Promise<boolean> {
   } catch {
     return false;
   }
-  if (!text) return false;
-  void invoke("pty_write", { data: text }).catch(() => {});
+  if (!text || !term) return false;
+  term.paste(text);
+  term.focus();
   return true;
+}
+
+/** Ctrl+V, Ctrl+Shift+V, Shift+Insert — the browser turns these into a paste event. */
+function isPasteChord(ev: KeyboardEvent): boolean {
+  const key = ev.key.toLowerCase();
+  if ((ev.ctrlKey || ev.metaKey) && !ev.altKey && key === "v") return true;
+  return ev.shiftKey && !ev.ctrlKey && !ev.altKey && key === "insert";
 }
 
 function selectAllTerm() {
@@ -904,12 +1003,10 @@ function bindTermChrome(t: Terminal) {
       void copyTermSelection();
       return false;
     }
-    if (mod && key === "v") {
-      void pasteToTerm();
-      return false;
-    }
-    if (ev.shiftKey && key === "insert") {
-      void pasteToTerm();
+    if (isPasteChord(ev)) {
+      // Returning false keeps xterm from encoding ^V / Shift+Insert. We do NOT
+      // preventDefault: the native paste event then reaches xterm's textarea
+      // handler, which pastes exactly once (bracketed, CRLF-normalized).
       return false;
     }
     if (ev.ctrlKey && key === "insert") {
@@ -929,14 +1026,6 @@ function bindTermChrome(t: Terminal) {
     },
     true,
   );
-
-  termHost.addEventListener("paste", (e) => {
-    if (mode !== "terminal") return;
-    const text = e.clipboardData?.getData("text");
-    if (!text) return;
-    e.preventDefault();
-    void invoke("pty_write", { data: text }).catch(() => {});
-  });
 }
 
 function ensureTerm(): Terminal {
@@ -1052,8 +1141,9 @@ async function resizeLauncher(next: LauncherMode) {
       w = Math.round(Math.min(1280, Math.max(960, monW * 0.78)));
       h = Math.round(Math.min(860, Math.max(640, monH * 0.78)));
     } else {
-      w = 640;
-      h = 420;
+      // Back to the piece's own data-w / data-h.
+      w = PIECE.w;
+      h = PIECE.h;
     }
 
     await win.setSize(new LogicalSize(w, h));
@@ -1062,16 +1152,17 @@ async function resizeLauncher(next: LauncherMode) {
 
     if (monitor) {
       const x = monitor.position.x + Math.round((monitor.size.width - w * scale) / 2);
+      // Same rule as the host: `tc` pins 120 px from the top, other overlays center.
       const y =
-        next === "terminal"
-          ? monitor.position.y + Math.round((monitor.size.height - h * scale) / 2)
-          : monitor.position.y + Math.round(120 * scale);
+        next === "action" && PIECE.anchor === "tc"
+          ? monitor.position.y + Math.round(120 * scale)
+          : monitor.position.y + Math.round((monitor.size.height - h * scale) / 2);
       await win.setPosition(new PhysicalPosition(x, y));
     }
   } catch {
     // Fallback sizes if monitor query fails.
     await win.setSize(
-      next === "terminal" ? new LogicalSize(1100, 720) : new LogicalSize(640, 420),
+      next === "terminal" ? new LogicalSize(1100, 720) : new LogicalSize(PIECE.w, PIECE.h),
     );
   }
 }
@@ -1156,6 +1247,7 @@ async function detachTerminal(focusAction = true) {
   clearBlurTimer();
   hideTermFind();
   hideTermMenu();
+  termExited = false;
   mode = "action";
   applyChrome("action");
   termWrap.hidden = true;
@@ -1179,6 +1271,8 @@ async function killTerminalSession() {
     /* ignore */
   }
   sessionAlive = false;
+  termExited = false;
+  ptySession = null;
   if (ptyDataUnlisten) {
     ptyDataUnlisten();
     ptyDataUnlisten = null;
@@ -1235,6 +1329,7 @@ async function enterTerminal(seedCmd?: string, opts: { fresh?: boolean } = {}) {
 
       // Attach existing background session — keep scrollback, don't reset.
       if (sessionAlive && !fresh) {
+        termExited = false;
         mode = "terminal";
         applyChrome("terminal");
         termWrap.hidden = false;
@@ -1253,6 +1348,7 @@ async function enterTerminal(seedCmd?: string, opts: { fresh?: boolean } = {}) {
       }
 
       // Fresh session
+      termExited = false;
       mode = "terminal";
       applyChrome("terminal");
       termWrap.hidden = false;
@@ -1262,9 +1358,20 @@ async function enterTerminal(seedCmd?: string, opts: { fresh?: boolean } = {}) {
       t.reset();
       clearPtyWriteBuf();
       const size = await waitForTermSize(t);
+      ptyOpening = true;
+      ptyHeld = [];
+      ptySession = null;
       await bindPtyListeners();
-      await invoke("pty_open", { cwd, cols: size.cols, rows: size.rows });
+      let opened: unknown;
+      try {
+        opened = await invoke<unknown>("pty_open", { cwd, cols: size.cols, rows: size.rows });
+      } catch (e) {
+        releaseHeldPtyEvents(null);
+        throw e;
+      }
       sessionAlive = true;
+      // Newer hosts return the session id; legacy hosts return nothing.
+      releaseHeldPtyEvents(typeof opened === "number" ? opened : null);
       await settleTermSize();
       t.focus();
 
@@ -1413,7 +1520,10 @@ function presetRows(filter?: string) {
     return defaults();
   }
   const cats = [...new Set(list.map((x) => x.cat))];
-  setRes("out", f ? `${list.length} in “${esc(f)}”` : `${list.length} shortcuts · ${cats.join(" · ")}`);
+  setRes(
+    "out",
+    f ? `${list.length} in “${esc(f)}”` : `${list.length} shortcuts · ${cats.map(esc).join(" · ")}`,
+  );
   showRows(list.map((x) => ({ c: x.n, d: `${x.cat} · ${x.d}`, cc: x.n })));
 }
 
@@ -1461,7 +1571,7 @@ async function openDesktopFile() {
   return openFileTarget(joinPath(widgetsRoot(HOME || "C:\\"), "desktop\\index.html"), "desktop/index.html");
 }
 
-async function launchPreset(hit: Preset, opts: { background?: boolean } = {}) {
+async function launchPreset(hit: Preset, opts: { background?: boolean; batch?: boolean } = {}) {
   if (hit.t === "term") {
     clearBlurTimer();
     termSessionLabel = hit.n;
@@ -1469,7 +1579,10 @@ async function launchPreset(hit: Preset, opts: { background?: boolean } = {}) {
     return void enterTerminal(hit.target, { fresh: true });
   }
   lastLaunchError = null;
-  if (!claimLaunch()) return;
+  if (opts.batch) {
+    // Explicit Ctrl+Enter batch: already staggered, but keep stray Enters out.
+    barWindow().__VERSAILLES_LAST_LAUNCH__ = Date.now();
+  } else if (!claimLaunch()) return;
   await withBusy(async () => {
     try {
       if (!hostAvailable) throw new Error("host unavailable — preview mode cannot launch");
@@ -1547,9 +1660,15 @@ async function loadUserShortcuts(): Promise<void> {
     try {
       html = await invoke<string>("get_desktop_html");
     } catch {
-      const api = await invoke<{ base_url: string }>("get_api_info");
-      const res = await fetch(`${api.base_url}/files/desktop/index.html`, { cache: "no-store" });
-      if (res.ok) html = await res.text();
+      try {
+        const api = await invoke<{ base_url: string }>("get_api_info");
+        const res = await fetch(`${api.base_url}/files/desktop/index.html`, { cache: "no-store" });
+        if (res.ok) html = await res.text();
+      } catch {
+        // Preview without a host: the bar runs inside the same page as #versailles.
+        const own = document.getElementById("versailles");
+        if (own) html = `<script type="application/json" id="versailles">${own.textContent || ""}<\/script>`;
+      }
     }
     const inline = (window as unknown as { __VERSAILLES_BLOCK__?: { shortcuts?: Preset[] } })
       .__VERSAILLES_BLOCK__;
@@ -1621,6 +1740,8 @@ function applyCatalog(entries: CatalogEntry[]) {
     }
   }
   PRESETS = builtins;
+  // Index whatever PRESETS now is — never a refresh behind the catalog.
+  rebuildFuseIndex(PRESETS);
 }
 
 async function loadCatalog() {
@@ -1648,7 +1769,6 @@ async function refreshPresets() {
       .join(" · ");
     setRes("err", esc(msg));
   }
-  rebuildFuseIndex(PRESETS.length ? PRESETS : USER_SHORTCUTS);
   ENGINE_RUNTIME = await loadEngineRuntime(ENGINE_ID);
   return loadCatalog();
 }
@@ -1750,17 +1870,39 @@ async function shellExec(cmd: string) {
   }, { focusSteals: false });
 }
 
+/** Ctrl+Enter with several names: launch each, spaced past the host's open debounce. */
+async function launchBatch(hits: Preset[]) {
+  for (let i = 0; i < hits.length; i++) {
+    if (i) await delay(BATCH_STAGGER_MS);
+    await launchPreset(hits[i], { background: true, batch: true });
+  }
+}
+
+async function setPinned(verb: "pin" | "unpin", name: string) {
+  const id = (findPreset(name)?.n ?? name).toLowerCase();
+  const pinned = ENGINE_RUNTIME.pins.includes(id);
+  if ((verb === "pin") !== pinned) {
+    ENGINE_RUNTIME = await togglePin(ENGINE_ID, id);
+  }
+  defaults();
+  setRes("ok", `&rarr; ${verb === "pin" ? "pinned" : "unpinned"} ${esc(id)}`);
+}
+
+/** Footer / help text for the hide shortcut — this piece's data-hotkey when known. */
+function hideKeyLabel(): string {
+  return PIECE.hotkey ? hotkeyLabel(PIECE.hotkey) : "alt+space";
+}
+
 function run(c: string, background = false) {
   const bg = { background };
   if (!c) return;
   if (background && c.includes(" ")) {
-    const parts = c.split(/\s+/);
-    void (async () => {
-      for (const name of parts) {
-        const hit = findPreset(name);
-        if (hit) await launchPreset(hit, { background: true });
-      }
-    })();
+    const hits = c
+      .split(/\s+/)
+      .map((name) => findPreset(name))
+      .filter((x): x is Preset => !!x);
+    if (!hits.length) return setRes("err", `no shortcuts in '${esc(c)}'`);
+    void launchBatch(hits);
     return;
   }
   if (c === "cls" || c === "clear") {
@@ -1901,7 +2043,7 @@ function run(c: string, background = false) {
     case "get-childitem":
       return void lsCmd();
     case "exit":
-      return setRes("out", "alt+space hides · terminal stays running in the background");
+      return setRes("out", `${hideKeyLabel()} hides · terminal stays running in the background`);
     default: {
       // `personal mail` → shortcut inside profile; bare `personal` → browse.
       if (isProfileName(cmd)) {
@@ -1912,19 +2054,14 @@ function run(c: string, background = false) {
         }
         return presetRows(cmd);
       }
+      // `cmd` is the first word only — compare words, take the name from `arg`.
+      if (cmd === "retry" && lastLaunchError) return void launchPreset(lastLaunchError.preset);
+      const pinCmd = parsePinCommand(c);
+      if (pinCmd) return void setPinned(pinCmd.verb, pinCmd.name);
       // Direct preset name — `open` is optional.
       const hit = findPreset(cmd);
       if (hit && !arg) return void launchPreset(hit, bg);
       if (hit && arg && hit.n === cmd) return void launchPreset(hit, bg);
-      if (cmd.startsWith("retry ") && lastLaunchError) return void launchPreset(lastLaunchError.preset);
-      if (cmd.startsWith("pin ") || cmd.startsWith("unpin ")) {
-        const name = cmd.split(/\s+/)[1] || "";
-        return void (async () => {
-          ENGINE_RUNTIME = await togglePin(ENGINE_ID, name);
-          setRes("ok", `&rarr; pins updated`);
-          defaults();
-        })();
-      }
       if (!arg && !c.startsWith("!") && !c.startsWith("?") && !c.startsWith("=") && !/[\\/]/.test(c) && /^[\w.-]+$/i.test(cmd)) {
         const near = PRESETS.filter((x) => presetMatches(x, cmd)).slice(0, 6);
         if (near.length) {
@@ -1951,8 +2088,7 @@ async function hideLauncherWindow(reason: string) {
       termWrap.hidden = true;
     }
   }
-  inp.value = "";
-  syncEcho();
+  setInput("");
   clearRes();
   applyChrome("action");
   // Fire-and-forget: awaiting window.hide from this webview deadlocks WebView2.
@@ -1978,6 +2114,8 @@ function focusPrompt() {
 function bindUi() {
 inp.addEventListener("input", () => {
   syncEcho();
+  // New typing cancels a half-done "Esc clears, Esc again hides".
+  escClearPending = false;
   clearRes();
   refreshProposals();
 });
@@ -2000,8 +2138,7 @@ inp.addEventListener("keydown", (e) => {
       markSel();
     } else if (hist.length) {
       hi = Math.min(hi + 1, hist.length);
-      inp.value = hist[hist.length - hi];
-      syncEcho();
+      setInput(hist[hist.length - hi]);
       refreshProposals();
     }
   } else if (e.key === "ArrowDown") {
@@ -2011,8 +2148,7 @@ inp.addEventListener("keydown", (e) => {
       markSel();
     } else if (hi > 0) {
       hi--;
-      inp.value = hi ? hist[hist.length - hi] : "";
-      syncEcho();
+      setInput(hi ? hist[hist.length - hi] : "");
       refreshProposals();
     }
   } else if (e.key === "Enter") {
@@ -2026,24 +2162,21 @@ inp.addEventListener("keydown", (e) => {
     submitCommand(inp.value, e.ctrlKey);
   } else if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "l") {
     e.preventDefault();
-    inp.value = "";
-    syncEcho();
+    setInput("");
     clearRes();
     defaults();
   } else if (e.ctrlKey && !e.shiftKey && e.key === "p") {
     e.preventDefault();
     if (hist.length) {
       hi = Math.min(hi + 1, hist.length);
-      inp.value = hist[hist.length - hi];
-      syncEcho();
+      setInput(hist[hist.length - hi]);
       refreshProposals();
     }
   } else if (e.ctrlKey && !e.shiftKey && e.key === "n") {
     e.preventDefault();
     if (hi > 0) {
       hi--;
-      inp.value = hi ? hist[hist.length - hi] : "";
-      syncEcho();
+      setInput(hi ? hist[hist.length - hi] : "");
       refreshProposals();
     }
   } else if (e.altKey && /^[1-9]$/.test(e.key)) {
@@ -2086,6 +2219,13 @@ document.addEventListener(
         hideTermMenu();
         return;
       }
+      if (termExited && !sessionAlive) {
+        // The PTY is gone — Esc goes back to actions instead of into a dead shell.
+        e.preventDefault();
+        e.stopPropagation();
+        void detachTerminal(true).then(() => showEndedRows());
+        return;
+      }
       return;
     }
     if (inp.value.trim()) {
@@ -2097,8 +2237,7 @@ document.addEventListener(
         return;
       }
       escClearPending = true;
-      inp.value = "";
-      syncEcho();
+      setInput("");
       clearRes();
       defaults();
       return;
@@ -2122,96 +2261,192 @@ termWrap.addEventListener("mousedown", (e) => {
 });
 root.addEventListener("mousedown", () => clearBlurTimer());
 
-void getCurrentWindow().onFocusChanged(({ payload: focused }) => {
-  if (focused) {
-    clearBlurTimer();
-    requestAnimationFrame(focusPrompt);
-    return;
-  }
-  // Terminal mode: keep session alive on focus flicker; only Action auto-dismisses.
-  if (mode === "terminal" || sessionAlive) return;
-  const blurDelay = busy
-    ? Math.max(ENGINE_OPTS.blurDismissMs, FOCUS_STEAL_GRACE_MS + 80)
-    : ENGINE_OPTS.blurDismissMs;
-  scheduleDismiss(blurDelay, "outside-blur");
-});
+void getCurrentWindow()
+  .onFocusChanged(({ payload: focused }) => {
+    if (focused) {
+      clearBlurTimer();
+      requestAnimationFrame(focusPrompt);
+      return;
+    }
+    // data-dismiss-on-blur="false" (or the PTY-piece default) keeps the bar up.
+    // Terminal mode never auto-dismisses from here; a live background PTY
+    // survives a hide, so it no longer blocks dismissing the action view.
+    if (!DISMISS_ON_BLUR || mode === "terminal") return;
+    const blurDelay = busy
+      ? Math.max(ENGINE_OPTS.blurDismissMs, FOCUS_STEAL_GRACE_MS + 80)
+      : ENGINE_OPTS.blurDismissMs;
+    scheduleDismiss(blurDelay, "outside-blur");
+  })
+  .catch(() => {});
 
 window.addEventListener("resize", () => {
   if (mode === "terminal") void fitAndResizePty();
 });
 }
 
-async function resetBar(seed?: string) {
+/**
+ * Show → clean action view. Clear and focus synchronously so the first
+ * keystrokes after the hotkey land in an empty input; refresh state in the
+ * background and re-render proposals for whatever the user has typed by then.
+ */
+function resetBar(seed?: string) {
   forceIdle("resetBar");
-  // Reopen always lands on Action; background PTY stays alive for `continue`.
-  if (mode === "terminal") {
-    await detachTerminal(false);
-  }
-  await refreshSessionAlive();
-  await refreshPresets();
-  inp.value = "";
-  syncEcho();
+  const gen = ++resetGen;
+  // detachTerminal flips mode/termWrap synchronously before its first await.
+  const detached = mode === "terminal" ? detachTerminal(false).catch(() => {}) : Promise.resolve();
+  escClearPending = false;
+  hi = 0;
+  setInput("");
   clearRes();
   setPrompt();
   applyChrome("action");
-  applySeed(seed);
+  const seedRows = applySeed(seed);
   focusPrompt();
+  void (async () => {
+    await detached;
+    await refreshSessionAlive();
+    await refreshPresets();
+    if (gen !== resetGen || mode !== "action") return;
+    applyChrome("action");
+    if (seedRows && !inp.value) presetRows("apps");
+    else refreshProposals();
+    if (document.activeElement !== inp) focusPrompt();
+  })();
 }
 
-function applySeed(seed?: string) {
-  if (seed == null || seed === "") return defaults();
+/** Returns true when the seed rendered a rows view (apps) rather than input text. */
+function applySeed(seed?: string): boolean {
+  if (seed == null || seed === "") {
+    defaults();
+    return false;
+  }
   const trimmed = seed.trim();
-  if (trimmed === "apps" || trimmed === "start") return presetRows("apps");
-  inp.value = seed;
-  syncEcho();
+  if (trimmed === "apps" || trimmed === "start") {
+    presetRows("apps");
+    return true;
+  }
+  setInput(seed);
   refreshProposals();
+  return false;
 }
 
-const _barBoot = barWindow();
-if (!_barBoot.__VERSAILLES_BAR_BOUND__) {
-  _barBoot.__VERSAILLES_BAR_BOUND__ = true;
-void (async () => {
-  const v = (window as unknown as { versailles?: { waitForTauri?: () => Promise<unknown> } }).versailles;
-  if (v?.waitForTauri) await v.waitForTauri();
+function onOverlayHidden() {
+  forceIdle("hidden");
+  resetGen += 1;
+  void (async () => {
+    if (mode === "terminal") await detachTerminal(false);
+    setInput("");
+    clearRes();
+    applyChrome("action");
+  })();
+}
+
+/**
+ * The host emits overlay events for every overlay. Newer hosts tag them with
+ * the overlay id (string or `{ id }`): ignore other pieces. Untagged (legacy)
+ * events apply, deduped so a doubled emit does not reset twice.
+ */
+async function bindOverlayEvents() {
+  let lastShown = 0;
+  let lastHidden = 0;
+  const mine = (id: string | null) => id == null || sameOverlayId(id, ENGINE_ID);
+  await listen<unknown>("overlay://shown", (ev) => {
+    const { id, seed } = overlayEventId(ev?.payload);
+    if (!mine(id)) return;
+    const now = Date.now();
+    if (id == null && now - lastShown < OVERLAY_DEDUPE_MS) return;
+    lastShown = now;
+    resetBar(seed);
+  });
+  await listen<unknown>("overlay://hidden", (ev) => {
+    const payload = ev?.payload;
+    const { id } = overlayEventId(typeof payload === "string" ? { id: payload } : payload);
+    if (!mine(id)) return;
+    const now = Date.now();
+    if (id == null && now - lastHidden < OVERLAY_DEDUPE_MS) return;
+    lastHidden = now;
+    onOverlayHidden();
+  });
+}
+
+function findPieceTemplate(id: string): HTMLElement | null {
+  const list = document.querySelectorAll<HTMLElement>("template.spawnable[data-id]");
+  for (const el of list) {
+    if (sameOverlayId(el.getAttribute("data-id") || "", id)) return el;
+  }
+  return document.querySelector<HTMLElement>("template.spawnable.action-bar");
+}
+
+function blockLauncherHotkey(): string {
+  const w = window as unknown as { __VERSAILLES_BLOCK__?: { launcher?: { hotkey?: unknown } } };
+  let hk = w.__VERSAILLES_BLOCK__?.launcher?.hotkey;
+  if (typeof hk !== "string") {
+    try {
+      const el = document.getElementById("versailles");
+      hk = el ? JSON.parse(el.textContent || "{}")?.launcher?.hotkey : undefined;
+    } catch {
+      hk = undefined;
+    }
+  }
+  return typeof hk === "string" ? hk.trim() : "";
+}
+
+/** Read data-w / data-h / data-anchor / data-hotkey / data-dismiss-on-blur off this piece's template. */
+function loadPieceSettings(id: string) {
+  const tpl = findPieceTemplate(id);
+  const attr = (name: string) => tpl?.getAttribute(name)?.trim() || "";
+  const num = (v: string, d: number) => {
+    const n = Number.parseInt(v, 10);
+    return Number.isFinite(n) && n > 0 ? n : d;
+  };
+  const hooks = attr("data-hooks")
+    .toLowerCase()
+    .split(",")
+    .map((h) => h.trim());
+  PIECE = {
+    w: num(attr("data-w"), 640),
+    h: num(attr("data-h"), 420),
+    anchor: (attr("data-anchor") || "tc").toLowerCase(),
+    hotkey: attr("data-hotkey") || (hooks.includes("hotkey") ? blockLauncherHotkey() : ""),
+  };
+  const dob = attr("data-dismiss-on-blur");
+  DISMISS_ON_BLUR = dob ? !/^(false|0|no|off)$/i.test(dob) : !hooks.includes("pty");
+}
+
+async function bootBar() {
+  const w = window as unknown as {
+    __TAURI_INTERNALS__?: unknown;
+    __TAURI__?: unknown;
+    versailles?: { waitForTauri?: () => Promise<unknown> };
+  };
+  const hosted = !!(w.__TAURI_INTERNALS__ || w.__TAURI__);
+  // Only wait inside a host window — a browser preview would stall ~5 s here.
+  if (hosted && w.versailles?.waitForTauri) {
+    try {
+      await w.versailles.waitForTauri();
+    } catch {
+      /* boot anyway */
+    }
+  }
   bindDom();
   bindUi();
+  hostAvailable = hosted;
   try {
     const ctx = await loadSpawnableEngineContext();
     ENGINE_ID = ctx.id;
     ENGINE_OPTS = ctx.opts;
+    loadPieceSettings(ENGINE_ID);
+    if (ctx.fromHost) DISMISS_ON_BLUR = ctx.dismissOnBlur;
     ENGINE_RUNTIME = await loadEngineRuntime(ENGINE_ID);
-    hostAvailable = true;
   } catch {
-    hostAvailable = typeof (window as unknown as { __TAURI__?: unknown }).__TAURI__ !== "undefined"
-      || !!(window as unknown as { versailles?: unknown }).versailles;
+    loadPieceSettings(ENGINE_ID);
   }
 
-  const onShown = (ev: { payload?: string } | string) => {
-    const seed = typeof ev === "string" ? ev : typeof ev?.payload === "string" ? ev.payload : "";
-    void resetBar(seed);
-  };
-  await listen<string>("overlay://shown", onShown);
-  await listen<string>("launcher://shown", onShown);
-  await listen("overlay://hidden", () => {
-    forceIdle("hidden");
-    void (async () => {
-      if (mode === "terminal") await detachTerminal(false);
-      inp.value = "";
-      syncEcho();
-      clearRes();
-      applyChrome("action");
-    })();
-  });
-  await listen("launcher://hidden", () => {
-    forceIdle("hidden");
-    void (async () => {
-      if (mode === "terminal") await detachTerminal(false);
-      inp.value = "";
-      syncEcho();
-      clearRes();
-      applyChrome("action");
-    })();
-  });
+  try {
+    await bindOverlayEvents();
+  } catch {
+    /* preview: no host events */
+  }
 
   try {
     HOME = await invoke<string>("cli_home");
@@ -2227,7 +2462,13 @@ void (async () => {
   await refreshSessionAlive();
   applyChrome("action");
   setPrompt();
-  defaults();
+  // Keep anything typed while the catalog loaded.
+  refreshProposals();
   focusPrompt();
-})();
+}
+
+const _barBoot = barWindow();
+if (!_barBoot.__VERSAILLES_BAR_BOUND__) {
+  _barBoot.__VERSAILLES_BAR_BOUND__ = true;
+  void bootBar();
 }

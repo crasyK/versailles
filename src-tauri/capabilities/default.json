@@ -2,11 +2,9 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Default capabilities for Versailles widgets, launcher, desktop, and guides",
-  "windows": ["launcher", "launcher-dim", "desktop", "guides", "widget-*"],
+  "windows": ["launcher-dim", "desktop", "guides", "widget-*"],
   "remote": {
     "urls": [
-      "http://localhost:1420/*",
-      "http://127.0.0.1:1420/*",
       "http://127.0.0.1:47831/*",
       "http://127.0.0.1:47832/*",
       "http://127.0.0.1:47833/*",

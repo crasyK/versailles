@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 /** Validate #versailles shortcuts in user desktop/index.html */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+// Live desktop when present (wherever the repo is cloned), else just the starter.
+const liveDesktop = join(process.env.USERPROFILE || homedir(), "Documents", "Widgets", "desktop", "index.html");
 const paths = [
-  join(root, "..", "desktop", "index.html"),
+  ...(existsSync(liveDesktop) ? [liveDesktop] : []),
   join(root, "templates/starter/desktop/index.html"),
 ];
 

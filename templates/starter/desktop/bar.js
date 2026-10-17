@@ -26,11 +26,19 @@
     return null;
   }
   function listen(event, handler) {
-    const v = sdk2();
-    if (v) return v.listen(event, (payload) => handler({ payload }));
     const t = window.__TAURI__;
+    const v = sdk2();
+    if (v) {
+      return Promise.resolve(v.listen(event, (payload) => handler({ event, payload }))).then(
+        (off) => typeof off === "function" ? off : () => {
+        },
+        () => () => {
+        }
+      );
+    }
     if (t?.event?.listen) return t.event.listen(event, handler);
-    return Promise.reject(new Error("Versailles event API not available"));
+    return Promise.resolve(() => {
+    });
   }
 
   // scripts/bar-shims/dpi.js
@@ -85,21 +93,33 @@
         return invoke2("plugin:window|is_focused", { label: l });
       },
       async onFocusChanged(handler) {
+        try {
+          const real = window.__TAURI__?.window?.getCurrentWindow?.();
+          if (real && typeof real.onFocusChanged === "function") {
+            return await real.onFocusChanged(handler);
+          }
+        } catch {
+        }
         const v = window.versailles;
         if (!v || typeof v.listen !== "function") return () => {
         };
-        const offFocus = await v.listen("tauri://focus", () => handler({ payload: true }));
-        const offBlur = await v.listen("tauri://blur", () => handler({ payload: false }));
-        return () => {
-          try {
-            offFocus();
-          } catch {
-          }
-          try {
-            offBlur();
-          } catch {
-          }
-        };
+        try {
+          const offFocus = await v.listen("tauri://focus", () => handler({ payload: true }));
+          const offBlur = await v.listen("tauri://blur", () => handler({ payload: false }));
+          return () => {
+            try {
+              offFocus();
+            } catch {
+            }
+            try {
+              offBlur();
+            } catch {
+            }
+          };
+        } catch {
+          return () => {
+          };
+        }
       }
     };
   }
@@ -159,12 +179,14 @@
       return {
         id: ctx.id || id,
         dismissOnBlur: ctx.dismissOnBlur,
+        fromHost: true,
         opts: mergeOpts(ctx.opts, blockOpts)
       };
     } catch {
       return {
         id,
         dismissOnBlur: false,
+        fromHost: false,
         opts: mergeOpts(void 0, blockOpts)
       };
     }
@@ -1854,10 +1876,14 @@
     }
     return out.slice(0, limit);
   }
+  var tickCtx = null;
   function playLaunchTick(enabled) {
     if (!enabled) return;
     try {
-      const ctx = new AudioContext();
+      tickCtx ??= new AudioContext();
+      const ctx = tickCtx;
+      if (ctx.state === "suspended") void ctx.resume().catch(() => {
+      });
       const o = ctx.createOscillator();
       const g = ctx.createGain();
       o.connect(g);
@@ -1869,6 +1895,54 @@
       o.stop(ctx.currentTime + 0.09);
     } catch {
     }
+  }
+
+  // src/engine/commands.ts
+  function parsePinCommand(raw) {
+    const m = raw.trim().match(/^(pin|unpin)\s+(\S+)/i);
+    if (!m) return null;
+    return { verb: m[1].toLowerCase(), name: m[2].toLowerCase() };
+  }
+  function overlayEventId(payload) {
+    if (typeof payload === "string") return { id: null, seed: payload };
+    if (payload && typeof payload === "object") {
+      const o = payload;
+      const rawId = o.id ?? o.overlayId ?? o.overlay ?? o.spawnId ?? o.piece;
+      const id = typeof rawId === "string" && rawId.trim() ? rawId.trim() : null;
+      const seed = typeof o.seed === "string" ? o.seed : "";
+      return { id, seed };
+    }
+    return { id: null, seed: "" };
+  }
+  function sameOverlayId(a, b) {
+    const norm2 = (s) => {
+      const t = s.trim().toLowerCase();
+      return t === "calc" ? "calculator" : t;
+    };
+    return norm2(a) === norm2(b);
+  }
+  function ptyEventSession(payload) {
+    if (payload && typeof payload === "object") {
+      const s = payload.session;
+      if (typeof s === "number" && Number.isFinite(s)) return s;
+    }
+    return null;
+  }
+  function ptyEventData(payload) {
+    if (typeof payload === "string") return payload;
+    if (payload && typeof payload === "object") {
+      const d = payload.data;
+      if (typeof d === "string") return d;
+    }
+    return null;
+  }
+  function hotkeyLabel(accel) {
+    return accel.split("+").map((k) => k.trim()).filter(Boolean).map((k) => {
+      const low = k.toLowerCase();
+      if (low === "commandorcontrol" || low === "cmdorctrl" || low === "control") return "ctrl";
+      if (low === "option") return "alt";
+      return low;
+    }).join("+");
   }
 
   // src/launcher.ts
@@ -1883,7 +1957,7 @@
   var footR;
   var inp;
   var psEl;
-  var echoEl;
+  var echoEl = null;
   var sug;
   var res;
   var headDot;
@@ -1904,7 +1978,7 @@
     footR = mustEl("cli-foot-r");
     inp = mustEl("cli-in");
     psEl = mustEl("cli-ps");
-    echoEl = mustEl("cli-echo");
+    echoEl = document.getElementById("cli-echo");
     sug = mustEl("cli-sug");
     res = mustEl("cli-res");
     headDot = root.querySelector(".cli-head i");
@@ -1965,6 +2039,16 @@
   var hostAvailable = true;
   var ptyWriteBuf = "";
   var ptyRaf = null;
+  var ptySession = null;
+  var ptyOpening = false;
+  var ptyHeld = [];
+  var termExited = false;
+  var PIECE = { w: 640, h: 420, anchor: "tc", hotkey: "" };
+  var DISMISS_ON_BLUR = false;
+  var resetGen = 0;
+  var HIST_MAX = 200;
+  var BATCH_STAGGER_MS = 700;
+  var OVERLAY_DEDUPE_MS = 50;
   var WEB_TLDS = /* @__PURE__ */ new Set([
     "com",
     "org",
@@ -2066,7 +2150,17 @@
     psEl.textContent = `PS ${cwd}>`;
   }
   function syncEcho() {
-    echoEl.textContent = inp.value;
+    if (echoEl) echoEl.textContent = inp.value;
+  }
+  function setInput(v) {
+    inp.value = v;
+    syncEcho();
+    const n = v.length;
+    try {
+      inp.setSelectionRange(n, n);
+    } catch {
+    }
+    inp.scrollLeft = inp.scrollWidth;
   }
   function setRes(cls, html) {
     res.className = `cli-res on ${cls}`;
@@ -2138,8 +2232,7 @@
       return;
     }
     if (r.cc !== void 0) {
-      inp.value = r.cc;
-      syncEcho();
+      setInput(r.cc);
       inp.focus();
       refreshProposals();
     } else if (r.path) {
@@ -2158,10 +2251,12 @@
     const v = raw.trim();
     if (busy || launchBlocked()) return;
     escClearPending = false;
-    inp.value = "";
-    syncEcho();
+    setInput("");
     rowSel = -1;
-    if (v) hist.push(v);
+    if (v && hist[hist.length - 1] !== v) {
+      hist.push(v);
+      if (hist.length > HIST_MAX) hist.splice(0, hist.length - HIST_MAX);
+    }
     hi = 0;
     run(v, background);
   }
@@ -2304,7 +2399,7 @@
       list.slice(0, ENGINE_OPTS.suggestionLimit).forEach(
         (x) => out.push({
           c: commandForQuery(x, low),
-          d: `${x.cat} \xB7 ${x.d} \xB7 ${esc(x.target).slice(0, 48)}`
+          d: `${x.cat} \xB7 ${x.d} \xB7 ${x.target.slice(0, 48)}`
         })
       );
     }
@@ -2389,11 +2484,11 @@
     if (next === "terminal") {
       const label2 = termSessionLabel || "pwsh";
       titleEl.textContent = `versailles \xB7 ${label2}`;
-      modeLabel.textContent = "terminal";
-      footL.textContent = "alt+space hide";
+      modeLabel.textContent = termExited ? "ended" : "terminal";
+      footL.textContent = `${hideKeyLabel()} hide`;
       footM.textContent = "ctrl+f find";
-      footHint.textContent = "right-click session";
-      footR.textContent = sessionAlive ? "live \xB7 background ok" : "right-click menu";
+      footHint.textContent = termExited ? "esc actions" : "right-click session";
+      footR.textContent = termExited ? "session ended" : sessionAlive ? "live \xB7 background ok" : "right-click menu";
     } else {
       titleEl.textContent = "versailles";
       modeLabel.textContent = sessionAlive ? "live" : "actions";
@@ -2412,6 +2507,55 @@
       sessionAlive = false;
     }
   }
+  function showEndedRows() {
+    if (termSessionLabel) {
+      setRes("out", "terminal ended");
+      const hit = findPreset(termSessionLabel);
+      if (hit) showRows([{ c: hit.n, d: `reopen \xB7 ${hit.d}`, cc: hit.n }]);
+      else defaults();
+    } else defaults();
+  }
+  function handlePtyData(payload) {
+    const b64 = ptyEventData(payload);
+    if (b64 == null) return;
+    try {
+      enqueuePtyData(b64ToUtf8(b64));
+    } catch {
+    }
+  }
+  function handlePtyExit() {
+    sessionAlive = false;
+    termExited = true;
+    term?.writeln("\r\n\x1B[90m[session ended \u2014 esc returns to actions]\x1B[0m");
+    if (mode === "terminal") {
+      applyChrome("terminal");
+      return;
+    }
+    applyChrome("action");
+    showEndedRows();
+  }
+  function routePtyEvent(kind, payload) {
+    const session = ptyEventSession(payload);
+    if (session != null) {
+      if (ptyOpening) {
+        ptyHeld.push({ kind, payload });
+        return;
+      }
+      if (ptySession == null) ptySession = session;
+      else if (session !== ptySession) return;
+    } else if (kind === "exit" && ptyOpening) {
+      return;
+    }
+    if (kind === "data") handlePtyData(payload);
+    else handlePtyExit();
+  }
+  function releaseHeldPtyEvents(session) {
+    ptyOpening = false;
+    ptySession = session;
+    const held = ptyHeld;
+    ptyHeld = [];
+    for (const ev of held) routePtyEvent(ev.kind, ev.payload);
+  }
   async function bindPtyListeners() {
     if (ptyDataUnlisten) {
       ptyDataUnlisten();
@@ -2421,25 +2565,8 @@
       ptyExitUnlisten();
       ptyExitUnlisten = null;
     }
-    ptyDataUnlisten = await listen("pty://data", (ev) => {
-      try {
-        enqueuePtyData(b64ToUtf8(ev.payload));
-      } catch {
-      }
-    });
-    ptyExitUnlisten = await listen("pty://exit", () => {
-      sessionAlive = false;
-      term?.writeln("\r\n\x1B[90m[session ended \u2014 esc returns to actions]\x1B[0m");
-      if (mode === "action") {
-        applyChrome("action");
-        if (termSessionLabel) {
-          setRes("out", "terminal ended");
-          const hit = findPreset(termSessionLabel);
-          if (hit) showRows([{ c: hit.n, d: `reopen \xB7 ${hit.d}`, cc: hit.n }]);
-          else defaults();
-        } else defaults();
-      }
-    });
+    ptyDataUnlisten = await listen("pty://data", (ev) => routePtyEvent("data", ev.payload));
+    ptyExitUnlisten = await listen("pty://exit", (ev) => routePtyEvent("exit", ev.payload));
   }
   var SEARCH_DECO = {
     matchBackground: "#3f3f46",
@@ -2467,10 +2594,15 @@
     } catch {
       return false;
     }
-    if (!text) return false;
-    void invoke("pty_write", { data: text }).catch(() => {
-    });
+    if (!text || !term) return false;
+    term.paste(text);
+    term.focus();
     return true;
+  }
+  function isPasteChord(ev) {
+    const key = ev.key.toLowerCase();
+    if ((ev.ctrlKey || ev.metaKey) && !ev.altKey && key === "v") return true;
+    return ev.shiftKey && !ev.ctrlKey && !ev.altKey && key === "insert";
   }
   function selectAllTerm() {
     term?.selectAll();
@@ -2626,12 +2758,7 @@
         void copyTermSelection();
         return false;
       }
-      if (mod && key === "v") {
-        void pasteToTerm();
-        return false;
-      }
-      if (ev.shiftKey && key === "insert") {
-        void pasteToTerm();
+      if (isPasteChord(ev)) {
         return false;
       }
       if (ev.ctrlKey && key === "insert") {
@@ -2650,14 +2777,6 @@
       },
       true
     );
-    termHost.addEventListener("paste", (e) => {
-      if (mode !== "terminal") return;
-      const text = e.clipboardData?.getData("text");
-      if (!text) return;
-      e.preventDefault();
-      void invoke("pty_write", { data: text }).catch(() => {
-      });
-    });
   }
   function ensureTerm() {
     if (term?.options.convertEol) {
@@ -2764,20 +2883,20 @@
         w = Math.round(Math.min(1280, Math.max(960, monW * 0.78)));
         h = Math.round(Math.min(860, Math.max(640, monH * 0.78)));
       } else {
-        w = 640;
-        h = 420;
+        w = PIECE.w;
+        h = PIECE.h;
       }
       await win.setSize(new LogicalSize(w, h));
       document.body.style.width = "";
       document.body.style.height = "";
       if (monitor) {
         const x = monitor.position.x + Math.round((monitor.size.width - w * scale) / 2);
-        const y = next === "terminal" ? monitor.position.y + Math.round((monitor.size.height - h * scale) / 2) : monitor.position.y + Math.round(120 * scale);
+        const y = next === "action" && PIECE.anchor === "tc" ? monitor.position.y + Math.round(120 * scale) : monitor.position.y + Math.round((monitor.size.height - h * scale) / 2);
         await win.setPosition(new PhysicalPosition(x, y));
       }
     } catch {
       await win.setSize(
-        next === "terminal" ? new LogicalSize(1100, 720) : new LogicalSize(640, 420)
+        next === "terminal" ? new LogicalSize(1100, 720) : new LogicalSize(PIECE.w, PIECE.h)
       );
     }
   }
@@ -2842,6 +2961,7 @@
     clearBlurTimer();
     hideTermFind();
     hideTermMenu();
+    termExited = false;
     mode = "action";
     applyChrome("action");
     termWrap.hidden = true;
@@ -2861,6 +2981,8 @@
     } catch {
     }
     sessionAlive = false;
+    termExited = false;
+    ptySession = null;
     if (ptyDataUnlisten) {
       ptyDataUnlisten();
       ptyDataUnlisten = null;
@@ -2911,6 +3033,7 @@
           return;
         }
         if (sessionAlive && !fresh) {
+          termExited = false;
           mode = "terminal";
           applyChrome("terminal");
           termWrap.hidden = false;
@@ -2927,6 +3050,7 @@
           }
           return;
         }
+        termExited = false;
         mode = "terminal";
         applyChrome("terminal");
         termWrap.hidden = false;
@@ -2936,9 +3060,19 @@
         t.reset();
         clearPtyWriteBuf();
         const size = await waitForTermSize(t);
+        ptyOpening = true;
+        ptyHeld = [];
+        ptySession = null;
         await bindPtyListeners();
-        await invoke("pty_open", { cwd, cols: size.cols, rows: size.rows });
+        let opened;
+        try {
+          opened = await invoke("pty_open", { cwd, cols: size.cols, rows: size.rows });
+        } catch (e) {
+          releaseHeldPtyEvents(null);
+          throw e;
+        }
         sessionAlive = true;
+        releaseHeldPtyEvents(typeof opened === "number" ? opened : null);
         await settleTermSize();
         t.focus();
         if (termSeed) {
@@ -3073,7 +3207,10 @@
       return defaults();
     }
     const cats = [...new Set(list.map((x) => x.cat))];
-    setRes("out", f ? `${list.length} in \u201C${esc(f)}\u201D` : `${list.length} shortcuts \xB7 ${cats.join(" \xB7 ")}`);
+    setRes(
+      "out",
+      f ? `${list.length} in \u201C${esc(f)}\u201D` : `${list.length} shortcuts \xB7 ${cats.map(esc).join(" \xB7 ")}`
+    );
     showRows(list.map((x) => ({ c: x.n, d: `${x.cat} \xB7 ${x.d}`, cc: x.n })));
   }
   async function openFileTarget(target, label2) {
@@ -3121,7 +3258,9 @@
       return void enterTerminal(hit.target, { fresh: true });
     }
     lastLaunchError = null;
-    if (!claimLaunch()) return;
+    if (opts.batch) {
+      barWindow().__VERSAILLES_LAST_LAUNCH__ = Date.now();
+    } else if (!claimLaunch()) return;
     await withBusy(async () => {
       try {
         if (!hostAvailable) throw new Error("host unavailable \u2014 preview mode cannot launch");
@@ -3191,9 +3330,14 @@
       try {
         html = await invoke("get_desktop_html");
       } catch {
-        const api2 = await invoke("get_api_info");
-        const res3 = await fetch(`${api2.base_url}/files/desktop/index.html`, { cache: "no-store" });
-        if (res3.ok) html = await res3.text();
+        try {
+          const api2 = await invoke("get_api_info");
+          const res3 = await fetch(`${api2.base_url}/files/desktop/index.html`, { cache: "no-store" });
+          if (res3.ok) html = await res3.text();
+        } catch {
+          const own = document.getElementById("versailles");
+          if (own) html = `<script type="application/json" id="versailles">${own.textContent || ""}<\/script>`;
+        }
       }
       const inline = window.__VERSAILLES_BLOCK__;
       if (inline && Array.isArray(inline.shortcuts)) {
@@ -3260,6 +3404,7 @@
       }
     }
     PRESETS = builtins;
+    rebuildFuseIndex(PRESETS);
   }
   async function loadCatalog() {
     try {
@@ -3284,7 +3429,6 @@
       ].filter(Boolean).join(" \xB7 ");
       setRes("err", esc(msg));
     }
-    rebuildFuseIndex(PRESETS.length ? PRESETS : USER_SHORTCUTS);
     ENGINE_RUNTIME = await loadEngineRuntime(ENGINE_ID);
     return loadCatalog();
   }
@@ -3382,17 +3526,31 @@
       }
     }, { focusSteals: false });
   }
+  async function launchBatch(hits) {
+    for (let i = 0; i < hits.length; i++) {
+      if (i) await delay(BATCH_STAGGER_MS);
+      await launchPreset(hits[i], { background: true, batch: true });
+    }
+  }
+  async function setPinned(verb, name) {
+    const id = (findPreset(name)?.n ?? name).toLowerCase();
+    const pinned = ENGINE_RUNTIME.pins.includes(id);
+    if (verb === "pin" !== pinned) {
+      ENGINE_RUNTIME = await togglePin(ENGINE_ID, id);
+    }
+    defaults();
+    setRes("ok", `&rarr; ${verb === "pin" ? "pinned" : "unpinned"} ${esc(id)}`);
+  }
+  function hideKeyLabel() {
+    return PIECE.hotkey ? hotkeyLabel(PIECE.hotkey) : "alt+space";
+  }
   function run(c, background = false) {
     const bg = { background };
     if (!c) return;
     if (background && c.includes(" ")) {
-      const parts = c.split(/\s+/);
-      void (async () => {
-        for (const name of parts) {
-          const hit = findPreset(name);
-          if (hit) await launchPreset(hit, { background: true });
-        }
-      })();
+      const hits = c.split(/\s+/).map((name) => findPreset(name)).filter((x) => !!x);
+      if (!hits.length) return setRes("err", `no shortcuts in '${esc(c)}'`);
+      void launchBatch(hits);
       return;
     }
     if (c === "cls" || c === "clear") {
@@ -3532,7 +3690,7 @@
       case "get-childitem":
         return void lsCmd();
       case "exit":
-        return setRes("out", "alt+space hides \xB7 terminal stays running in the background");
+        return setRes("out", `${hideKeyLabel()} hides \xB7 terminal stays running in the background`);
       default: {
         if (isProfileName(cmd)) {
           if (arg) {
@@ -3542,18 +3700,12 @@
           }
           return presetRows(cmd);
         }
+        if (cmd === "retry" && lastLaunchError) return void launchPreset(lastLaunchError.preset);
+        const pinCmd = parsePinCommand(c);
+        if (pinCmd) return void setPinned(pinCmd.verb, pinCmd.name);
         const hit = findPreset(cmd);
         if (hit && !arg) return void launchPreset(hit, bg);
         if (hit && arg && hit.n === cmd) return void launchPreset(hit, bg);
-        if (cmd.startsWith("retry ") && lastLaunchError) return void launchPreset(lastLaunchError.preset);
-        if (cmd.startsWith("pin ") || cmd.startsWith("unpin ")) {
-          const name = cmd.split(/\s+/)[1] || "";
-          return void (async () => {
-            ENGINE_RUNTIME = await togglePin(ENGINE_ID, name);
-            setRes("ok", `&rarr; pins updated`);
-            defaults();
-          })();
-        }
         if (!arg && !c.startsWith("!") && !c.startsWith("?") && !c.startsWith("=") && !/[\\/]/.test(c) && /^[\w.-]+$/i.test(cmd)) {
           const near = PRESETS.filter((x) => presetMatches(x, cmd)).slice(0, 6);
           if (near.length) {
@@ -3578,8 +3730,7 @@
         termWrap.hidden = true;
       }
     }
-    inp.value = "";
-    syncEcho();
+    setInput("");
     clearRes();
     applyChrome("action");
     void invoke("dismiss_launcher");
@@ -3600,6 +3751,7 @@
   function bindUi() {
     inp.addEventListener("input", () => {
       syncEcho();
+      escClearPending = false;
       clearRes();
       refreshProposals();
     });
@@ -3620,8 +3772,7 @@
           markSel();
         } else if (hist.length) {
           hi = Math.min(hi + 1, hist.length);
-          inp.value = hist[hist.length - hi];
-          syncEcho();
+          setInput(hist[hist.length - hi]);
           refreshProposals();
         }
       } else if (e.key === "ArrowDown") {
@@ -3631,8 +3782,7 @@
           markSel();
         } else if (hi > 0) {
           hi--;
-          inp.value = hi ? hist[hist.length - hi] : "";
-          syncEcho();
+          setInput(hi ? hist[hist.length - hi] : "");
           refreshProposals();
         }
       } else if (e.key === "Enter") {
@@ -3646,24 +3796,21 @@
         submitCommand(inp.value, e.ctrlKey);
       } else if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "l") {
         e.preventDefault();
-        inp.value = "";
-        syncEcho();
+        setInput("");
         clearRes();
         defaults();
       } else if (e.ctrlKey && !e.shiftKey && e.key === "p") {
         e.preventDefault();
         if (hist.length) {
           hi = Math.min(hi + 1, hist.length);
-          inp.value = hist[hist.length - hi];
-          syncEcho();
+          setInput(hist[hist.length - hi]);
           refreshProposals();
         }
       } else if (e.ctrlKey && !e.shiftKey && e.key === "n") {
         e.preventDefault();
         if (hi > 0) {
           hi--;
-          inp.value = hi ? hist[hist.length - hi] : "";
-          syncEcho();
+          setInput(hi ? hist[hist.length - hi] : "");
           refreshProposals();
         }
       } else if (e.altKey && /^[1-9]$/.test(e.key)) {
@@ -3705,6 +3852,12 @@
             hideTermMenu();
             return;
           }
+          if (termExited && !sessionAlive) {
+            e.preventDefault();
+            e.stopPropagation();
+            void detachTerminal(true).then(() => showEndedRows());
+            return;
+          }
           return;
         }
         if (inp.value.trim()) {
@@ -3716,8 +3869,7 @@
             return;
           }
           escClearPending = true;
-          inp.value = "";
-          syncEcho();
+          setInput("");
           clearRes();
           defaults();
           return;
@@ -3745,94 +3897,166 @@
         requestAnimationFrame(focusPrompt);
         return;
       }
-      if (mode === "terminal" || sessionAlive) return;
+      if (!DISMISS_ON_BLUR || mode === "terminal") return;
       const blurDelay = busy ? Math.max(ENGINE_OPTS.blurDismissMs, FOCUS_STEAL_GRACE_MS + 80) : ENGINE_OPTS.blurDismissMs;
       scheduleDismiss(blurDelay, "outside-blur");
+    }).catch(() => {
     });
     window.addEventListener("resize", () => {
       if (mode === "terminal") void fitAndResizePty();
     });
   }
-  async function resetBar(seed) {
+  function resetBar(seed) {
     forceIdle("resetBar");
-    if (mode === "terminal") {
-      await detachTerminal(false);
-    }
-    await refreshSessionAlive();
-    await refreshPresets();
-    inp.value = "";
-    syncEcho();
+    const gen = ++resetGen;
+    const detached = mode === "terminal" ? detachTerminal(false).catch(() => {
+    }) : Promise.resolve();
+    escClearPending = false;
+    hi = 0;
+    setInput("");
     clearRes();
     setPrompt();
     applyChrome("action");
-    applySeed(seed);
+    const seedRows = applySeed(seed);
     focusPrompt();
+    void (async () => {
+      await detached;
+      await refreshSessionAlive();
+      await refreshPresets();
+      if (gen !== resetGen || mode !== "action") return;
+      applyChrome("action");
+      if (seedRows && !inp.value) presetRows("apps");
+      else refreshProposals();
+      if (document.activeElement !== inp) focusPrompt();
+    })();
   }
   function applySeed(seed) {
-    if (seed == null || seed === "") return defaults();
+    if (seed == null || seed === "") {
+      defaults();
+      return false;
+    }
     const trimmed = seed.trim();
-    if (trimmed === "apps" || trimmed === "start") return presetRows("apps");
-    inp.value = seed;
-    syncEcho();
+    if (trimmed === "apps" || trimmed === "start") {
+      presetRows("apps");
+      return true;
+    }
+    setInput(seed);
     refreshProposals();
+    return false;
+  }
+  function onOverlayHidden() {
+    forceIdle("hidden");
+    resetGen += 1;
+    void (async () => {
+      if (mode === "terminal") await detachTerminal(false);
+      setInput("");
+      clearRes();
+      applyChrome("action");
+    })();
+  }
+  async function bindOverlayEvents() {
+    let lastShown = 0;
+    let lastHidden = 0;
+    const mine = (id) => id == null || sameOverlayId(id, ENGINE_ID);
+    await listen("overlay://shown", (ev) => {
+      const { id, seed } = overlayEventId(ev?.payload);
+      if (!mine(id)) return;
+      const now = Date.now();
+      if (id == null && now - lastShown < OVERLAY_DEDUPE_MS) return;
+      lastShown = now;
+      resetBar(seed);
+    });
+    await listen("overlay://hidden", (ev) => {
+      const payload = ev?.payload;
+      const { id } = overlayEventId(typeof payload === "string" ? { id: payload } : payload);
+      if (!mine(id)) return;
+      const now = Date.now();
+      if (id == null && now - lastHidden < OVERLAY_DEDUPE_MS) return;
+      lastHidden = now;
+      onOverlayHidden();
+    });
+  }
+  function findPieceTemplate(id) {
+    const list = document.querySelectorAll("template.spawnable[data-id]");
+    for (const el of list) {
+      if (sameOverlayId(el.getAttribute("data-id") || "", id)) return el;
+    }
+    return document.querySelector("template.spawnable.action-bar");
+  }
+  function blockLauncherHotkey() {
+    const w = window;
+    let hk = w.__VERSAILLES_BLOCK__?.launcher?.hotkey;
+    if (typeof hk !== "string") {
+      try {
+        const el = document.getElementById("versailles");
+        hk = el ? JSON.parse(el.textContent || "{}")?.launcher?.hotkey : void 0;
+      } catch {
+        hk = void 0;
+      }
+    }
+    return typeof hk === "string" ? hk.trim() : "";
+  }
+  function loadPieceSettings(id) {
+    const tpl = findPieceTemplate(id);
+    const attr = (name) => tpl?.getAttribute(name)?.trim() || "";
+    const num = (v, d) => {
+      const n = Number.parseInt(v, 10);
+      return Number.isFinite(n) && n > 0 ? n : d;
+    };
+    const hooks = attr("data-hooks").toLowerCase().split(",").map((h) => h.trim());
+    PIECE = {
+      w: num(attr("data-w"), 640),
+      h: num(attr("data-h"), 420),
+      anchor: (attr("data-anchor") || "tc").toLowerCase(),
+      hotkey: attr("data-hotkey") || (hooks.includes("hotkey") ? blockLauncherHotkey() : "")
+    };
+    const dob = attr("data-dismiss-on-blur");
+    DISMISS_ON_BLUR = dob ? !/^(false|0|no|off)$/i.test(dob) : !hooks.includes("pty");
+  }
+  async function bootBar() {
+    const w = window;
+    const hosted = !!(w.__TAURI_INTERNALS__ || w.__TAURI__);
+    if (hosted && w.versailles?.waitForTauri) {
+      try {
+        await w.versailles.waitForTauri();
+      } catch {
+      }
+    }
+    bindDom();
+    bindUi();
+    hostAvailable = hosted;
+    try {
+      const ctx = await loadSpawnableEngineContext();
+      ENGINE_ID = ctx.id;
+      ENGINE_OPTS = ctx.opts;
+      loadPieceSettings(ENGINE_ID);
+      if (ctx.fromHost) DISMISS_ON_BLUR = ctx.dismissOnBlur;
+      ENGINE_RUNTIME = await loadEngineRuntime(ENGINE_ID);
+    } catch {
+      loadPieceSettings(ENGINE_ID);
+    }
+    try {
+      await bindOverlayEvents();
+    } catch {
+    }
+    try {
+      HOME = await invoke("cli_home");
+    } catch {
+      HOME = "";
+    }
+    if (!HOME) HOME = "C:\\";
+    cwd = HOME;
+    PRESETS = builtinPresets(HOME);
+    await refreshPresets();
+    await refreshSessionAlive();
+    applyChrome("action");
+    setPrompt();
+    refreshProposals();
+    focusPrompt();
   }
   var _barBoot = barWindow();
   if (!_barBoot.__VERSAILLES_BAR_BOUND__) {
     _barBoot.__VERSAILLES_BAR_BOUND__ = true;
-    void (async () => {
-      const v = window.versailles;
-      if (v?.waitForTauri) await v.waitForTauri();
-      bindDom();
-      bindUi();
-      try {
-        const ctx = await loadSpawnableEngineContext();
-        ENGINE_ID = ctx.id;
-        ENGINE_OPTS = ctx.opts;
-        ENGINE_RUNTIME = await loadEngineRuntime(ENGINE_ID);
-        hostAvailable = true;
-      } catch {
-        hostAvailable = typeof window.__TAURI__ !== "undefined" || !!window.versailles;
-      }
-      const onShown = (ev) => {
-        const seed = typeof ev === "string" ? ev : typeof ev?.payload === "string" ? ev.payload : "";
-        void resetBar(seed);
-      };
-      await listen("overlay://shown", onShown);
-      await listen("launcher://shown", onShown);
-      await listen("overlay://hidden", () => {
-        forceIdle("hidden");
-        void (async () => {
-          if (mode === "terminal") await detachTerminal(false);
-          inp.value = "";
-          syncEcho();
-          clearRes();
-          applyChrome("action");
-        })();
-      });
-      await listen("launcher://hidden", () => {
-        forceIdle("hidden");
-        void (async () => {
-          if (mode === "terminal") await detachTerminal(false);
-          inp.value = "";
-          syncEcho();
-          clearRes();
-          applyChrome("action");
-        })();
-      });
-      try {
-        HOME = await invoke("cli_home");
-      } catch {
-        HOME = "";
-      }
-      if (!HOME) HOME = "C:\\";
-      cwd = HOME;
-      PRESETS = builtinPresets(HOME);
-      await refreshPresets();
-      await refreshSessionAlive();
-      applyChrome("action");
-      setPrompt();
-      defaults();
-      focusPrompt();
-    })();
+    void bootBar();
   }
 })();

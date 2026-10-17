@@ -4,6 +4,7 @@ mod boot;
 mod cli;
 mod commands;
 mod config;
+mod crash;
 mod desktop;
 mod engine_runtime;
 mod error;
@@ -22,7 +23,7 @@ mod weather;
 mod window_manager;
 
 use api::start_api_server;
-use config::ConfigStore;
+use config::{AppConfig, ConfigStore, RuntimeState, UserConfig};
 use hotkeys::register_page_hotkeys;
 use media::{start_media_listener, MediaState};
 use registry::{widgets_root, WidgetRegistry};
@@ -33,15 +34,96 @@ use tokio::task::JoinSet;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager,
+    AppHandle, Manager, RunEvent,
 };
 use window_manager::{
     open_widget_window, spawn_webview_prewarm, WindowManager,
 };
 use tauri_plugin_log::{Target, TargetKind};
 
+pub use crash::supervise_if_needed;
+
+/// Load config without ever failing boot: a locked / unreadable `config.json`
+/// (OneDrive, AV) falls back to in-memory defaults and the file is left alone.
+fn load_config_or_defaults(store: &ConfigStore) -> AppConfig {
+    match store.load() {
+        Ok(config) => config,
+        Err(err) => {
+            tracing::error!("config load failed ({err}); running on in-memory defaults");
+            store.set_runtime_read_only();
+            let user = store.load_user_config().unwrap_or_else(|err| {
+                tracing::warn!("user config unreadable ({err}); using defaults");
+                UserConfig::default()
+            });
+            AppConfig::from_parts(user, RuntimeState::default())
+        }
+    }
+}
+
+/// Tray icon + menu. Failure is logged, not fatal: at login Explorer may not be
+/// ready yet, and the wallpaper / hotkeys still work without a tray.
+fn build_tray(app: &AppHandle) -> tauri::Result<()> {
+    // Left-click still opens the action bar; the menu is desktop page + quit.
+    let desktop_item = MenuItem::with_id(
+        app,
+        "desktop",
+        desktop::desktop_tray_label(false),
+        true,
+        None::<&str>,
+    )?;
+    let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&desktop_item, &quit_item])?;
+    *app.state::<AppState>().tray_desktop_item.lock().unwrap() = Some(desktop_item);
+
+    let mut tray = TrayIconBuilder::new();
+    if let Some(icon) = app.default_window_icon().cloned() {
+        tray = tray.icon(icon);
+    }
+    let _tray = tray
+        .menu(&menu)
+        .tooltip("Versailles")
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "desktop" => {
+                let enable = app.get_webview_window("desktop").is_none();
+                if enable {
+                    if let Err(err) = desktop::reveal_desktop_window(app) {
+                        tracing::error!("desktop page failed to open: {err}");
+                    }
+                } else if let Err(err) = desktop::hide_desktop_window(app) {
+                    tracing::error!("desktop page failed to close: {err}");
+                }
+                let state = app.state::<AppState>();
+                let mut config = state.config.lock().unwrap();
+                if config.desktop.enabled != enable {
+                    config.desktop.enabled = enable;
+                    let _ = state.store.lock().unwrap().save_runtime_from_app(&config);
+                }
+            }
+            "quit" => {
+                app.exit(0);
+            }
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                let app = tray.app_handle();
+                if let Some(id) = window_manager::hotkey_piece_id(app) {
+                    window_manager::toggle_hotkey_piece(app, &id);
+                }
+            }
+        })
+        .build(app)?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    crash::install_panic_hook();
     crate::boot::note_start();
     let bench = crate::boot::is_bench();
     // Never attach a console in release — stdout logging was popping a terminal on boot.
@@ -87,15 +169,17 @@ pub fn run() {
             let _ = window_manager::show_launcher(app);
         }));
     }
-    builder
+    let app = builder
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .register_uri_scheme_protocol("widget", |_ctx, request| {
-            protocol::serve_widget_request(request)
-        })
         .setup(|app| {
-            let root = widgets_root()?;
-            let store = ConfigStore::new(&root)?;
-            let config = store.load()?;
+            // Nothing in setup may abort boot: every failure below degrades.
+            let root = widgets_root().unwrap_or_else(|err| {
+                let fallback = std::env::temp_dir().join("Versailles");
+                tracing::error!("Widgets folder unavailable ({err}); using {}", fallback.display());
+                fallback
+            });
+            let store = ConfigStore::new(&root);
+            let config = load_config_or_defaults(&store);
             let mut registry = WidgetRegistry::new(root);
             let _ = registry.scan();
 
@@ -135,69 +219,19 @@ pub fn run() {
             spawn_webview_prewarm(app.handle());
 
             // Tray — only visible UI on boot unless restoring session widgets.
-            // Left-click still opens the action bar; the menu is desktop page + quit.
-            let desktop_item = MenuItem::with_id(
-                app,
-                "desktop",
-                desktop::desktop_tray_label(false),
-                true,
-                None::<&str>,
-            )?;
-            let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&desktop_item, &quit_item])?;
-            *app.state::<AppState>().tray_desktop_item.lock().unwrap() = Some(desktop_item);
-
-            let _tray = TrayIconBuilder::new()
-                .icon(
-                    app.default_window_icon()
-                        .cloned()
-                        .ok_or_else(|| "missing tray icon".to_string())?,
-                )
-                .menu(&menu)
-                .tooltip("Versailles")
-                .on_menu_event(|app, event| match event.id.as_ref() {
-                    "desktop" => {
-                        let enable = app.get_webview_window("desktop").is_none();
-                        if enable {
-                            if let Err(err) = desktop::reveal_desktop_window(app) {
-                                tracing::error!("desktop page failed to open: {err}");
-                            }
-                        } else if let Err(err) = desktop::hide_desktop_window(app) {
-                            tracing::error!("desktop page failed to close: {err}");
-                        }
-                        let state = app.state::<AppState>();
-                        let mut config = state.config.lock().unwrap();
-                        if config.desktop.enabled != enable {
-                            config.desktop.enabled = enable;
-                            let _ = state.store.lock().unwrap().save_runtime_from_app(&config);
-                        }
-                    }
-                    "quit" => {
-                        app.exit(0);
-                    }
-                    _ => {}
-                })
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        ..
-                    } = event
-                    {
-                        let app = tray.app_handle();
-                        if let Some(id) = window_manager::hotkey_piece_id(app) {
-                            window_manager::toggle_hotkey_piece(app, &id);
-                        }
-                    }
-                })
-                .build(app)?;
+            if let Err(err) = build_tray(app.handle()) {
+                tracing::error!("tray icon failed: {err}");
+            }
 
             // Spawnable hotkeys (data-hotkey on pieces with the hotkey hook).
             if !crate::boot::is_bench() {
                 if let Err(err) = register_page_hotkeys(app.handle()) {
                     tracing::warn!("page hotkeys failed: {err}");
                 }
-                let _ = crate::commands::apply_autostart(app.handle(), config.autostart);
+                // Dev builds must not point the Run key at a debug binary.
+                if !cfg!(debug_assertions) {
+                    let _ = crate::commands::apply_autostart(app.handle(), config.autostart);
+                }
             }
 
             let desktop_enabled = {
@@ -243,6 +277,7 @@ pub fn run() {
             single_instance_fixup::schedule_hide_helpers();
 
             watcher::start_widget_watcher(app.handle().clone());
+            crash::start_hang_watchdog(app.handle());
 
             // Session restore off the setup path; bounded to 2 concurrent WebView2
             // creations to avoid the documented deadlock risk. Desktop wallpaper
@@ -386,6 +421,19 @@ pub fn run() {
             pty::pty_is_alive,
             pty::pty_close,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Versailles");
+        .build(tauri::generate_context!());
+    match app {
+        Ok(app) => app.run(|_app, event| match event {
+            RunEvent::ExitRequested { code: Some(_), .. } | RunEvent::Exit => {
+                crash::note_exiting();
+            }
+            _ => {}
+        }),
+        Err(err) => {
+            // Logged (and in last-crash.txt) instead of a silent panic; a
+            // non-zero exit lets the supervisor retry with backoff.
+            crash::record_fatal(&format!("Versailles failed to start: {err}"));
+            std::process::exit(1);
+        }
+    }
 }

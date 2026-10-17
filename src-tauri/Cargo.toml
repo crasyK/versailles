@@ -1,6 +1,6 @@
 [package]
 name = "versailles"
-version = "0.1.5"
+version = "0.1.6"
 description = "Versailles — lightweight HTML desktop widget host"
 authors = ["you"]
 edition = "2021"
@@ -48,6 +48,9 @@ windows = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_System_Com",
   "Win32_System_Console",
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+  "Win32_Security",
   "Win32_UI_WindowsAndMessaging",
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_Shell",
@@ -55,6 +58,8 @@ windows = { version = "0.61", features = [
 ] }
 
 [profile.release]
+# Keep abort: locks are `.lock().unwrap()` everywhere, so unwinding would cascade
+# poisoned mutexes. Recovery is a clean restart (see src/crash.rs).
 panic = "abort"
 codegen-units = 1
 lto = true

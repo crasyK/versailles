@@ -3,7 +3,8 @@
  * no inlined bar engine, no 800ms media poll, no 50ms watch tick,
  * no location.reload in local-restore, desktop.ts retries only when src is empty.
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -16,8 +17,11 @@ function fail(msg) {
   failed = true;
 }
 
+// The repo need not live inside Documents/Widgets: check the live desktop if
+// there is one, and always the starter template.
+const liveDesktop = join(process.env.USERPROFILE || homedir(), "Documents", "Widgets", "desktop", "index.html");
 const pages = [
-  join(root, "..", "desktop", "index.html"),
+  ...(existsSync(liveDesktop) ? [liveDesktop] : []),
   join(root, "templates/starter/desktop/index.html"),
 ];
 

@@ -94,8 +94,7 @@ pub fn set_desktop_tray_label(app: &AppHandle, visible: bool) {
 
 /// Load the user HTML page in the always-on-bottom desktop window.
 pub fn reveal_desktop_window(app: &AppHandle) -> AppResult<()> {
-    let url = page_url(&app.state::<AppState>());
-    ensure_desktop_window(app, url)?;
+    ensure_desktop_window(app)?;
     close_page_embedded_windows(app);
     emit_layout(app);
     set_desktop_tray_label(app, true);

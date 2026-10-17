@@ -348,10 +348,15 @@ pub async fn lookup(q: WeatherQuery) -> Result<WeatherPayload, String> {
         high_c,
         low_c,
         glyph: glyph.into(),
-        lat,
-        lon,
+        // Precise geolocation never leaves the host: ~1 km is plenty for a widget.
+        lat: round2(lat),
+        lon: round2(lon),
         source,
     })
+}
+
+fn round2(v: f64) -> f64 {
+    (v * 100.0).round() / 100.0
 }
 
 pub fn error_json(msg: impl Into<String>) -> Value {

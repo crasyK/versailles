@@ -8,6 +8,32 @@ type DesktopLayout = {
 const pageEl = document.querySelector<HTMLIFrameElement>("#page")!;
 let pageUrl = "";
 let wallpaperReported = false;
+/** Bumped per navigation so a stale probe cannot steer a newer load. */
+let navGen = 0;
+let loadRetries = 0;
+const MAX_LOAD_RETRIES = 12;
+const PROBE_TIMEOUT_MS = 1500;
+
+const sleep = (ms: number) => new Promise<void>((r) => window.setTimeout(r, ms));
+
+/**
+ * Is the file server answering? The iframe's error page is cross-origin, so
+ * `contentWindow.location` cannot tell a refused connection from a real page.
+ * A no-cors HEAD resolves (opaque) when the server answers and rejects on
+ * connection-refused / timeout.
+ */
+async function reachable(url: string): Promise<boolean> {
+  const ctl = new AbortController();
+  const timer = window.setTimeout(() => ctl.abort(), PROBE_TIMEOUT_MS);
+  try {
+    await fetch(url, { method: "HEAD", mode: "no-cors", cache: "no-store", signal: ctl.signal });
+    return true;
+  } catch {
+    return false;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
 
 function bust(url: string) {
   const u = new URL(url);
@@ -50,29 +76,31 @@ function reportBoot(path: string) {
   );
 }
 
-function applyPage(url?: string | null, force = false) {
-  if (!url) return;
-  const next = withDesktopMode(url);
-  if (!force && pageUrl && pageEl.src && samePage(pageUrl, next)) return;
-  pageUrl = next;
-  pageEl.src = bust(next);
+/** Point the iframe at `url` once the server answers (a few short probes, then try anyway). */
+async function navigate(url: string) {
+  const gen = ++navGen;
+  for (let i = 0; i < 6; i++) {
+    if (await reachable(url)) break;
+    if (gen !== navGen) return;
+    await sleep(400);
+  }
+  if (gen !== navGen) return;
+  pageEl.src = bust(url);
   reportBoot("nav");
 }
 
-function reloadPage() {
-  if (pageUrl) {
-    pageEl.src = bust(pageUrl);
-    reportBoot("nav");
-    return;
-  }
-  if (pageEl.src) {
-    pageEl.src = bust(pageEl.src);
-    reportBoot("nav");
-  }
+function applyPage(url?: string | null, force = false) {
+  if (!url) return;
+  const next = withDesktopMode(url);
+  if (!force && pageUrl && samePage(pageUrl, next)) return;
+  pageUrl = next;
+  loadRetries = 0;
+  void navigate(next);
 }
 
-function isChromeErrorHref(href: string) {
-  return /chrome-error:|error-page|ERR_/i.test(href);
+function reloadPage() {
+  const target = pageUrl || pageEl.src;
+  if (target) void navigate(target);
 }
 
 void (async () => {
@@ -82,26 +110,33 @@ void (async () => {
     /* page optional until the file exists */
   }
 
-  // If the file server raced boot, iframe shows connection-refused — retry a few times.
+  // `load` also fires for the connection-refused error page. Re-probe the
+  // server: if it is down, back off and reload; only a reachable load counts.
   pageEl.addEventListener("load", () => {
-    try {
-      const href = pageEl.contentWindow?.location?.href ?? "";
-      if (isChromeErrorHref(href)) {
-        window.setTimeout(() => reloadPage(), 800);
+    const src = pageEl.src;
+    if (!src) return;
+    const gen = navGen;
+    void reachable(src).then((ok) => {
+      if (gen !== navGen) return;
+      if (!ok) {
+        if (loadRetries++ < MAX_LOAD_RETRIES) {
+          window.setTimeout(() => {
+            if (gen === navGen) reloadPage();
+          }, Math.min(800 * loadRetries, 4000));
+        }
         return;
       }
-    } catch {
-      /* cross-origin ok — real page loaded from file server */
-    }
-    if (!wallpaperReported && pageEl.src) {
-      wallpaperReported = true;
-      reportBoot("loaded");
-    }
+      loadRetries = 0;
+      if (!wallpaperReported) {
+        wallpaperReported = true;
+        reportBoot("loaded");
+      }
+    });
   });
 
   let retries = 0;
   const bootRetry = window.setInterval(() => {
-    if (pageEl.src) {
+    if (pageUrl || pageEl.src) {
       window.clearInterval(bootRetry);
       return;
     }

@@ -154,6 +154,8 @@ async function oneRun(exe, profile) {
       env: {
         ...process.env,
         VERSAILLES_BENCH: "1",
+        // Measure the app process itself, not the crash-recovery supervisor.
+        VERSAILLES_NO_SUPERVISOR: "1",
         VERSAILLES_ROOT: dest,
         VERSAILLES_API_PORT: String(port),
       },

@@ -37,22 +37,36 @@ export function getCurrentWindow() {
       return invoke("plugin:window|is_focused", { label: l });
     },
     async onFocusChanged(handler) {
+      // Prefer the real window-scoped API: a global tauri://focus listener also
+      // hears every other Versailles window.
+      try {
+        const real = window.__TAURI__?.window?.getCurrentWindow?.();
+        if (real && typeof real.onFocusChanged === "function") {
+          return await real.onFocusChanged(handler);
+        }
+      } catch {
+        /* fall back to SDK events */
+      }
       const v = window.versailles;
       if (!v || typeof v.listen !== "function") return () => {};
-      const offFocus = await v.listen("tauri://focus", () => handler({ payload: true }));
-      const offBlur = await v.listen("tauri://blur", () => handler({ payload: false }));
-      return () => {
-        try {
-          offFocus();
-        } catch {
-          /* ignore */
-        }
-        try {
-          offBlur();
-        } catch {
-          /* ignore */
-        }
-      };
+      try {
+        const offFocus = await v.listen("tauri://focus", () => handler({ payload: true }));
+        const offBlur = await v.listen("tauri://blur", () => handler({ payload: false }));
+        return () => {
+          try {
+            offFocus();
+          } catch {
+            /* ignore */
+          }
+          try {
+            offBlur();
+          } catch {
+            /* ignore */
+          }
+        };
+      } catch {
+        return () => {};
+      }
     },
   };
 }

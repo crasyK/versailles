@@ -1,10 +1,11 @@
+use crate::page::HookClass;
 use crate::state::AppState;
 use serde::Serialize;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
-use tauri::State;
+use tauri::{State, Webview};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -120,23 +121,45 @@ fn spawn_shell(script: &str, cwd: &Option<String>) -> Result<Child, String> {
         .map_err(|e| format!("failed to spawn {}: {e}", cfg.exe))
 }
 
-fn gate_shell(app_state: &AppState, caller: Option<&str>) -> Result<(), String> {
-    crate::page::enforce_hook_cached(
-        &crate::desktop::page_catalog(app_state),
-        caller,
-        "shell",
-    )
+/// `shell` hook on the calling window. `Exec` (run commands, search files) is
+/// only allowed from a spawn window whose piece declares `shell`.
+fn gate_shell(
+    app_state: &AppState,
+    webview: &Webview,
+    caller: Option<&str>,
+    class: HookClass,
+) -> Result<(), String> {
+    crate::commands::require_hook(app_state, webview, caller, "shell", class)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// Run slow work (process spawn/poll, disk walks, sleeps) off the main thread so
+/// no webview freezes while it runs.
+pub(crate) async fn blocking<T, F>(f: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .map_err(|e| format!("worker failed: {e}"))?
 }
 
 #[tauri::command]
-pub fn cli_exec(
+pub async fn cli_exec(
+    webview: Webview,
     cmd: String,
     cwd: Option<String>,
     caller: Option<String>,
     app_state: State<'_, AppState>,
 ) -> Result<CliOutput, String> {
-    gate_shell(&app_state, caller.as_deref())?;
-    let mut child = spawn_shell(&cmd, &cwd)?;
+    gate_shell(&app_state, &webview, caller.as_deref(), HookClass::Exec)?;
+    blocking(move || exec_blocking(&cmd, &cwd)).await
+}
+
+fn exec_blocking(cmd: &str, cwd: &Option<String>) -> Result<CliOutput, String> {
+    let mut child = spawn_shell(cmd, cwd)?;
     let stdout_pipe = child
         .stdout
         .take()
@@ -190,7 +213,19 @@ pub fn cli_exec(
 
 /// Launch a visible terminal (Windows Terminal when available) for interactive or long-running work.
 #[tauri::command]
-pub fn cli_exec_term(cmd: String, cwd: Option<String>, interactive: bool) -> Result<(), String> {
+pub async fn cli_exec_term(
+    webview: Webview,
+    cmd: String,
+    cwd: Option<String>,
+    interactive: bool,
+    caller: Option<String>,
+    app_state: State<'_, AppState>,
+) -> Result<(), String> {
+    gate_shell(&app_state, &webview, caller.as_deref(), HookClass::Exec)?;
+    blocking(move || exec_term_blocking(&cmd, cwd, interactive)).await
+}
+
+fn exec_term_blocking(cmd: &str, cwd: Option<String>, interactive: bool) -> Result<(), String> {
     let cfg = shell_config()?;
     let cmd = cmd.trim();
     if !interactive && cmd.is_empty() {
@@ -289,6 +324,14 @@ fn open_target(target: &str) -> Result<(), String> {
     };
     let verb = to_wide("open");
     let file = to_wide(target);
+    // Runs on a worker thread now: ShellExecute wants COM (STA) on the caller.
+    let com = unsafe {
+        windows::Win32::System::Com::CoInitializeEx(
+            None,
+            windows::Win32::System::Com::COINIT_APARTMENTTHREADED
+                | windows::Win32::System::Com::COINIT_DISABLE_OLE1DDE,
+        )
+    };
     // ShellExecuteW returns an HINSTANCE cast; values > 32 mean success.
     let rc = unsafe {
         ShellExecuteW(
@@ -300,6 +343,9 @@ fn open_target(target: &str) -> Result<(), String> {
             SW_SHOWNORMAL,
         )
     };
+    if com.is_ok() {
+        unsafe { windows::Win32::System::Com::CoUninitialize() };
+    }
     let code = rc.0 as isize;
     if code > 32 {
         Ok(())
@@ -343,26 +389,36 @@ fn should_skip_duplicate_open(target: &str) -> bool {
 }
 
 #[tauri::command]
-pub fn cli_open(
+pub async fn cli_open(
+    webview: Webview,
     target: String,
     caller: Option<String>,
     app_state: State<'_, AppState>,
 ) -> Result<(), String> {
-    gate_shell(&app_state, caller.as_deref())?;
-    let resolved = crate::apps::resolve_launch_target(&target)?;
-    if should_skip_duplicate_open(&resolved) {
-        return Ok(());
-    }
-    open_target(&resolved)
+    gate_shell(&app_state, &webview, caller.as_deref(), HookClass::Plain)?;
+    // Start Menu scan + ShellExecute can take a while; keep the UI thread free.
+    blocking(move || {
+        let resolved = crate::apps::resolve_launch_target(&target)?;
+        if should_skip_duplicate_open(&resolved) {
+            return Ok(());
+        }
+        open_target(&resolved)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn cli_search_files(
+pub async fn cli_search_files(
+    webview: Webview,
     query: String,
     caller: Option<String>,
     app_state: State<'_, AppState>,
 ) -> Result<Vec<String>, String> {
-    gate_shell(&app_state, caller.as_deref())?;
+    gate_shell(&app_state, &webview, caller.as_deref(), HookClass::Exec)?;
+    blocking(move || search_files_blocking(&query)).await
+}
+
+fn search_files_blocking(query: &str) -> Result<Vec<String>, String> {
     let q = query.trim().to_lowercase();
     if q.is_empty() {
         return Ok(Vec::new());
@@ -437,7 +493,12 @@ pub fn cli_search_files(
 }
 
 #[tauri::command]
-pub fn sys_stats() -> Result<SysStats, String> {
+pub async fn sys_stats() -> Result<SysStats, String> {
+    // Two CPU samples 200ms apart: never sleep on the UI thread.
+    blocking(sys_stats_blocking).await
+}
+
+fn sys_stats_blocking() -> Result<SysStats, String> {
     use sysinfo::{CpuRefreshKind, Disks, MemoryRefreshKind, RefreshKind, System};
 
     let mut sys = System::new_with_specifics(

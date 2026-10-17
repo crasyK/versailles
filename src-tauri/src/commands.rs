@@ -12,8 +12,9 @@ use crate::window_manager::{
     popup_widget_context_menu, set_always_on_top, set_guides_visible, show_launcher,
     toggle_slideout_widget, OpenWidgetState,
 };
+use crate::page::HookClass;
 use serde::Serialize;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager, State, Webview};
 use tauri_plugin_autostart::ManagerExt;
 
 fn persist_session(app: &AppHandle) -> AppResult<()> {
@@ -26,9 +27,48 @@ fn persist_session(app: &AppHandle) -> AppResult<()> {
     result
 }
 
-fn require_hook(state: &State<'_, AppState>, caller: &Option<String>, hook: &str) -> AppResult<()> {
+/// Gate a hook on the *calling window*, not on a self-declared argument.
+/// Spawn windows act as their piece; the wallpaper must name a piece via
+/// `caller`; host windows get nothing. Returns the piece id the call acts as.
+pub(crate) fn require_hook(
+    state: &AppState,
+    webview: &Webview,
+    caller: Option<&str>,
+    hook: &str,
+    class: HookClass,
+) -> AppResult<String> {
     let cat = crate::desktop::page_catalog(state);
-    crate::page::enforce_caller_hook_catalog(&cat, caller.as_deref(), hook)
+    let invoker = crate::page::classify_invoker(webview.label(), &cat, |id| {
+        state.registry.lock().unwrap().get(id).map(|w| {
+            w.manifest
+                .permissions
+                .iter()
+                .map(|p| p.hook_name().to_string())
+                .collect()
+        })
+    });
+    crate::page::authorize_hook(&cat, &invoker, caller, hook, class).map_err(|err| {
+        tracing::warn!("{} ({}): {err}", webview.label(), hook);
+        err
+    })
+}
+
+/// Run `f` on the main thread from an async command and await its result.
+/// Sync commands run on the UI thread; building a WebView2 window inside that
+/// stack deadlocks on Windows, so window work always hops through here.
+async fn on_main_thread<T, F>(app: &AppHandle, f: F) -> AppResult<T>
+where
+    T: Send + 'static,
+    F: FnOnce(&AppHandle) -> T + Send + 'static,
+{
+    let app2 = app.clone();
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.run_on_main_thread(move || {
+        let _ = tx.send(f(&app2));
+    })
+    .map_err(|e| crate::error::AppError::msg(e.to_string()))?;
+    rx.await
+        .map_err(|e| crate::error::AppError::msg(e.to_string()))
 }
 
 pub fn apply_autostart(app: &AppHandle, enabled: bool) -> AppResult<()> {
@@ -129,11 +169,12 @@ pub async fn close_widget(app: AppHandle, id: String) -> AppResult<()> {
 #[tauri::command]
 pub async fn toggle_slideout(
     app: AppHandle,
+    webview: Webview,
     state: State<'_, AppState>,
     id: String,
     caller: Option<String>,
 ) -> AppResult<bool> {
-    require_hook(&state, &caller, "spawn")?;
+    require_hook(&state, &webview, caller.as_deref(), "spawn", HookClass::Plain)?;
     // Never create WebView2 directly from the IPC/async stack — that hangs
     // Windows (same pattern as toggle_hotkey_piece / show_launcher).
     let app2 = app.clone();
@@ -176,8 +217,9 @@ pub fn list_open_widgets(state: State<'_, AppState>) -> AppResult<Vec<OpenWidget
 }
 
 #[tauri::command]
-pub fn move_widget_cmd(
+pub async fn move_widget_cmd(
     app: AppHandle,
+    webview: Webview,
     state: State<'_, AppState>,
     id: String,
     x: i32,
@@ -185,22 +227,33 @@ pub fn move_widget_cmd(
     disable_snap: Option<bool>,
     caller: Option<String>,
 ) -> AppResult<SnapResult> {
-    require_hook(&state, &caller, "layout")?;
-    let threshold = state.config.lock().unwrap().snap_threshold;
-    let monitors = collect_monitor_rects(&app);
-    let result = move_widget(
-        &app,
-        &state.window_manager,
-        &id,
-        x,
-        y,
-        disable_snap.unwrap_or(false),
-        threshold,
-        &monitors,
-    )?;
-    let _ = set_guides_visible(&app, !result.guides.is_empty(), &result.guides);
-    persist_session(&app)?;
-    Ok(result)
+    let acting = require_hook(&state, &webview, caller.as_deref(), "layout", HookClass::Plain)?;
+    // `layout` moves the piece's own window, never another one.
+    if !crate::page::same_piece(&crate::desktop::page_catalog(&state), &acting, &id) {
+        return Err(crate::error::AppError::msg(format!(
+            "layout: '{acting}' may only move its own window"
+        )));
+    }
+    // Guides window creation must not run inside the IPC stack (WebView2 deadlock).
+    on_main_thread(&app, move |app| -> AppResult<SnapResult> {
+        let state = app.state::<AppState>();
+        let threshold = state.config.lock().unwrap().snap_threshold;
+        let monitors = collect_monitor_rects(app);
+        let result = move_widget(
+            app,
+            &state.window_manager,
+            &id,
+            x,
+            y,
+            disable_snap.unwrap_or(false),
+            threshold,
+            &monitors,
+        )?;
+        let _ = set_guides_visible(app, !result.guides.is_empty(), &result.guides);
+        persist_session(app)?;
+        Ok(result)
+    })
+    .await?
 }
 
 #[tauri::command]
@@ -231,10 +284,11 @@ pub fn set_widget_opacity(app: AppHandle, id: String, opacity: f64) -> AppResult
 
 #[tauri::command]
 pub fn get_mouse_position_cmd(
+    webview: Webview,
     state: State<'_, AppState>,
     caller: Option<String>,
 ) -> AppResult<[i32; 2]> {
-    require_hook(&state, &caller, "mouse")?;
+    require_hook(&state, &webview, caller.as_deref(), "mouse", HookClass::Plain)?;
     let (x, y) = get_mouse_position()?;
     Ok([x, y])
 }
@@ -281,20 +335,21 @@ pub fn save_layout(
 }
 
 #[tauri::command]
-pub fn apply_layout(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    name: String,
-) -> AppResult<Vec<OpenWidgetState>> {
-    let layout = state.store.lock().unwrap().load_layout(&name)?;
-    let opened = apply_layout_template(&app, &state.window_manager, &layout)?;
-    // Snapshot before locking: persistable_session re-locks config internally.
-    let session = crate::window_manager::persistable_session(&app);
-    let mut config = state.config.lock().unwrap();
-    config.active_layout = Some(name);
-    config.session_widgets = session;
-    state.store.lock().unwrap().save_runtime_from_app(&config)?;
-    Ok(opened)
+pub async fn apply_layout(app: AppHandle, name: String) -> AppResult<Vec<OpenWidgetState>> {
+    // Opens widget windows: hop to the main thread instead of the IPC stack.
+    on_main_thread(&app, move |app| -> AppResult<Vec<OpenWidgetState>> {
+        let state = app.state::<AppState>();
+        let layout = state.store.lock().unwrap().load_layout(&name)?;
+        let opened = apply_layout_template(app, &state.window_manager, &layout)?;
+        // Snapshot before locking: persistable_session re-locks config internally.
+        let session = crate::window_manager::persistable_session(app);
+        let mut config = state.config.lock().unwrap();
+        config.active_layout = Some(name);
+        config.session_widgets = session;
+        state.store.lock().unwrap().save_runtime_from_app(&config)?;
+        Ok(opened)
+    })
+    .await?
 }
 
 #[tauri::command]
@@ -304,35 +359,42 @@ pub fn load_layout(state: State<'_, AppState>, name: String) -> AppResult<Layout
 
 #[tauri::command]
 pub async fn media_now(
+    webview: Webview,
     state: State<'_, AppState>,
     caller: Option<String>,
 ) -> AppResult<MediaInfo> {
     crate::boot::count_media_now();
-    require_hook(&state, &caller, "media")?;
+    require_hook(&state, &webview, caller.as_deref(), "media", HookClass::Plain)?;
     Ok(state.media.snapshot())
 }
 
 #[tauri::command]
 pub async fn media_play_pause_cmd(
+    webview: Webview,
     state: State<'_, AppState>,
     caller: Option<String>,
 ) -> AppResult<()> {
-    require_hook(&state, &caller, "media")?;
+    require_hook(&state, &webview, caller.as_deref(), "media", HookClass::Plain)?;
     media_play_pause().await
 }
 
 #[tauri::command]
-pub async fn media_next_cmd(state: State<'_, AppState>, caller: Option<String>) -> AppResult<()> {
-    require_hook(&state, &caller, "media")?;
+pub async fn media_next_cmd(
+    webview: Webview,
+    state: State<'_, AppState>,
+    caller: Option<String>,
+) -> AppResult<()> {
+    require_hook(&state, &webview, caller.as_deref(), "media", HookClass::Plain)?;
     media_next().await
 }
 
 #[tauri::command]
 pub async fn media_previous_cmd(
+    webview: Webview,
     state: State<'_, AppState>,
     caller: Option<String>,
 ) -> AppResult<()> {
-    require_hook(&state, &caller, "media")?;
+    require_hook(&state, &webview, caller.as_deref(), "media", HookClass::Plain)?;
     media_previous().await
 }
 
@@ -362,8 +424,9 @@ pub fn popup_widget_menu(app: AppHandle, id: String) -> AppResult<()> {
 }
 
 #[tauri::command]
-pub fn clear_guides(app: AppHandle) -> AppResult<()> {
-    set_guides_visible(&app, false, &[])
+pub async fn clear_guides(app: AppHandle) -> AppResult<()> {
+    // May create the guides window — never inside the sync IPC stack.
+    on_main_thread(&app, |app| set_guides_visible(app, false, &[])).await?
 }
 
 #[tauri::command]
@@ -412,16 +475,20 @@ pub fn arm_overlay_focus_guard(ms: Option<u64>) -> AppResult<()> {
 }
 
 #[tauri::command]
-pub fn focus_spawnable(app: AppHandle, id: String) -> AppResult<()> {
-    let state = app.state::<AppState>();
-    if crate::window_manager::hotkey_overlay_visible(&app) {
-        let label = crate::window_manager::widget_label(&id);
-        if let Some(w) = app.get_webview_window(&label) {
-            let _ = w.set_focus();
+pub async fn focus_spawnable(app: AppHandle, id: String) -> AppResult<()> {
+    // reveal_overlay may build the spawn window: hop off the IPC stack.
+    on_main_thread(&app, move |app| -> AppResult<()> {
+        let state = app.state::<AppState>();
+        if crate::window_manager::hotkey_overlay_visible(app) {
+            let label = crate::window_manager::widget_label(&id);
+            if let Some(w) = app.get_webview_window(&label) {
+                let _ = w.set_focus();
+            }
+            return Ok(());
         }
-        return Ok(());
-    }
-    crate::window_manager::reveal_overlay(&app, &state.window_manager, &id)
+        crate::window_manager::reveal_overlay(app, &state.window_manager, &id)
+    })
+    .await?
 }
 
 #[derive(Serialize)]

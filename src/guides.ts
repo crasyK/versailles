@@ -18,8 +18,10 @@ function resize() {
 
 function draw(guides: SnapGuide[]) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.strokeStyle = "rgba(58, 160, 255, 0.85)";
-  ctx.lineWidth = 1;
+  // Paper theme: ink, dashed 2px stroke (design/PAPER-THEME.md "Stroke dashed").
+  ctx.strokeStyle = "#141414";
+  ctx.lineWidth = 2;
+  ctx.setLineDash([6, 4]);
   for (const guide of guides) {
     ctx.beginPath();
     if (guide.orientation === "vertical") {

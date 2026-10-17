@@ -222,57 +222,136 @@ pub fn parse_page(html: &str) -> PageCatalog {
     PageCatalog { pieces }
 }
 
-/// Host enforcement: unscoped invokes (launcher engine) are allowed.
-/// A widget/spawnable `caller` must list the hook on `data-hooks`.
-pub fn enforce_caller_hook(html: &str, caller: Option<&str>, hook: &str) -> AppResult<()> {
-    enforce_caller_hook_catalog(&parse_page(html), caller, hook)
+/// Label of the wallpaper window (one document hosting every piece on the page).
+pub const DESKTOP_LABEL: &str = "desktop";
+
+/// Who invoked a command, derived from the calling webview's label — never
+/// from a self-declared IPC argument.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Invoker {
+    /// `widget-<id>` window bound to a page piece; `spawn` = spawnable template.
+    Piece { id: String, spawn: bool },
+    /// `widget-<id>` window for a registry folder widget; hooks come from its
+    /// `widget.json` permissions.
+    Folder { id: String, hooks: Vec<String> },
+    /// The desktop wallpaper.
+    Desktop,
+    /// Host chrome (`launcher-dim`, `guides`, prewarm) or an unknown label.
+    Host,
 }
 
-pub fn enforce_caller_hook_catalog(
+/// `Exec` commands run code or drive a shell (`cli_exec*`, `cli_search_files`,
+/// `pty_*`): refused from the wallpaper, only allowed from a spawn window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HookClass {
+    Plain,
+    Exec,
+}
+
+/// Map a webview label to an [`Invoker`]. `folder_hooks` resolves registry
+/// widgets that are not page pieces.
+pub fn classify_invoker(
+    label: &str,
     cat: &PageCatalog,
+    folder_hooks: impl FnOnce(&str) -> Option<Vec<String>>,
+) -> Invoker {
+    if label == DESKTOP_LABEL {
+        return Invoker::Desktop;
+    }
+    let Some(id) = label.strip_prefix("widget-").filter(|s| !s.is_empty()) else {
+        return Invoker::Host;
+    };
+    if let Some(piece) = cat.get(id) {
+        return Invoker::Piece {
+            id: piece.id.clone(),
+            spawn: piece.kind == PageKind::Spawnable,
+        };
+    }
+    match folder_hooks(id) {
+        Some(hooks) => Invoker::Folder {
+            id: id.to_string(),
+            hooks,
+        },
+        None => Invoker::Host,
+    }
+}
+
+/// Host enforcement. Returns the piece id the call acts as.
+///
+/// - Spawn / piece window: acts as its own piece; `caller` is ignored.
+/// - Desktop wallpaper: may claim any piece on the page via `caller`; a missing
+///   caller is rejected. `Exec` hooks are never allowed from the wallpaper.
+/// - Folder widget: its `widget.json` permissions; never `Exec`.
+/// - Host windows: no hooks.
+pub fn authorize_hook(
+    cat: &PageCatalog,
+    invoker: &Invoker,
     caller: Option<&str>,
     hook: &str,
-) -> AppResult<()> {
+    class: HookClass,
+) -> AppResult<String> {
     let hook = hook.trim().to_ascii_lowercase();
     if !KNOWN_HOOKS.iter().any(|h| *h == hook) {
         return Err(AppError::msg(format!("Unknown hook '{hook}'")));
     }
-    let Some(id) = caller.map(str::trim).filter(|s| !s.is_empty()) else {
-        return Ok(());
+    let piece = match invoker {
+        Invoker::Piece { id, spawn } => {
+            if class == HookClass::Exec && !spawn {
+                return Err(AppError::msg(format!(
+                    "hook '{hook}' rejected: '{id}' is not a spawn window"
+                )));
+            }
+            cat.get(id)
+                .ok_or_else(|| AppError::msg(format!("hook '{hook}' rejected: unknown page piece '{id}'")))?
+        }
+        Invoker::Folder { id, hooks } => {
+            if class == HookClass::Exec {
+                return Err(AppError::msg(format!(
+                    "hook '{hook}' rejected: folder widget '{id}' cannot run commands"
+                )));
+            }
+            if hooks.iter().any(|h| *h == hook) {
+                return Ok(id.clone());
+            }
+            return Err(AppError::msg(format!("hook '{hook}' not declared on '{id}'")));
+        }
+        Invoker::Desktop => {
+            if class == HookClass::Exec {
+                return Err(AppError::msg(format!(
+                    "hook '{hook}' rejected: commands cannot run from the desktop wallpaper"
+                )));
+            }
+            let Some(id) = caller.map(str::trim).filter(|s| !s.is_empty()) else {
+                return Err(AppError::msg(format!(
+                    "hook '{hook}' rejected: the desktop page must name its piece (versailles.for(id))"
+                )));
+            };
+            cat.get(id)
+                .ok_or_else(|| AppError::msg(format!("hook '{hook}' rejected: unknown page piece '{id}'")))?
+        }
+        Invoker::Host => {
+            return Err(AppError::msg(format!(
+                "hook '{hook}' rejected: host window has no page piece"
+            )));
+        }
     };
-    let Some(piece) = cat.get(id) else {
-        return Err(AppError::msg(format!(
-            "hook '{hook}' rejected: unknown page piece '{id}'"
-        )));
-    };
-    if piece.hooks.iter().any(|h| h == &hook) {
-        return Ok(());
+    if piece.hooks.iter().any(|h| *h == hook) {
+        return Ok(piece.id.clone());
     }
     Err(AppError::msg(format!(
-        "hook '{hook}' not declared on '{id}'"
+        "hook '{hook}' not declared on '{}'",
+        piece.id
     )))
 }
 
-/// Best-effort ACL when the command only has an optional `caller` and no `AppState`.
-#[allow(dead_code)]
-pub fn enforce_hook_from_disk(caller: Option<&str>, hook: &str) -> Result<(), String> {
-    let Ok(root) = crate::registry::widgets_root() else {
-        return Ok(());
+/// `true` when `target` names the same piece as `acting` (case / calc alias aware).
+pub fn same_piece(cat: &PageCatalog, acting: &str, target: &str) -> bool {
+    let resolve = |id: &str| {
+        cat.get(id)
+            .map(|p| p.id.to_ascii_lowercase())
+            .unwrap_or_else(|| id.trim().to_ascii_lowercase())
     };
-    let path = root.join("desktop").join("index.html");
-    let Ok(page) = std::fs::read_to_string(path) else {
-        return Ok(());
-    };
-    crate::boot::count_html_read();
-    enforce_caller_hook(&page, caller, hook).map_err(|e| e.to_string())
-}
-
-pub fn enforce_hook_cached(
-    cat: &PageCatalog,
-    caller: Option<&str>,
-    hook: &str,
-) -> Result<(), String> {
-    enforce_caller_hook_catalog(cat, caller, hook).map_err(|e| e.to_string())
+    resolve(acting) == resolve(target)
 }
 
 fn class_has(tag_lower: &str, token: &str) -> bool {
@@ -438,10 +517,12 @@ mod tests {
             cat.hotkey_bindings("Alt+Space"),
             vec![("Alt+Space".into(), "action-bar".into())]
         );
-        assert!(enforce_caller_hook(html, None, "media").is_ok());
-        assert!(enforce_caller_hook(html, Some("now-playing"), "media").is_ok());
-        assert!(enforce_caller_hook(html, Some("clock"), "media").is_err());
-        assert!(enforce_caller_hook(html, Some("now-playing"), "shell").is_err());
+        let desk = Invoker::Desktop;
+        let plain = HookClass::Plain;
+        assert!(authorize_hook(&cat, &desk, None, "media", plain).is_err());
+        assert!(authorize_hook(&cat, &desk, Some("now-playing"), "media", plain).is_ok());
+        assert!(authorize_hook(&cat, &desk, Some("clock"), "media", plain).is_err());
+        assert!(authorize_hook(&cat, &desk, Some("now-playing"), "shell", plain).is_err());
     }
 
     #[test]
@@ -561,13 +642,15 @@ mod tests {
         let html = bulky_html(400, 500);
         let cat = parse_page(&html);
         let cached_start = std::time::Instant::now();
+        let desk = Invoker::Desktop;
         for _ in 0..1_000 {
-            assert!(enforce_caller_hook_catalog(&cat, Some("w0"), "media").is_ok());
+            assert!(authorize_hook(&cat, &desk, Some("w0"), "media", HookClass::Plain).is_ok());
         }
         let cached = cached_start.elapsed();
         let parsed_start = std::time::Instant::now();
         for _ in 0..1_000 {
-            assert!(enforce_caller_hook(&html, Some("w0"), "media").is_ok());
+            let cat = parse_page(&html);
+            assert!(authorize_hook(&cat, &desk, Some("w0"), "media", HookClass::Plain).is_ok());
         }
         let parsed = parsed_start.elapsed();
         eprintln!("acl cached={cached:?} reparse={parsed:?}");
@@ -575,5 +658,104 @@ mod tests {
             cached.as_nanos() * 10 < parsed.as_nanos() || cached.as_micros() < 5_000,
             "cached ACL should dwarf full reparse (cached={cached:?} parsed={parsed:?})"
         );
+    }
+
+    fn live_like_page() -> PageCatalog {
+        parse_page(
+            r#"
+<article class="widget now" data-id="now-playing" data-hooks="media"></article>
+<article class="widget" data-id="watch"></article>
+<template class="spawnable" data-id="draw" data-anchor="c" data-hooks="layout,spawn"></template>
+<template class="spawnable action-bar" data-id="action-bar" data-hooks="shell,hotkey,pty" data-anchor="tc"></template>
+<template class="spawnable" data-id="calc" data-anchor="tr"></template>
+"#,
+        )
+    }
+
+    fn folder_none(_: &str) -> Option<Vec<String>> {
+        None
+    }
+
+    #[test]
+    fn classifies_windows_by_label() {
+        let cat = live_like_page();
+        assert_eq!(classify_invoker("desktop", &cat, folder_none), Invoker::Desktop);
+        assert_eq!(classify_invoker("launcher-dim", &cat, folder_none), Invoker::Host);
+        assert_eq!(classify_invoker("guides", &cat, folder_none), Invoker::Host);
+        assert_eq!(classify_invoker("prewarm", &cat, folder_none), Invoker::Host);
+        assert_eq!(classify_invoker("widget-", &cat, folder_none), Invoker::Host);
+        assert_eq!(
+            classify_invoker("widget-action-bar", &cat, folder_none),
+            Invoker::Piece { id: "action-bar".into(), spawn: true }
+        );
+        assert_eq!(
+            classify_invoker("widget-calculator", &cat, folder_none),
+            Invoker::Piece { id: "calc".into(), spawn: true }
+        );
+        assert_eq!(
+            classify_invoker("widget-dice", &cat, |id| (id == "dice").then(|| vec!["media".into()])),
+            Invoker::Folder { id: "dice".into(), hooks: vec!["media".into()] }
+        );
+        assert_eq!(classify_invoker("widget-unknown", &cat, folder_none), Invoker::Host);
+    }
+
+    #[test]
+    fn spawn_window_acts_as_its_piece_regardless_of_caller() {
+        let cat = live_like_page();
+        let bar = classify_invoker("widget-action-bar", &cat, folder_none);
+        // bar.js calls pty_* / cli_* without a caller.
+        for hook in ["pty", "shell"] {
+            assert_eq!(authorize_hook(&cat, &bar, None, hook, HookClass::Exec).unwrap(), "action-bar");
+        }
+        assert!(authorize_hook(&cat, &bar, None, "shell", HookClass::Plain).is_ok());
+        // Claiming another piece does not borrow its hooks.
+        assert!(authorize_hook(&cat, &bar, Some("now-playing"), "media", HookClass::Plain).is_err());
+        let draw = classify_invoker("widget-draw", &cat, folder_none);
+        assert!(authorize_hook(&cat, &draw, Some("action-bar"), "pty", HookClass::Exec).is_err());
+        assert!(authorize_hook(&cat, &draw, Some("action-bar"), "shell", HookClass::Plain).is_err());
+        assert_eq!(authorize_hook(&cat, &draw, None, "spawn", HookClass::Plain).unwrap(), "draw");
+    }
+
+    #[test]
+    fn desktop_needs_caller_and_never_execs() {
+        let cat = live_like_page();
+        let desk = Invoker::Desktop;
+        // Live desktop: watch -> now-playing media, Draw button -> draw spawn.
+        assert_eq!(
+            authorize_hook(&cat, &desk, Some("now-playing"), "media", HookClass::Plain).unwrap(),
+            "now-playing"
+        );
+        assert!(authorize_hook(&cat, &desk, Some("draw"), "spawn", HookClass::Plain).is_ok());
+        assert!(authorize_hook(&cat, &desk, None, "spawn", HookClass::Plain).is_err());
+        assert!(authorize_hook(&cat, &desk, Some(" "), "media", HookClass::Plain).is_err());
+        assert!(authorize_hook(&cat, &desk, Some("ghost"), "media", HookClass::Plain).is_err());
+        // shell (open URL) may be claimed; exec class never from the wallpaper.
+        assert!(authorize_hook(&cat, &desk, Some("action-bar"), "shell", HookClass::Plain).is_ok());
+        for hook in ["pty", "shell"] {
+            assert!(authorize_hook(&cat, &desk, Some("action-bar"), hook, HookClass::Exec).is_err());
+        }
+    }
+
+    #[test]
+    fn host_and_folder_windows() {
+        let cat = live_like_page();
+        assert!(authorize_hook(&cat, &Invoker::Host, Some("now-playing"), "media", HookClass::Plain).is_err());
+        let folder = Invoker::Folder { id: "dice".into(), hooks: vec!["media".into()] };
+        assert!(authorize_hook(&cat, &folder, None, "media", HookClass::Plain).is_ok());
+        assert!(authorize_hook(&cat, &folder, None, "mouse", HookClass::Plain).is_err());
+        assert!(authorize_hook(&cat, &folder, None, "media", HookClass::Exec).is_err());
+        // Floating (non-spawn) page piece window never gets exec.
+        let watch = Invoker::Piece { id: "now-playing".into(), spawn: false };
+        assert!(authorize_hook(&cat, &watch, None, "media", HookClass::Plain).is_ok());
+        assert!(authorize_hook(&cat, &watch, None, "media", HookClass::Exec).is_err());
+        assert!(authorize_hook(&cat, &Invoker::Desktop, Some("now-playing"), "bogus", HookClass::Plain).is_err());
+    }
+
+    #[test]
+    fn same_piece_handles_alias_and_case() {
+        let cat = live_like_page();
+        assert!(same_piece(&cat, "calc", "Calculator"));
+        assert!(same_piece(&cat, "draw", "DRAW"));
+        assert!(!same_piece(&cat, "draw", "action-bar"));
     }
 }

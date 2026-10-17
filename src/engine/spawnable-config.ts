@@ -70,6 +70,8 @@ export function mergeOpts(
 export async function loadSpawnableEngineContext(): Promise<{
   id: string;
   dismissOnBlur: boolean;
+  /** False when the host did not answer (preview) — dismissOnBlur is then a placeholder. */
+  fromHost: boolean;
   opts: Required<SpawnableEngineOpts>;
 }> {
   const id = spawnableId();
@@ -79,12 +81,14 @@ export async function loadSpawnableEngineContext(): Promise<{
     return {
       id: ctx.id || id,
       dismissOnBlur: ctx.dismissOnBlur,
+      fromHost: true,
       opts: mergeOpts(ctx.opts, blockOpts),
     };
   } catch {
     return {
       id,
       dismissOnBlur: false,
+      fromHost: false,
       opts: mergeOpts(undefined, blockOpts),
     };
   }

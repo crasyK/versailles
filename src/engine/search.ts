@@ -137,10 +137,15 @@ export function orderDefaults(
   return out.slice(0, limit);
 }
 
+/** One shared context — browsers cap live AudioContexts and we never close them. */
+let tickCtx: AudioContext | null = null;
+
 export function playLaunchTick(enabled: boolean) {
   if (!enabled) return;
   try {
-    const ctx = new AudioContext();
+    tickCtx ??= new AudioContext();
+    const ctx = tickCtx;
+    if (ctx.state === "suspended") void ctx.resume().catch(() => {});
     const o = ctx.createOscillator();
     const g = ctx.createGain();
     o.connect(g);

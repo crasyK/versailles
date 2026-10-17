@@ -34,10 +34,17 @@
     return t.core.invoke(cmd, args);
   }
 
+  /** Without a host (browser / file:) resolve a no-op unlisten so page boots finish. */
   async function listen(event, handler) {
     const t = tauri();
-    if (!t?.event?.listen) throw new Error("Versailles event API not available");
+    if (!t?.event?.listen) return function () {};
     return t.event.listen(event, (e) => handler(e.payload));
+  }
+
+  /** `calc` is an alias of `calculator` everywhere ids are accepted. */
+  function canonicalId(id) {
+    const s = String(id || "").trim();
+    return s.toLowerCase() === "calc" ? "calculator" : s;
   }
 
   function widgetIdFromLabel() {
@@ -50,7 +57,7 @@
       }
       const params = new URLSearchParams(global.location?.search || "");
       const fromQuery = params.get("versaillesWidgetId") || params.get("deckWidgetId") || params.get("id");
-      if (fromQuery) return fromQuery;
+      if (fromQuery) return canonicalId(fromQuery);
       const label =
         global.__TAURI_INTERNALS__?.metadata?.currentWindow?.label ||
         global.__TAURI__?.window?.getCurrentWindow?.()?.label;
@@ -154,9 +161,10 @@
 
   function findPiece(id) {
     if (!id) return null;
+    const want = canonicalId(id).toLowerCase();
     const nodes = global.document ? global.document.querySelectorAll("[data-id]") : [];
     for (const el of nodes) {
-      if (String(el.getAttribute("data-id") || "") === id) return el;
+      if (canonicalId(el.getAttribute("data-id")).toLowerCase() === want) return el;
     }
     return null;
   }

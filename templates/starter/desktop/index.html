@@ -307,17 +307,14 @@
         color: var(--ink-mut); font-weight: 600; white-space: nowrap;
         overflow: hidden; text-overflow: ellipsis; max-width: 52%; flex: none;
       }
-      .cli-typed { display: inline-flex; align-items: center; min-width: 0; }
-      .cli-echo { color: var(--ink); white-space: pre; }
-      .cli-caret {
-        width: 7px; height: 16px; flex: none; margin-left: 2px; border-radius: 1px;
-        background: var(--ink); animation: lnblink 1.2s ease-in-out infinite;
-      }
-      @keyframes lnblink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+      /* The input is the visible field: native caret, selection, click-to-position, scroll. */
+      .cli-typed { display: none; } /* retired mirror (#cli-echo + fake caret) */
       .cli-in {
-        position: absolute; inset: 0; width: 100%; opacity: 0;
-        font: inherit; border: 0; outline: none; background: none; cursor: text;
+        flex: 1; min-width: 0; width: auto; margin: 0; padding: 0;
+        font: inherit; color: var(--ink); caret-color: var(--ink);
+        border: 0; outline: none; background: transparent; cursor: text;
       }
+      .cli-in::selection { background: var(--ink); color: var(--paper); }
       .cli-res {
         display: none; margin: 0 16px 6px; padding: 10px 16px; line-height: 1.55;
         background: var(--white); border-radius: 16px; box-shadow: inset 0 0 0 2px #141414;
@@ -942,9 +939,6 @@
         <div class="cli-action" id="cli-action">
           <div class="cli-line">
             <span class="cli-ps" id="cli-ps">PS …&gt;</span>
-            <span class="cli-typed">
-              <span class="cli-echo" id="cli-echo"></span><span class="cli-caret"></span>
-            </span>
             <input class="cli-in" id="cli-in" spellcheck="false" autocomplete="off" autofocus aria-label="command input" />
           </div>
           <div class="cli-res" id="cli-res"></div>
@@ -986,7 +980,6 @@
           }
           if (!window.Terminal) chain = chain.then(function () { return load(sdk + 'xterm.js'); });
           if (!window.FitAddon) chain = chain.then(function () { return load(sdk + 'xterm-addon-fit.js'); });
-          if (!window.WebglAddon) chain = chain.then(function () { return load(sdk + 'xterm-addon-webgl.js').catch(function () {}); });
           if (!window.WebLinksAddon) chain = chain.then(function () { return load(sdk + 'xterm-addon-web-links.js').catch(function () {}); });
           if (!window.SearchAddon) chain = chain.then(function () { return load(sdk + 'xterm-addon-search.js').catch(function () {}); });
           chain.then(function () { return load(desk + 'bar.js?v=' + Date.now()); }).catch(function (err) {

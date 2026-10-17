@@ -15,6 +15,19 @@ pub enum WidgetPermission {
     Shell,
 }
 
+impl WidgetPermission {
+    /// Page hook a folder widget's `widget.json` permission maps to.
+    pub fn hook_name(&self) -> &'static str {
+        match self {
+            Self::Media => "media",
+            Self::Mouse => "mouse",
+            Self::Hotkeys => "hotkey",
+            Self::Layout => "layout",
+            Self::Shell => "shell",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct WidgetManifest {

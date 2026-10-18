@@ -321,38 +321,18 @@ fn schedule_snap_after_drag(app: AppHandle, id: String) {
     });
 }
 
-/// Clip the HWND to a rounded rect matching the current outer size.
-/// Must be re-run after every resize — a stale region keeps the old (small) clip.
+/// Overlays are plain rectangles: drop any HWND region so the page owns its corners
+/// (transparent window + CSS `border-radius` if a piece wants rounding).
 #[cfg(windows)]
 fn clip_round_window(window: &WebviewWindow) {
     use windows::Win32::Foundation::HWND;
-    use windows::Win32::Graphics::Gdi::{CreateRoundRectRgn, SetWindowRgn};
+    use windows::Win32::Graphics::Gdi::{SetWindowRgn, HRGN};
 
     let Ok(hwnd_raw) = window.hwnd() else {
         return;
     };
-    let Ok(size) = window.outer_size() else {
-        return;
-    };
-    if size.width < 2 || size.height < 2 {
-        return;
-    }
-    let hwnd = HWND(hwnd_raw.0);
-    // Diameter = 2 × CSS radius (18px card) in physical px so the clip matches the panel.
-    let diameter = ((36.0 * window.scale_factor().unwrap_or(1.0)).round() as i32).clamp(20, 72);
     unsafe {
-        // GDI regions exclude the right/bottom edge — pass +1 or those sides lose the CSS border.
-        let region = CreateRoundRectRgn(
-            0,
-            0,
-            size.width as i32 + 1,
-            size.height as i32 + 1,
-            diameter,
-            diameter,
-        );
-        if !region.is_invalid() {
-            let _ = SetWindowRgn(hwnd, Some(region), true);
-        }
+        let _ = SetWindowRgn(HWND(hwnd_raw.0), Some(HRGN::default()), true);
     }
 }
 
@@ -1136,6 +1116,14 @@ pub fn reveal_overlay(
 
     if let Some(window) = app.get_webview_window(&label) {
         suppress_snap_for(id, 1200);
+        // Re-apply catalog size on every reveal so a stale session rect never wins.
+        // `tc` (action bar) sizes itself from page JS, so leave it alone.
+        if overlay && !crate::page::piece_overlay_top_pin(piece) {
+            let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize {
+                width: piece.width as f64,
+                height: piece.height as f64,
+            }));
+        }
         let _ = window.set_position(tauri::Position::Physical(PhysicalPosition {
             x: pos.x,
             y: pos.y,

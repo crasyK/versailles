@@ -61,6 +61,59 @@ pub struct WeatherPayload {
     pub lat: f64,
     pub lon: f64,
     pub source: String,
+    /// Next 12 hours from the current hour (local time at the location).
+    pub hourly: Vec<HourTemp>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct HourTemp {
+    /// `HH:MM` local time.
+    pub time: String,
+    pub temp: i32,
+    /// Precipitation probability, 0–100 %.
+    pub rain: i32,
+}
+
+struct Forecast {
+    temp: i32,
+    high: i32,
+    low: i32,
+    desc: &'static str,
+    glyph: &'static str,
+    hourly: Vec<HourTemp>,
+}
+
+/// Open-Meteo `hourly.time` is `YYYY-MM-DDTHH:MM`; keep the clock part.
+fn parse_hourly(body: &Value) -> Vec<HourTemp> {
+    let hourly = body.get("hourly");
+    let times = hourly.and_then(|h| h.get("time")).and_then(|v| v.as_array());
+    let temps = hourly
+        .and_then(|h| h.get("temperature_2m"))
+        .and_then(|v| v.as_array());
+    let rain = hourly
+        .and_then(|h| h.get("precipitation_probability"))
+        .and_then(|v| v.as_array());
+    let (Some(times), Some(temps)) = (times, temps) else {
+        return Vec::new();
+    };
+    times
+        .iter()
+        .zip(temps)
+        .enumerate()
+        .filter_map(|(i, (t, v))| {
+            let t = t.as_str()?;
+            let time = t.split_once('T').map(|(_, hm)| hm).unwrap_or(t);
+            Some(HourTemp {
+                time: time.chars().take(5).collect(),
+                temp: v.as_f64()?.round() as i32,
+                rain: rain
+                    .and_then(|r| r.get(i))
+                    .and_then(|r| r.as_f64())
+                    .map_or(0, |r| r.round().clamp(0.0, 100.0) as i32),
+            })
+        })
+        .take(12)
+        .collect()
 }
 
 fn http() -> reqwest::Client {
@@ -243,9 +296,9 @@ fn wmo_desc_glyph(code: i64) -> (&'static str, &'static str) {
     }
 }
 
-async fn forecast(lat: f64, lon: f64) -> Result<(i32, i32, i32, &'static str, &'static str), String> {
+async fn forecast(lat: f64, lon: f64) -> Result<Forecast, String> {
     let url = format!(
-        "https://api.open-meteo.com/v1/forecast?latitude={lat:.5}&longitude={lon:.5}&current=temperature_2m,weather_code&daily=temperature_2m_max,temperature_2m_min&timezone=auto"
+        "https://api.open-meteo.com/v1/forecast?latitude={lat:.5}&longitude={lon:.5}&current=temperature_2m,weather_code&daily=temperature_2m_max,temperature_2m_min&hourly=temperature_2m,precipitation_probability&forecast_hours=12&timezone=auto"
     );
     let body: Value = http()
         .get(url)
@@ -280,7 +333,14 @@ async fn forecast(lat: f64, lon: f64) -> Result<(i32, i32, i32, &'static str, &'
         .and_then(|v| v.as_f64())
         .unwrap_or(temp as f64) as i32;
     let (desc, glyph) = wmo_desc_glyph(code);
-    Ok((temp, high, low, desc, glyph))
+    Ok(Forecast {
+        temp,
+        high,
+        low,
+        desc,
+        glyph,
+        hourly: parse_hourly(&body),
+    })
 }
 
 async fn resolve_named(raw: &str, source: &str) -> Result<(f64, f64, String, String), String> {
@@ -339,19 +399,20 @@ pub async fn lookup(q: WeatherQuery) -> Result<WeatherPayload, String> {
         place = reverse_place(lat, lon).await;
     }
 
-    let (temp_c, high_c, low_c, desc, glyph) = forecast(lat, lon).await?;
+    let fc = forecast(lat, lon).await?;
     Ok(WeatherPayload {
         ok: true,
         place,
-        temp_c,
-        desc: desc.into(),
-        high_c,
-        low_c,
-        glyph: glyph.into(),
+        temp_c: fc.temp,
+        desc: fc.desc.into(),
+        high_c: fc.high,
+        low_c: fc.low,
+        glyph: fc.glyph.into(),
         // Precise geolocation never leaves the host: ~1 km is plenty for a widget.
         lat: round2(lat),
         lon: round2(lon),
         source,
+        hourly: fc.hourly,
     })
 }
 
@@ -365,4 +426,38 @@ pub fn error_json(msg: impl Into<String>) -> Value {
 
 pub fn plain_text(payload: &WeatherPayload) -> String {
     format!("{} {}°", payload.desc, payload.temp_c)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hourly_keeps_clock_and_rounds() {
+        let body = json!({
+            "hourly": {
+                "time": ["2026-10-18T10:00", "2026-10-18T11:00"],
+                "temperature_2m": [9.4, 10.6]
+            }
+        });
+        assert_eq!(
+            parse_hourly(&body),
+            vec![
+                HourTemp { time: "10:00".into(), temp: 9, rain: 0 },
+                HourTemp { time: "11:00".into(), temp: 11, rain: 0 },
+            ]
+        );
+    }
+
+    #[test]
+    fn hourly_caps_at_twelve_and_tolerates_gaps() {
+        let times: Vec<String> = (0..24).map(|h| format!("2026-10-18T{h:02}:00")).collect();
+        let mut temps: Vec<Value> = (0..24).map(|h| json!(h as f64)).collect();
+        temps[1] = Value::Null;
+        let body = json!({ "hourly": { "time": times, "temperature_2m": temps } });
+        let hourly = parse_hourly(&body);
+        assert_eq!(hourly.len(), 12);
+        assert_eq!(hourly[1].time, "02:00");
+        assert!(parse_hourly(&json!({})).is_empty());
+    }
 }

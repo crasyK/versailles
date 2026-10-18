@@ -2203,8 +2203,26 @@
   function syncLiveChrome() {
     const live = sessionAlive && mode === "action";
     root.classList.toggle("cli-live", live);
+    root.dataset.pty = sessionAlive ? "live" : "idle";
     headDot.classList.toggle("cli-live-dot", sessionAlive);
     modeLabel.classList.toggle("cli-live-badge", sessionAlive);
+  }
+  function rowKind(r) {
+    if (r.live) return "shell";
+    if (r.path) return r.c.endsWith("/") ? "folder" : "file";
+    if (r.cat && isProfileName(r.cat) && r.c === r.cat) return "profile";
+    const c = r.c.trim();
+    if (c.startsWith("??")) return "find";
+    if (c.startsWith("?")) return "web";
+    if (c.startsWith("!")) return "shell";
+    if (/^https?:\/\//i.test(c)) return "web";
+    if (c.endsWith("/")) return "folder";
+    const hit = findPreset((r.cc ?? r.c).trim().split(/\s+/)[0]) ?? findPreset(c.split(/\s+/)[0]);
+    if (!hit) return "cmd";
+    if (ENGINE_RUNTIME.pins.includes(hit.n)) return "pinned";
+    if (hit.t === "web") return "link";
+    if (hit.t === "term") return "shell";
+    return hit.t;
   }
   function showRows(list) {
     rows = list;
@@ -2213,6 +2231,7 @@
     rows.forEach((r) => {
       const d = document.createElement("div");
       d.className = r.live ? "cl-s cl-s-live" : "cl-s";
+      d.dataset.kind = rowKind(r);
       d.innerHTML = `<b>${esc(r.c)}</b> <span>${esc(r.d || "")}</span>`;
       d.title = r.path || r.d || "";
       d.onmousedown = (e) => {
@@ -2506,6 +2525,7 @@
     } catch (e) {
       sessionAlive = false;
     }
+    if (root) syncLiveChrome();
   }
   function showEndedRows() {
     if (termSessionLabel) {
@@ -2778,6 +2798,52 @@
       true
     );
   }
+  var TERM_THEME_KEYS = [
+    "background",
+    "foreground",
+    "cursor",
+    "cursorAccent",
+    "selectionBackground",
+    "black",
+    "red",
+    "green",
+    "yellow",
+    "blue",
+    "magenta",
+    "cyan",
+    "white",
+    "brightBlack",
+    "brightRed",
+    "brightGreen",
+    "brightYellow",
+    "brightBlue",
+    "brightMagenta",
+    "brightCyan",
+    "brightWhite"
+  ];
+  function termLook() {
+    const cs = getComputedStyle(root);
+    const v = (name) => cs.getPropertyValue(name).trim();
+    const theme = {};
+    for (const key of TERM_THEME_KEYS) {
+      const val = v("--term-" + key.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase()));
+      if (val) theme[key] = val;
+    }
+    const style = v("--term-cursor-style");
+    return {
+      fontFamily: v("--term-font") || '"Cascadia Mono", "JetBrains Mono", Consolas, monospace',
+      fontSize: Number(v("--term-size")) || 13,
+      lineHeight: Number(v("--term-line-height")) || 1,
+      cursorStyle: style === "block" || style === "underline" ? style : "bar",
+      theme
+    };
+  }
+  async function loadTermFont() {
+    if (term || !document.fonts?.load) return;
+    const { fontFamily, fontSize } = termLook();
+    await Promise.race([document.fonts.load(`${fontSize}px ${fontFamily}`).catch(() => {
+    }), delay(600)]);
+  }
   function ensureTerm() {
     if (term?.options.convertEol) {
       try {
@@ -2789,14 +2855,15 @@
       searchAddon = null;
     }
     if (term) return term;
+    const look = termLook();
     const t = new Terminal({
       // ConPTY already translates newlines — convertEol wraps TUIs onto line 1.
       convertEol: false,
       cursorBlink: true,
-      cursorStyle: "bar",
-      fontFamily: '"Cascadia Mono", "JetBrains Mono", Consolas, monospace',
-      fontSize: 13,
-      lineHeight: 1,
+      cursorStyle: look.cursorStyle,
+      fontFamily: look.fontFamily,
+      fontSize: look.fontSize,
+      lineHeight: look.lineHeight,
       scrollback: 1e4,
       scrollSensitivity: 1,
       smoothScrollDuration: 0,
@@ -2829,7 +2896,8 @@
         brightBlue: "#70d7ff",
         brightMagenta: "#da8fff",
         brightCyan: "#70d7ff",
-        brightWhite: "#ffffff"
+        brightWhite: "#ffffff",
+        ...look.theme
       }
     });
     const fit = new FitAddon();
@@ -3039,6 +3107,7 @@
           termWrap.hidden = false;
           await resizeLauncher("terminal");
           await delay(80);
+          await loadTermFont();
           ensureTerm();
           if (!ptyDataUnlisten) await bindPtyListeners();
           await settleTermSize();
@@ -3056,6 +3125,7 @@
         termWrap.hidden = false;
         await resizeLauncher("terminal");
         await delay(80);
+        await loadTermFont();
         const t = ensureTerm();
         t.reset();
         clearPtyWriteBuf();
@@ -3072,6 +3142,7 @@
           throw e;
         }
         sessionAlive = true;
+        syncLiveChrome();
         releaseHeldPtyEvents(typeof opened === "number" ? opened : null);
         await settleTermSize();
         t.focus();

@@ -341,8 +341,29 @@ function continueRow(): Row {
 function syncLiveChrome() {
   const live = sessionAlive && mode === "action";
   root.classList.toggle("cli-live", live);
+  // Page chrome (e.g. a pty status light) keys off this; the engine never reads it.
+  root.dataset.pty = sessionAlive ? "live" : "idle";
   headDot.classList.toggle("cli-live-dot", sessionAlive);
   modeLabel.classList.toggle("cli-live-badge", sessionAlive);
+}
+
+/** What a row launches, for page chrome (`data-kind` → icon). Mirrors run()'s routing. */
+function rowKind(r: Row): string {
+  if (r.live) return "shell";
+  if (r.path) return r.c.endsWith("/") ? "folder" : "file";
+  if (r.cat && isProfileName(r.cat) && r.c === r.cat) return "profile";
+  const c = r.c.trim();
+  if (c.startsWith("??")) return "find";
+  if (c.startsWith("?")) return "web";
+  if (c.startsWith("!")) return "shell";
+  if (/^https?:\/\//i.test(c)) return "web";
+  if (c.endsWith("/")) return "folder";
+  const hit = findPreset((r.cc ?? r.c).trim().split(/\s+/)[0]) ?? findPreset(c.split(/\s+/)[0]);
+  if (!hit) return "cmd";
+  if (ENGINE_RUNTIME.pins.includes(hit.n)) return "pinned";
+  if (hit.t === "web") return "link";
+  if (hit.t === "term") return "shell";
+  return hit.t;
 }
 
 function showRows(list: Row[]) {
@@ -352,6 +373,7 @@ function showRows(list: Row[]) {
   rows.forEach((r) => {
     const d = document.createElement("div");
     d.className = r.live ? "cl-s cl-s-live" : "cl-s";
+    d.dataset.kind = rowKind(r);
     d.innerHTML = `<b>${esc(r.c)}</b> <span>${esc(r.d || "")}</span>`;
     d.title = r.path || r.d || "";
     d.onmousedown = (e) => {
@@ -706,6 +728,7 @@ async function refreshSessionAlive() {
   } catch (e) {
     sessionAlive = false;
   }
+  if (root) syncLiveChrome();
 }
 
 function showEndedRows() {
@@ -1028,6 +1051,43 @@ function bindTermChrome(t: Terminal) {
   );
 }
 
+const TERM_THEME_KEYS = [
+  "background", "foreground", "cursor", "cursorAccent", "selectionBackground",
+  "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
+  "brightBlack", "brightRed", "brightGreen", "brightYellow",
+  "brightBlue", "brightMagenta", "brightCyan", "brightWhite",
+] as const;
+
+/**
+ * Terminal look from optional CSS custom properties on #cli-root, so a page theme can
+ * restyle xterm without forking the engine: --term-font, --term-size, --term-line-height,
+ * --term-cursor-style, and --term-<theme key> (e.g. --term-background, --term-bright-red).
+ */
+function termLook() {
+  const cs = getComputedStyle(root);
+  const v = (name: string) => cs.getPropertyValue(name).trim();
+  const theme: Record<string, string> = {};
+  for (const key of TERM_THEME_KEYS) {
+    const val = v("--term-" + key.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase()));
+    if (val) theme[key] = val;
+  }
+  const style = v("--term-cursor-style");
+  return {
+    fontFamily: v("--term-font") || '"Cascadia Mono", "JetBrains Mono", Consolas, monospace',
+    fontSize: Number(v("--term-size")) || 13,
+    lineHeight: Number(v("--term-line-height")) || 1,
+    cursorStyle: (style === "block" || style === "underline" ? style : "bar") as "block" | "underline" | "bar",
+    theme,
+  };
+}
+
+/** xterm measures glyphs once on open; make sure a themed web font is loaded first. */
+async function loadTermFont() {
+  if (term || !document.fonts?.load) return;
+  const { fontFamily, fontSize } = termLook();
+  await Promise.race([document.fonts.load(`${fontSize}px ${fontFamily}`).catch(() => {}), delay(600)]);
+}
+
 function ensureTerm(): Terminal {
   if (term?.options.convertEol) {
     try {
@@ -1040,14 +1100,15 @@ function ensureTerm(): Terminal {
     searchAddon = null;
   }
   if (term) return term;
+  const look = termLook();
   const t = new Terminal({
     // ConPTY already translates newlines — convertEol wraps TUIs onto line 1.
     convertEol: false,
     cursorBlink: true,
-    cursorStyle: "bar",
-    fontFamily: '"Cascadia Mono", "JetBrains Mono", Consolas, monospace',
-    fontSize: 13,
-    lineHeight: 1,
+    cursorStyle: look.cursorStyle,
+    fontFamily: look.fontFamily,
+    fontSize: look.fontSize,
+    lineHeight: look.lineHeight,
     scrollback: 10000,
     scrollSensitivity: 1,
     smoothScrollDuration: 0,
@@ -1081,6 +1142,7 @@ function ensureTerm(): Terminal {
       brightMagenta: "#da8fff",
       brightCyan: "#70d7ff",
       brightWhite: "#ffffff",
+      ...look.theme,
     },
   });
   const fit = new FitAddon();
@@ -1335,6 +1397,7 @@ async function enterTerminal(seedCmd?: string, opts: { fresh?: boolean } = {}) {
         termWrap.hidden = false;
         await resizeLauncher("terminal");
         await delay(80);
+        await loadTermFont();
         ensureTerm();
         if (!ptyDataUnlisten) await bindPtyListeners();
         await settleTermSize();
@@ -1354,6 +1417,7 @@ async function enterTerminal(seedCmd?: string, opts: { fresh?: boolean } = {}) {
       termWrap.hidden = false;
       await resizeLauncher("terminal");
       await delay(80);
+      await loadTermFont();
       const t = ensureTerm();
       t.reset();
       clearPtyWriteBuf();
@@ -1370,6 +1434,7 @@ async function enterTerminal(seedCmd?: string, opts: { fresh?: boolean } = {}) {
         throw e;
       }
       sessionAlive = true;
+      syncLiveChrome();
       // Newer hosts return the session id; legacy hosts return nothing.
       releaseHeldPtyEvents(typeof opened === "number" ? opened : null);
       await settleTermSize();

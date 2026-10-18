@@ -24,7 +24,6 @@ impl PartialEq for MediaInfo {
             && self.artist == other.artist
             && self.album == other.album
             && self.status == other.status
-            && self.position_ms / 500 == other.position_ms / 500
             && self.duration_ms == other.duration_ms
             && self.source == other.source
             && self.has_session == other.has_session
@@ -119,8 +118,9 @@ fn publish_media(app: &AppHandle, state: &MediaState, info: MediaInfo) {
     let to_emit = {
         let mut current = state.current.lock().unwrap();
         if *current == info {
+            // Position is not part of change detection; keep the snapshot fresh
+            // for `media_now` pollers without re-emitting the event.
             current.position_ms = info.position_ms;
-            current.status = info.status.clone();
             return;
         }
 
@@ -316,15 +316,27 @@ fn poll_media_blocking() -> AppResult<MediaInfo> {
     let status = session_status_label(&session);
 
     let timeline = session.GetTimelineProperties().ok();
-    let position_ms = timeline
-        .as_ref()
-        .and_then(|t| t.Position().ok())
-        .map(|t| (t.Duration / 10_000) as u64)
-        .unwrap_or(0);
     let duration_ms = timeline
         .as_ref()
         .and_then(|t| t.EndTime().ok())
-        .map(|t| (t.Duration / 10_000) as u64)
+        .map(|t| (t.Duration.max(0) / 10_000) as u64)
+        .unwrap_or(0);
+    // GSMTC `Position` is a snapshot taken at `LastUpdatedTime`; browsers and
+    // Spotify refresh it rarely, so extrapolate while playing.
+    let position_ms = timeline
+        .as_ref()
+        .map(|t| {
+            let base = t.Position().map(|p| p.Duration.max(0) / 10_000).unwrap_or(0) as u64;
+            if status != "playing" {
+                return base;
+            }
+            let Ok(updated) = t.LastUpdatedTime() else {
+                return base;
+            };
+            let elapsed_ms = (now_filetime() - updated.UniversalTime).max(0) / 10_000;
+            let pos = base.saturating_add(elapsed_ms as u64);
+            if duration_ms > 0 { pos.min(duration_ms) } else { pos }
+        })
         .unwrap_or(0);
 
     let source = session
@@ -353,6 +365,17 @@ fn poll_media_blocking() -> AppResult<MediaInfo> {
     })
 }
 
+/// Now as a Windows FILETIME (100 ns ticks since 1601-01-01 UTC).
+#[cfg(windows)]
+fn now_filetime() -> i64 {
+    const UNIX_EPOCH_AS_FILETIME: i64 = 116_444_736_000_000_000;
+    let since_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| (d.as_nanos() / 100) as i64)
+        .unwrap_or(0);
+    UNIX_EPOCH_AS_FILETIME + since_unix
+}
+
 #[cfg(windows)]
 fn read_thumbnail(
     props: &windows::Media::Control::GlobalSystemMediaTransportControlsSessionMediaProperties,
@@ -364,7 +387,7 @@ fn read_thumbnail(
     let stream = thumb.OpenReadAsync().ok()?.get().ok()?;
     let size = stream.Size().ok()? as u32;
     // Keep IPC small — multi‑MB art breaks WebView2 postMessage.
-    const MAX_BYTES: u32 = 48_000;
+    const MAX_BYTES: u32 = 128_000;
     if size == 0 || size > MAX_BYTES {
         return None;
     }

@@ -22,3 +22,7 @@ Do not overwrite an existing `desktop/index.html` unless you mean to. The host d
 | `.sdk/xterm.js` | Nested terminal for `!!` |
 
 Host knobs and shortcuts live in `<script type="application/json" id="versailles">` in the page. Then start Versailles and type `desk` in the overlay (Alt+Space). Add more tiles from [`../../examples/`](../../examples).
+
+## Third-party
+
+- [pixelarticons](https://github.com/halfmage/pixelarticons) by Gerrit Halfmann, MIT License. Icons in the desktop and action bar; copy lives at `.sdk/icons/pixelarticons/` with its `LICENSE`.

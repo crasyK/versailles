@@ -1,6 +1,6 @@
 {
   "name": "versailles",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Versailles — lightweight HTML desktop widget host for Windows",
   "private": true,
   "type": "module",

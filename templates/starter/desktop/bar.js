@@ -2059,7 +2059,7 @@
   var ptyOpening = false;
   var ptyHeld = [];
   var termExited = false;
-  var PIECE = { w: 640, h: 420, anchor: "tc", hotkey: "" };
+  var PIECE = { w: 640, h: 420, anchor: "tc", hotkey: "", dim: "" };
   var DISMISS_ON_BLUR = false;
   var resetGen = 0;
   var HIST_MAX = 200;
@@ -2961,7 +2961,7 @@
   }
   var STAGE_TOP = 120;
   function coversMonitor() {
-    return ENGINE_OPTS.coverMonitor && PIECE.anchor === "tc";
+    return ENGINE_OPTS.coverMonitor && PIECE.anchor === "tc" || PIECE.dim === "page";
   }
   function applyStage(box) {
     const html = document.documentElement;
@@ -3017,7 +3017,7 @@
         }
         applyStage({
           x: Math.round((monW - w) / 2),
-          y: next === "action" ? STAGE_TOP : Math.round((monH - h) / 2),
+          y: next === "action" && PIECE.anchor === "tc" ? STAGE_TOP : Math.round((monH - h) / 2),
           w,
           h
         });
@@ -4166,7 +4166,8 @@
       w: num(attr("data-w"), 640),
       h: num(attr("data-h"), 420),
       anchor: (attr("data-anchor") || "tc").toLowerCase(),
-      hotkey: attr("data-hotkey") || (hooks.includes("hotkey") ? blockLauncherHotkey() : "")
+      hotkey: attr("data-hotkey") || (hooks.includes("hotkey") ? blockLauncherHotkey() : ""),
+      dim: attr("data-dim").toLowerCase()
     };
     const dob = attr("data-dismiss-on-blur");
     DISMISS_ON_BLUR = dob ? !/^(false|0|no|off)$/i.test(dob) : !hooks.includes("pty");

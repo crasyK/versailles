@@ -9,6 +9,7 @@ mod desktop;
 mod engine_runtime;
 mod error;
 mod page;
+mod placement;
 mod hotkeys;
 mod layout;
 mod media;

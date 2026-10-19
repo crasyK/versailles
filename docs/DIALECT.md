@@ -21,7 +21,9 @@ The host is a small windowing + hooks layer. Pieces on the page are the product.
 | `data-id` | yes | Catalog id. Unique, case-insensitive. `calc` aliases `calculator`. |
 | `data-w` | no | Window width in CSS pixels. Default 280. |
 | `data-h` | no | Window height. Default 200. |
-| `data-anchor` | no | Placement. `c` / `center` / `overlay` = mid-screen overlay (covers apps, dim). `tc` = top-center overlay (action bar): opens horizontally centered, 120 px (logical) from the top of the monitor. After that, page JS owns its size and position (see [Top-center overlays](#top-center-overlays)). `tr` = docked top-right slide-out. |
+| `data-anchor` | no | Placement. Overlays (cover apps): a point of the grid `tl tc · / ml c mr / bl bc br`, or `cursor`. `center` / `overlay` alias `c`. `tc` (action bar) rests 120 px (logical) from the top. `tr`, no anchor, or an unknown value = docked top-right slide-out. See [Overlay placement](#overlay-placement). |
+| `data-offset` | no | Overlays only. `x,y` in logical px from the anchor, inward: from the left/top edge for `l`/`t` anchors, from the right/bottom edge for `r`/`b` anchors, a plain right/down shift on a centre axis, added to the cursor for `cursor`. Default `0,0` (`tc`: `0,120`). |
+| `data-dim` | no | Overlays only. `host` (default) = the host's dim window behind the overlay. `page` = the overlay window covers the monitor and the page draws its own backdrop. `none` = no backdrop. Wins over `spawnables.<id>.overlay.dim`. |
 | `data-hotkey` | no | Global accelerator for this spawnable when `data-hooks` includes `hotkey`. Format: Tauri accelerators (`Alt+Space`, `Ctrl+Shift+D`, `CommandOrControl+K`). Duplicate combos: first piece on the page wins. A hook piece with no `data-hotkey` uses `#versailles` `launcher.hotkey` (once). |
 | `data-hooks` | no | Comma-separated allowlist. See [`HOOKS.md`](HOOKS.md). |
 | `data-dismiss-on-blur` | no | Overlays only. `true` / `false`: hide the overlay when its window loses focus. Wins over `#versailles` `spawnables.<id>.overlay.dismissOnBlur`. Default `true`, except pieces with the `pty` hook default to `false` (a terminal survives focus flicker). |
@@ -30,14 +32,14 @@ Duplicate `data-id` values are ignored after the first.
 
 ## Overlay vs slide-out
 
-A spawnable with `data-anchor="c"` (or `center` / `tc` / `overlay`) is an overlay:
+A spawnable whose `data-anchor` is a grid point (`tl`, `tc`, `ml`, `c`, `mr`, `bl`, `bc`, `br`) or `cursor` is an overlay:
 
-- Mid-screen on the monitor under the cursor (`tc` stays near the top, action-bar style)
-- Dim behind it (`launcher-dim`)
+- Opens on the monitor under the cursor, at its anchor (see [Overlay placement](#overlay-placement))
+- Backdrop per `data-dim`: the host dim by default
 - Click-dim dismisses; blur dismisses unless `data-dismiss-on-blur="false"` (default off for `pty` pieces)
 - Hide/show (not destroy) so an embedded PTY survives Alt+Space
 
-`data-anchor="tr"` stays a docked slide-out. Toggle closes it.
+`data-anchor="tr"` (or no anchor) stays a docked slide-out. Toggle closes it. Top-right is the slide-out's place, so the grid has no `tr` overlay.
 
 Every spawnable with `hotkey` in `data-hooks` can bind its own combo. Pressing that shortcut toggles that piece (overlay hide/show, slide-out open/close). Tray left-click still toggles the first such piece.
 
@@ -85,7 +87,7 @@ The widget/spawnable parser ignores this. The JSON must not contain the literal 
 ```json
 "spawnables": {
   "action-bar": {
-    "overlay": { "dismissOnBlur": false, "dismissOnDimClick": true, "draggable": false, "dim": true },
+    "overlay": { "dismissOnBlur": false, "draggable": false, "dim": "host" },
     "opts": {
       "blurDismissMs": 280,
       "suggestionLimit": 12,
@@ -100,18 +102,36 @@ The widget/spawnable parser ignores this. The JSON must not contain the literal 
 }
 ```
 
-`overlay.*` is read by the host. `opts` is handed to the piece's page JS (the example bar reads it via `get_spawnable_engine_context`); the host does not interpret it. A `data-dismiss-on-blur` attribute on the tag beats `overlay.dismissOnBlur`.
+`overlay.*` is read by the host. `overlay.dim` takes `"host"` / `"page"` / `"none"` (or `true` = host, `false` = none). `opts` is handed to the piece's page JS (the example bar reads it via `get_spawnable_engine_context`); the host does not interpret it. Attributes on the tag (`data-dismiss-on-blur`, `data-dim`) beat `overlay.*`.
 
-## Top-center overlays
+## Overlay placement
 
-The host places a `tc` window itself only when it first opens: centered, 120 px from the top of the cursor monitor, at `data-w` × `data-h`. From then on the page owns the window. On each reveal the host carries it to the monitor under the cursor and keeps the page's layout:
+**First open.** The host opens an overlay on the monitor under the cursor at `data-w` × `data-h`, placed at its `data-anchor` with `data-offset` (both logical px). `tc` with no offset rests centered, 120 px from the top.
 
-- The window keeps its size and its offset from the `tc` anchor (centre line, top edge), scaled to the target monitor's DPI and clamped onto it.
-- A window that covers its monitor covers the target monitor (origin and size follow that monitor).
+**Later reveals.**
 
-So a page can make its `tc` window as large as the monitor and lay the chrome out inside it. Motion that starts above the chrome (a drop-in, a swing) is then not clipped at the window edge. A monitor-sized window takes the clicks the dim would get, so the page decides what dismisses it (`dismiss_launcher`).
+- `c` / `center` / `overlay`: the host re-applies `data-w` × `data-h` and re-centers every time.
+- Every other anchor hands its window to the page. On each reveal the host carries it to the monitor under the cursor and keeps the page's layout: same size, same offset from the anchor point (e.g. the bottom-right corner for `br`), scaled to the target monitor's DPI and clamped onto it. A window that covers its monitor covers the target monitor.
+- `cursor` keeps the window's size and opens it next to the cursor again.
 
-The example bar does this with `"coverMonitor": true` in `spawnables.<id>.opts`. Its window covers the monitor; it sets `html[data-stage]` and `--stage-x` / `--stage-y` / `--stage-w` / `--stage-h` (logical px) and pins its surface (`#cli-root`'s parent, marked `data-stage-box`) to that box: 120 px from the top in action mode, centered in terminal mode. A press outside the surface dismisses, except on elements marked `data-stage-keep`.
+So a page can resize or move its own overlay (the `layout` hook, or the window API) and it stays that way, including making a `tc` window as large as the monitor so motion above the chrome (a drop-in, a swing) is not clipped.
+
+**`data-dim="page"`.** The overlay window covers the monitor (transparent) and the host shows no dim. The page draws its backdrop and decides what dismisses it (`dismiss_launcher`). The host hands the page the box its piece would have had:
+
+- `window.__VERSAILLES_STAGE__` = `{ x, y, width, height }` (logical px inside the window)
+- `--piece-x` / `--piece-y` / `--piece-w` / `--piece-h` on `<html>`
+- a `versailles:stage` window event, and `stage` on the `overlay://shown` payload
+
+These are values only; the host adds no styles.
+
+```html
+<template class="spawnable" data-id="toast" data-anchor="br" data-offset="16,16"
+          data-w="320" data-h="120" data-dim="none"></template>
+<template class="spawnable" data-id="spotlight" data-anchor="c" data-dim="page"
+          data-w="720" data-h="480"></template>
+```
+
+**Example bar.** `"coverMonitor": true` in `spawnables.<id>.opts` (or `data-dim="page"`) makes the bar's window cover the monitor. It sets `html[data-stage]` and `--stage-x` / `--stage-y` / `--stage-w` / `--stage-h` (logical px) and pins its surface (`#cli-root`'s parent, marked `data-stage-box`) to that box: 120 px from the top for `tc` in action mode, centered otherwise. A press outside the surface dismisses, except on elements marked `data-stage-keep`. Without it, the bar sizes its window to its box and only knows `tc` and `c` placement.
 
 ## Example command bar
 

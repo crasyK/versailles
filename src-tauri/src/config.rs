@@ -52,11 +52,21 @@ pub struct LauncherConfig {
     pub primary: Option<String>,
 }
 
+/// `overlay.dim`: a flag (legacy) or a mode name.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(untagged)]
+pub enum DimSetting {
+    Flag(bool),
+    Mode(String),
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct SpawnableOverlayConfig {
+    /// `true` / `"host"`: host dim (default). `"page"`: the page draws its own
+    /// backdrop in a monitor-sized window. `false` / `"none"`: no backdrop.
     #[serde(default)]
-    pub dim: Option<bool>,
+    pub dim: Option<DimSetting>,
     #[serde(default)]
     pub dismiss_on_blur: Option<bool>,
     #[serde(default)]

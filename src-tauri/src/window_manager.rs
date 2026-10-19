@@ -1,6 +1,7 @@
 use crate::config::{LayoutPlacement, LayoutTemplate, MonitorFingerprint, Position, SessionWidget};
 use crate::error::{AppError, AppResult};
 use crate::layout::{snap, Rect, SnapGuide, SnapResult};
+use crate::placement::{self, Align, Anchor, DimMode};
 use crate::state::AppState;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -1019,58 +1020,30 @@ pub fn hotkey_overlay_visible(app: &AppHandle) -> bool {
         .unwrap_or(false)
 }
 
-fn overlay_center_position(app: &AppHandle, piece: &crate::page::PagePiece) -> Position {
-    let window = app.webview_windows().into_values().next();
-    let Some(window) = window else {
-        return Position { x: 40, y: 80 };
-    };
-    let (left, top, mon_w, mon_h, scale) = launcher_monitor_bounds(&window);
-    let bar_w = (piece.width as f64 * scale) as i32;
-    let bar_h = (piece.height as f64 * scale) as i32;
-    let x = left + (mon_w as i32 - bar_w) / 2;
-    let y = if crate::page::piece_overlay_top_pin(piece) {
-        top + (120.0 * scale) as i32
-    } else {
-        top + (mon_h as i32 - bar_h) / 2
-    };
-    Position { x, y }
+/// Physical rect + scale of the monitor under the cursor (overlays open there).
+fn cursor_monitor(app: &AppHandle) -> Option<(Rect, f64)> {
+    let window = app.webview_windows().into_values().next()?;
+    let (left, top, width, height, scale) = launcher_monitor_bounds(&window);
+    Some((
+        Rect {
+            x: left,
+            y: top,
+            width: width as i32,
+            height: height as i32,
+        },
+        scale,
+    ))
 }
 
-/// Where an existing `tc` window lands on reveal. Page JS owns its size and
-/// position, so keep where the page left it, measured from the `tc` anchor of
-/// the monitor it sits on: horizontal offset of its centre from the monitor's
-/// centre line, vertical offset from the monitor's top. Offsets scale with the
-/// DPI of the target monitor. A window that covers its monitor covers the
-/// target monitor instead. The result is clamped onto `dst`.
-fn top_pin_reveal_rect(win: Rect, src: Rect, src_scale: f64, dst: Rect, dst_scale: f64) -> Rect {
-    let near = |a: i32, b: i32| (a - b).abs() <= 2;
-    if near(win.width, src.width) && near(win.height, src.height) {
-        return dst;
-    }
-    let ratio = if src_scale > 0.0 && dst_scale > 0.0 {
-        dst_scale / src_scale
-    } else {
-        1.0
-    };
-    let width = ((win.width as f64) * ratio).round() as i32;
-    let height = ((win.height as f64) * ratio).round() as i32;
-    let dx = (win.x + win.width / 2) - (src.x + src.width / 2);
-    let dy = win.y - src.y;
-    let x = dst.x + dst.width / 2 + ((dx as f64) * ratio).round() as i32 - width / 2;
-    let y = dst.y + ((dy as f64) * ratio).round() as i32;
-    let clamp = |v: i32, lo: i32, len: i32, span: i32| {
-        if len >= span {
-            lo
-        } else {
-            v.clamp(lo, lo + span - len)
-        }
-    };
-    Rect {
-        x: clamp(x, dst.x, width, dst.width),
-        y: clamp(y, dst.y, height, dst.height),
-        width,
-        height,
-    }
+fn window_rect(window: &WebviewWindow) -> Option<Rect> {
+    let pos = window.outer_position().ok()?;
+    let size = window.outer_size().ok()?;
+    Some(Rect {
+        x: pos.x,
+        y: pos.y,
+        width: size.width as i32,
+        height: size.height as i32,
+    })
 }
 
 /// Physical rect + scale of the monitor holding the window's centre.
@@ -1093,42 +1066,102 @@ fn window_monitor(window: &WebviewWindow, win: Rect) -> Option<(Rect, f64)> {
         .find(|(r, _)| cx >= r.x && cx < r.x + r.width && cy >= r.y && cy < r.y + r.height)
 }
 
-/// Re-place an existing `tc` window on the cursor monitor without undoing the
-/// page's layout (see `top_pin_reveal_rect`). Returns the position to re-apply.
-fn reveal_top_pin(window: &WebviewWindow) -> Option<Position> {
-    let pos = window.outer_position().ok()?;
-    let size = window.outer_size().ok()?;
-    let win = Rect {
-        x: pos.x,
-        y: pos.y,
-        width: size.width as i32,
-        height: size.height as i32,
-    };
-    let (left, top, mon_w, mon_h, dst_scale) = launcher_monitor_bounds(window);
-    let dst = Rect {
-        x: left,
-        y: top,
-        width: mon_w as i32,
-        height: mon_h as i32,
-    };
-    let (src, src_scale) = window_monitor(window, win).unwrap_or((dst, dst_scale));
-    let next = top_pin_reveal_rect(win, src, src_scale, dst, dst_scale);
+/// Physical rect of `piece` at its anchor + offset on `mon`. `size` overrides
+/// the catalog size (`data-w` / `data-h`).
+fn piece_anchor_rect(
+    piece: &crate::page::PagePiece,
+    mon: Rect,
+    scale: f64,
+    size: Option<(i32, i32)>,
+) -> Rect {
+    let px = |n: f64| (n * scale).round() as i32;
+    let (width, height) =
+        size.unwrap_or((px(piece.width as f64), px(piece.height as f64)));
+    let (ox, oy) = crate::page::piece_offset(piece);
+    let anchor = crate::page::piece_anchor(piece)
+        .unwrap_or(Anchor::Grid(Align::Center, Align::Center));
+    placement::anchor_rect(
+        anchor,
+        mon,
+        width,
+        height,
+        (px(ox as f64), px(oy as f64)),
+        crate::hotkeys::launcher_anchor(),
+    )
+}
+
+/// Where an overlay goes on `mon` (the cursor monitor). On first open, or for
+/// `c` / `center` / `overlay`, that is the piece's anchor at catalog size. A
+/// `page` dim covers the monitor. Every other anchor keeps the page's layout
+/// from the existing window (`cursor` keeps its size and follows the cursor).
+fn overlay_rect(
+    window: Option<&WebviewWindow>,
+    piece: &crate::page::PagePiece,
+    dim: DimMode,
+    mon: Rect,
+    scale: f64,
+) -> Rect {
+    if dim == DimMode::Page {
+        return mon;
+    }
+    let current = window.and_then(|w| window_rect(w).map(|r| (w, r)));
+    match current {
+        Some((window, win)) if crate::page::piece_keeps_layout(piece) => {
+            if crate::page::piece_anchor(piece) == Some(Anchor::Cursor) {
+                return piece_anchor_rect(piece, mon, scale, Some((win.width, win.height)));
+            }
+            let (src, src_scale) = window_monitor(window, win).unwrap_or((mon, scale));
+            let (h, v) = crate::page::piece_layout_axes(piece);
+            placement::keep_layout_rect(win, src, src_scale, mon, scale, h, v)
+        }
+        _ => piece_anchor_rect(piece, mon, scale, None),
+    }
+}
+
+/// Move (and when asked, resize) a window to a physical rect.
+fn apply_rect(window: &WebviewWindow, next: Rect, resize: bool) {
+    // Position first: crossing a DPI boundary rescales the window.
     let _ = window.set_position(tauri::Position::Physical(PhysicalPosition {
         x: next.x,
         y: next.y,
     }));
-    // Only a monitor-covering window is resized; any other size is the page's
-    // (Windows rescales it on its own when it crosses a DPI boundary).
-    if next == dst && (win.width != dst.width || win.height != dst.height) {
+    if resize {
         let _ = window.set_size(tauri::Size::Physical(PhysicalSize {
-            width: dst.width.max(1) as u32,
-            height: dst.height.max(1) as u32,
+            width: next.width.max(1) as u32,
+            height: next.height.max(1) as u32,
         }));
     }
-    Some(Position {
-        x: next.x,
-        y: next.y,
-    })
+}
+
+/// The piece's own box inside a monitor-sized (`page` dim) window, logical px.
+#[derive(Debug, Clone, Copy, Serialize)]
+struct StageRect {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+}
+
+fn piece_stage(piece: &crate::page::PagePiece, mon: Rect, scale: f64) -> StageRect {
+    let r = piece_anchor_rect(piece, mon, scale, None);
+    let s = if scale > 0.0 { scale } else { 1.0 };
+    StageRect {
+        x: ((r.x - mon.x) as f64 / s).round(),
+        y: ((r.y - mon.y) as f64 / s).round(),
+        width: piece.width as f64,
+        height: piece.height as f64,
+    }
+}
+
+/// Hand a `page`-dim overlay its box: `window.__VERSAILLES_STAGE__`,
+/// `--piece-x/y/w/h` on `<html>`, and a `versailles:stage` window event.
+/// Variables only — the page decides what to do with them.
+fn publish_stage(window: &WebviewWindow, stage: Option<StageRect>) {
+    let json = serde_json::to_string(&stage).unwrap_or_else(|_| "null".into());
+    let js = format!(
+        r#"(function(s){{try{{window.__VERSAILLES_STAGE__=s;var d=document.documentElement;var k={{'--piece-x':'x','--piece-y':'y','--piece-w':'width','--piece-h':'height'}};Object.keys(k).forEach(function(n){{if(s)d.style.setProperty(n,s[k[n]]+'px');else d.style.removeProperty(n);}});window.dispatchEvent(new CustomEvent('versailles:stage',{{detail:s}}));}}catch(e){{}}}})({json});"#
+    );
+    let _ = window.eval(&js);
 }
 
 fn show_overlay_dim(app: &AppHandle, anchor: &WebviewWindow) {
@@ -1165,6 +1198,9 @@ fn overlay_spawn_ids(app: &AppHandle) -> Vec<String> {
 struct OverlayShown {
     id: String,
     seed: String,
+    /// Only for `page` dim: the piece's box inside its monitor-sized window.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stage: Option<StageRect>,
 }
 
 /// `overlay://hidden` payload. `id` is `null` when only the backdrop was hidden
@@ -1174,10 +1210,11 @@ struct OverlayHidden {
     id: Option<String>,
 }
 
-fn emit_overlay_shown(app: &AppHandle, id: &str) {
+fn emit_overlay_shown(app: &AppHandle, id: &str, stage: Option<StageRect>) {
     let payload = OverlayShown {
         id: id.to_string(),
         seed: take_launcher_seed().unwrap_or_default(),
+        stage,
     };
     let _ = app.emit("overlay://shown", &payload);
     let _ = app.emit("launcher://shown", &payload.seed);
@@ -1202,58 +1239,96 @@ pub fn reveal_overlay(
     let piece = cat
         .spawnable(id)
         .ok_or_else(|| crate::page::unknown_spawn(id))?;
-    let pos = if crate::page::piece_is_overlay(piece) {
-        overlay_center_position(app, piece)
-    } else {
-        dock_slideout_position(app, piece.width, piece.height)
-    };
     let overlay = crate::page::piece_is_overlay(piece);
     let label = widget_label(id);
     arm_overlay_focus_guard();
 
-    if let Some(window) = app.get_webview_window(&label) {
-        suppress_snap_for(id, 1200);
-        // `tc` sizes and places itself from page JS: keep its layout and only
-        // carry it to the cursor monitor. The 120 px pin applies on first open.
-        let top_pin = overlay && crate::page::piece_overlay_top_pin(piece);
-        let pos = if top_pin {
-            reveal_top_pin(&window).unwrap_or(pos)
-        } else {
-            // Re-apply catalog size on every reveal so a stale session rect never wins.
-            if overlay {
-                let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize {
-                    width: piece.width as f64,
-                    height: piece.height as f64,
-                }));
-            }
+    if !overlay {
+        // Hotkey slide-out: plain docked open / raise.
+        let pos = dock_slideout_position(app, piece.width, piece.height);
+        if let Some(window) = app.get_webview_window(&label) {
+            suppress_snap_for(id, 1200);
             let _ = window.set_position(tauri::Position::Physical(PhysicalPosition {
                 x: pos.x,
                 y: pos.y,
             }));
-            pos
-        };
-        if overlay {
-            show_overlay_dim(app, &window);
-            clip_round_window(&window);
+            let _ = window.set_always_on_top(true);
+            force_borderless(&window);
+            defer_raise_widget(window.clone(), Some(pos));
+            return Ok(());
         }
-        let _ = window.set_always_on_top(true);
-        force_borderless(&window);
-        defer_raise_widget(window.clone(), Some(pos.clone()));
-        if overlay {
-            emit_overlay_shown(app, id);
-        }
+        open_widget_window(app, manager, id, Some(pos), Some(true))?;
         return Ok(());
     }
 
-    open_widget_window(app, manager, id, Some(pos.clone()), Some(true))?;
-    if overlay {
-        if let Some(window) = app.get_webview_window(&label) {
-            show_overlay_dim(app, &window);
-            clip_round_window(&window);
-        }
-        emit_overlay_shown(app, id);
+    let user = state
+        .store
+        .lock()
+        .unwrap()
+        .load_user_config()
+        .unwrap_or_default();
+    let dim = crate::page::piece_dim(piece, &user);
+    let Some((mon, scale)) = cursor_monitor(app) else {
+        return Err(AppError::msg("no monitor to show the overlay on"));
+    };
+    let stage = (dim == DimMode::Page).then(|| piece_stage(piece, mon, scale));
+
+    let existing = app.get_webview_window(&label);
+    let next = overlay_rect(existing.as_ref(), piece, dim, mon, scale);
+    let pos = Position {
+        x: next.x,
+        y: next.y,
+    };
+
+    if let Some(window) = existing {
+        suppress_snap_for(id, 1200);
+        // Kept layouts keep their size (Windows rescales across DPI); a
+        // monitor-covering result, a page dim, or a centered overlay is sized.
+        let resize = dim == DimMode::Page
+            || !crate::page::piece_keeps_layout(piece)
+            || next == mon;
+        let resize = resize
+            && window_rect(&window)
+                .map_or(true, |r| r.width != next.width || r.height != next.height);
+        apply_rect(&window, next, resize);
+        sync_overlay_dim(app, &window, dim);
+        clip_round_window(&window);
+        let _ = window.set_always_on_top(true);
+        force_borderless(&window);
+        defer_raise_widget(window.clone(), Some(pos));
+        publish_stage(&window, stage);
+        emit_overlay_shown(app, id, stage);
+        return Ok(());
     }
+
+    open_widget_window(app, manager, id, Some(pos), Some(true))?;
+    if let Some(window) = app.get_webview_window(&label) {
+        if dim == DimMode::Page {
+            apply_rect(&window, next, true);
+        }
+        sync_overlay_dim(app, &window, dim);
+        clip_round_window(&window);
+        // The page may not have loaded yet: publish again once it has.
+        publish_stage(&window, stage);
+        if stage.is_some() {
+            let later = window.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(400));
+                publish_stage(&later, stage);
+            });
+        }
+    }
+    emit_overlay_shown(app, id, stage);
     Ok(())
+}
+
+/// Show the host dim only for `host` mode; `page` / `none` draw no backdrop.
+fn sync_overlay_dim(app: &AppHandle, window: &WebviewWindow, dim: DimMode) {
+    if dim == DimMode::Host {
+        show_overlay_dim(app, window);
+    } else {
+        hide_overlay_dim(app);
+    }
 }
 
 fn conceal_overlay(app: &AppHandle, id: &str) -> AppResult<()> {
@@ -1787,61 +1862,4 @@ pub fn set_guides_visible(app: &AppHandle, visible: bool, guides: &[SnapGuide]) 
     }
     let _ = app.emit("layout://guides", guides);
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn r(x: i32, y: i32, width: i32, height: i32) -> Rect {
-        Rect { x, y, width, height }
-    }
-
-    const MON: Rect = Rect { x: 0, y: 0, width: 1920, height: 1080 };
-
-    #[test]
-    fn top_pin_keeps_the_page_layout_on_the_same_monitor() {
-        // Bar resting at the documented 120 px pin.
-        let bar = r(560, 120, 800, 440);
-        assert_eq!(top_pin_reveal_rect(bar, MON, 1.0, MON, 1.0), bar);
-        // Page moved it lower and left: stays there.
-        let moved = r(100, 600, 800, 300);
-        assert_eq!(top_pin_reveal_rect(moved, MON, 1.0, MON, 1.0), moved);
-    }
-
-    #[test]
-    fn top_pin_monitor_sized_window_covers_the_target_monitor() {
-        assert_eq!(top_pin_reveal_rect(MON, MON, 1.0, MON, 1.0), MON);
-        // Off by a rounding pixel still counts as covering.
-        assert_eq!(top_pin_reveal_rect(r(0, 0, 1919, 1081), MON, 1.0, MON, 1.0), MON);
-        let right = r(1920, 0, 2560, 1440);
-        assert_eq!(top_pin_reveal_rect(MON, MON, 1.0, right, 1.0), right);
-    }
-
-    #[test]
-    fn top_pin_stays_centred_on_a_wider_monitor() {
-        let bar = r(560, 120, 800, 440);
-        let right = r(1920, 0, 2560, 1440);
-        let next = top_pin_reveal_rect(bar, MON, 1.0, right, 1.0);
-        assert_eq!(next, r(1920 + (2560 - 800) / 2, 120, 800, 440));
-    }
-
-    #[test]
-    fn top_pin_scales_offsets_with_dpi() {
-        let bar = r(560, 120, 800, 440);
-        let hi = r(-3840, 0, 3840, 2160);
-        let next = top_pin_reveal_rect(bar, MON, 1.0, hi, 2.0);
-        assert_eq!(next, r(-3840 + (3840 - 1600) / 2, 240, 1600, 880));
-    }
-
-    #[test]
-    fn top_pin_clamps_onto_the_target_monitor() {
-        // Window hanging off the bottom-right of a small monitor.
-        let small = r(0, 0, 1280, 720);
-        let next = top_pin_reveal_rect(r(1500, 900, 800, 440), MON, 1.0, small, 1.0);
-        assert_eq!(next, r(1280 - 800, 720 - 440, 800, 440));
-        // Bigger than the monitor: pinned to its origin.
-        let next = top_pin_reveal_rect(r(0, 0, 1600, 900), MON, 1.0, small, 1.0);
-        assert_eq!((next.x, next.y), (0, 0));
-    }
 }

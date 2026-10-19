@@ -195,7 +195,7 @@ let ptyHeld: Array<{ kind: "data" | "exit"; payload: unknown }> = [];
 /** The PTY behind the visible terminal exited — Esc returns to actions. */
 let termExited = false;
 /** This piece's template attributes (data-w / data-h / data-anchor / data-hotkey). */
-let PIECE = { w: 640, h: 420, anchor: "tc", hotkey: "" };
+let PIECE = { w: 640, h: 420, anchor: "tc", hotkey: "", dim: "" };
 /** `data-dismiss-on-blur` / host overlay config. PTY pieces default to false (host rule). */
 let DISMISS_ON_BLUR = false;
 /** Bumped per show/hide so a slow background refresh cannot touch a newer session. */
@@ -1203,7 +1203,8 @@ const STAGE_TOP = 120;
  * window on the monitor; the bar lays its chrome out inside it.
  */
 function coversMonitor(): boolean {
-  return ENGINE_OPTS.coverMonitor && PIECE.anchor === "tc";
+  // `data-dim="page"`: the host already sized the window to the monitor.
+  return (ENGINE_OPTS.coverMonitor && PIECE.anchor === "tc") || PIECE.dim === "page";
 }
 
 /**
@@ -1273,7 +1274,7 @@ async function resizeLauncher(next: LauncherMode) {
       }
       applyStage({
         x: Math.round((monW - w) / 2),
-        y: next === "action" ? STAGE_TOP : Math.round((monH - h) / 2),
+        y: next === "action" && PIECE.anchor === "tc" ? STAGE_TOP : Math.round((monH - h) / 2),
         w,
         h,
       });
@@ -2565,6 +2566,7 @@ function loadPieceSettings(id: string) {
     h: num(attr("data-h"), 420),
     anchor: (attr("data-anchor") || "tc").toLowerCase(),
     hotkey: attr("data-hotkey") || (hooks.includes("hotkey") ? blockLauncherHotkey() : ""),
+    dim: attr("data-dim").toLowerCase(),
   };
   const dob = attr("data-dismiss-on-blur");
   DISMISS_ON_BLUR = dob ? !/^(false|0|no|off)$/i.test(dob) : !hooks.includes("pty");

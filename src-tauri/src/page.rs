@@ -1,7 +1,8 @@
 //! Parse `desktop/index.html` for widgets and spawnables.
 
 use crate::error::{AppError, AppResult};
-use crate::config::{SpawnableConfig, UserConfig};
+use crate::config::{DimSetting, SpawnableConfig, UserConfig};
+use crate::placement::{self, Align, Anchor, DimMode};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -27,6 +28,12 @@ pub struct PagePiece {
     pub hotkey: Option<String>,
     /// `data-dismiss-on-blur="true|false"` — override blur auto-hide for overlays.
     pub dismiss_on_blur: Option<bool>,
+    /// `data-offset="x,y"` — logical inset from the overlay anchor.
+    #[serde(default)]
+    pub offset: Option<(i32, i32)>,
+    /// `data-dim="host|page|none"` — overlay backdrop.
+    #[serde(default)]
+    pub dim: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -125,28 +132,36 @@ impl PageCatalog {
     }
 }
 
-/// Centered overlay (covers apps). `tr` and friends stay docked slide-outs.
+/// Overlay (covers apps): any point of the anchor grid or `cursor`.
+/// `tr`, no anchor, or an unknown one stays a docked slide-out.
 pub fn piece_is_overlay(piece: &PagePiece) -> bool {
-    matches!(
-        piece
-            .anchor
-            .as_deref()
-            .map(|s| s.trim().to_ascii_lowercase())
-            .as_deref(),
-        Some("c") | Some("center") | Some("tc") | Some("overlay")
-    )
+    piece_anchor(piece).is_some()
 }
 
-/// `tc` pins the overlay near the top (action-bar). Other overlay anchors are mid-screen.
-pub fn piece_overlay_top_pin(piece: &PagePiece) -> bool {
-    matches!(
-        piece
-            .anchor
-            .as_deref()
-            .map(|s| s.trim().to_ascii_lowercase())
-            .as_deref(),
-        Some("tc")
-    )
+pub fn piece_anchor(piece: &PagePiece) -> Option<Anchor> {
+    placement::parse_anchor(piece.anchor.as_deref())
+}
+
+/// Overlays other than `c` / `center` / `overlay` hand their layout to the
+/// page after the first open: the host keeps it on later reveals.
+pub fn piece_keeps_layout(piece: &PagePiece) -> bool {
+    piece_is_overlay(piece) && !placement::is_centered(piece.anchor.as_deref())
+}
+
+/// Grid axes the host measures a kept layout from (`cursor` measures from the
+/// top-left; it is re-placed at the cursor anyway).
+pub fn piece_layout_axes(piece: &PagePiece) -> (Align, Align) {
+    match piece_anchor(piece) {
+        Some(Anchor::Grid(h, v)) => (h, v),
+        _ => (Align::Start, Align::Start),
+    }
+}
+
+/// Logical inset from the anchor: `data-offset`, else the anchor's default.
+pub fn piece_offset(piece: &PagePiece) -> (i32, i32) {
+    piece
+        .offset
+        .unwrap_or_else(|| placement::default_offset(piece.anchor.as_deref()))
 }
 
 pub fn parse_page(html: &str) -> PageCatalog {
@@ -202,6 +217,8 @@ pub fn parse_page(html: &str) -> PageCatalog {
             })
             .unwrap_or_default();
         let anchor = attr(tag, "data-anchor");
+        let offset = placement::parse_offset(attr(tag, "data-offset").as_deref());
+        let dim = attr(tag, "data-dim").filter(|s| !s.trim().is_empty());
         let hotkey = attr(tag, "data-hotkey").filter(|s| !s.trim().is_empty());
         let dismiss_on_blur = attr(tag, "data-dismiss-on-blur").and_then(|v| match v.trim().to_ascii_lowercase().as_str() {
             "true" | "1" | "yes" => Some(true),
@@ -217,6 +234,8 @@ pub fn parse_page(html: &str) -> PageCatalog {
             anchor,
             hotkey,
             dismiss_on_blur,
+            offset,
+            dim,
         });
     }
     PageCatalog { pieces }
@@ -408,6 +427,26 @@ pub fn piece_dismiss_on_blur(piece: &PagePiece, user: &UserConfig) -> bool {
     true
 }
 
+/// Backdrop of an overlay: `data-dim` beats `spawnables.<id>.overlay.dim`;
+/// default is the host dim. Slide-outs never dim.
+pub fn piece_dim(piece: &PagePiece, user: &UserConfig) -> DimMode {
+    if !piece_is_overlay(piece) {
+        return DimMode::None;
+    }
+    if let Some(mode) = piece.dim.as_deref().and_then(placement::parse_dim) {
+        return mode;
+    }
+    let configured = spawnable_config(user, &piece.id)
+        .and_then(|cfg| cfg.overlay.as_ref())
+        .and_then(|overlay| overlay.dim.as_ref());
+    match configured {
+        Some(DimSetting::Flag(true)) => DimMode::Host,
+        Some(DimSetting::Flag(false)) => DimMode::None,
+        Some(DimSetting::Mode(raw)) => placement::parse_dim(raw).unwrap_or_default(),
+        None => DimMode::Host,
+    }
+}
+
 /// Whether the spawn window background may start a native drag.
 pub fn piece_draggable(piece: &PagePiece, user: &UserConfig) -> bool {
     if let Some(cfg) = spawnable_config(user, &piece.id) {
@@ -502,7 +541,7 @@ mod tests {
         assert_eq!(cat.get("action-bar").unwrap().kind, PageKind::Spawnable);
         assert!(cat.hotkey_piece().is_some());
         assert!(cat.is_overlay("action-bar"));
-        assert!(!piece_overlay_top_pin(cat.get("action-bar").unwrap()));
+        assert!(!piece_keeps_layout(cat.get("action-bar").unwrap()));
         assert_eq!(
             cat.get("action-bar").unwrap().hotkey.as_deref(),
             Some("Alt+Space")
@@ -545,16 +584,47 @@ mod tests {
     }
 
     #[test]
-    fn top_pin_is_only_tc() {
+    fn centered_overlays_do_not_keep_layout() {
         let html = r#"
 <template class="spawnable" data-id="draw" data-anchor="c"></template>
 <template class="spawnable action-bar" data-id="action-bar" data-anchor="tc"></template>
+<template class="spawnable" data-id="toast" data-anchor="br" data-offset="16,24"></template>
+<template class="spawnable" data-id="notes" data-anchor="tr"></template>
 "#;
         let cat = parse_page(html);
         assert!(cat.is_overlay("draw"));
         assert!(cat.is_overlay("action-bar"));
-        assert!(!piece_overlay_top_pin(cat.spawnable("draw").unwrap()));
-        assert!(piece_overlay_top_pin(cat.spawnable("action-bar").unwrap()));
+        assert!(cat.is_overlay("toast"));
+        assert!(!cat.is_overlay("notes"));
+        assert!(!piece_keeps_layout(cat.spawnable("draw").unwrap()));
+        assert!(piece_keeps_layout(cat.spawnable("action-bar").unwrap()));
+        assert!(piece_keeps_layout(cat.spawnable("toast").unwrap()));
+        assert_eq!(piece_offset(cat.spawnable("action-bar").unwrap()), (0, 120));
+        assert_eq!(piece_offset(cat.spawnable("toast").unwrap()), (16, 24));
+        assert_eq!(
+            piece_layout_axes(cat.spawnable("toast").unwrap()),
+            (Align::End, Align::End)
+        );
+    }
+
+    #[test]
+    fn dim_attribute_beats_config() {
+        let html = r#"
+<template class="spawnable" data-id="a" data-anchor="c" data-dim="page"></template>
+<template class="spawnable" data-id="b" data-anchor="c"></template>
+<template class="spawnable" data-id="c" data-anchor="c"></template>
+<template class="spawnable" data-id="d" data-anchor="tr" data-dim="page"></template>
+"#;
+        let cat = parse_page(html);
+        let user: UserConfig = serde_json::from_str(
+            r#"{ "spawnables": { "a": { "overlay": { "dim": false } }, "b": { "overlay": { "dim": "none" } } } }"#,
+        )
+        .unwrap();
+        assert_eq!(piece_dim(cat.spawnable("a").unwrap(), &user), DimMode::Page);
+        assert_eq!(piece_dim(cat.spawnable("b").unwrap(), &user), DimMode::None);
+        assert_eq!(piece_dim(cat.spawnable("c").unwrap(), &user), DimMode::Host);
+        // Slide-outs never dim.
+        assert_eq!(piece_dim(cat.spawnable("d").unwrap(), &user), DimMode::None);
     }
 
     #[test]

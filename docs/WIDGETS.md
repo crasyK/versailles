@@ -8,4 +8,4 @@ Put tiles in `article.widget` and overlays in `template.spawnable` inside `deskt
 - Hooks: [`HOOKS.md`](HOOKS.md)
 - Starter: [`../templates/starter/`](../templates/starter)
 - Stealable pieces: [`../examples/`](../examples)
-- Paper tokens: [`../design/PAPER-THEME.md`](../design/PAPER-THEME.md)
+- Paper tokens (the starter look; optional): [`../design/PAPER-THEME.md`](../design/PAPER-THEME.md)

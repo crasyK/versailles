@@ -6,7 +6,7 @@ Versailles runs in the system tray and serves **one HTML document** from `%USERP
 
 ## Features
 
-- One editable page (`desktop/index.html`) with a shared paper stylesheet
+- One editable page (`desktop/index.html`). The starter ships a Paper stylesheet; your page can look like anything
 - `.widget` tiles on the canvas
 - `.spawnable` overlays as native always-on-top windows (`data-anchor="c"` covers apps)
 - Example command bar in the same file + `desktop/bar.js` (delete it and the host still works)
@@ -47,7 +47,7 @@ Example: `http://127.0.0.1:47831/files/desktop/index.html?m=widgets`
 
 Dialect: `.widget` / `.spawnable` / `.action-bar`, `data-id`, `data-w`, `data-h`, `data-anchor`, `data-hooks`. Full spec: [`docs/DIALECT.md`](docs/DIALECT.md). Steal pieces from [`examples/`](examples).
 
-Paper theme: [`design/PAPER-THEME.md`](design/PAPER-THEME.md). Agent notes: [`AGENTS.md`](AGENTS.md).
+Paper (host chrome and starter look): [`design/PAPER-THEME.md`](design/PAPER-THEME.md). Agent notes: [`AGENTS.md`](AGENTS.md).
 
 ## Local API
 

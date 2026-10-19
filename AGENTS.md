@@ -19,7 +19,7 @@ First-time user setup: copy [`templates/starter/`](templates/starter) onto `Docu
 
 - One HTML document. Widgets are `article.widget`. Overlays are `template.spawnable`. An example command bar may use `template.spawnable.action-bar` plus page JS (`desktop/bar.js`).
 - Do not iframe per-widget HTML. Do not restore floating OS widget windows for desktop tiles.
-- Paper theme only. Tokens: [`design/PAPER-THEME.md`](design/PAPER-THEME.md). No second theme, no glass launcher chrome.
+- Paper is the look of the host's own chrome and of the starter template. Tokens: [`design/PAPER-THEME.md`](design/PAPER-THEME.md). A user's `desktop/index.html` can look like anything: the host never imposes styling on user pieces (host fallbacks use zero-specificity `:where()` rules). Do not ship a second built-in theme or glass launcher chrome.
 - Customization is `desktop/index.html` (`#versailles` JSON) plus `.versailles/` runtime. Do not add a settings UI to the action bar.
 - Slide-outs are spawn windows from Alt+Space / `versailles.spawn(id)`, not DOM overlays on the wallpaper. A spawnable with `data-anchor="c"` is a centered overlay (covers apps).
 - Keep `npm run verify:acl` green. A new Tauri command needs `lib.rs`, `build.rs`, and `capabilities/default.json` together.
@@ -68,7 +68,7 @@ Steal implementations from [`examples/`](examples) (dialect-native) rather than 
 ## Do not
 
 - Do not iframe widgets.
-- Do not add a second theme or glass the launcher.
+- Do not ship a second built-in theme or glass the launcher. Do not force styles onto user pages.
 - Do not put settings into the action bar.
 - Do not commit `.versailles/config.json`, `desktop/local-restore.json`, or personal shortcuts.
 - Do not introduce a Bearer control API beyond the existing localhost API.

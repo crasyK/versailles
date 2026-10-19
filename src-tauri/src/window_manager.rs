@@ -556,8 +556,10 @@ fn resolve_open_spec(
 
 fn page_surface_chrome_script(id: &str, opaque: bool, allow_drag: bool) -> String {
     let id_js = serde_json::to_string(id).unwrap_or_else(|_| "null".into());
+    // Opaque windows need a backdrop, but it is only a fallback: `:where()` has
+    // zero specificity, so any background rule on the page wins.
     let opaque_js = if opaque {
-        r#"try{document.documentElement.style.background='#f9fafb';document.body&&(document.body.style.background='#f9fafb');}catch(e){}"#
+        r#"try{if(!document.getElementById('versailles-opaque-bg')){var b=document.createElement('style');b.id='versailles-opaque-bg';b.textContent=':where(html),:where(body){background:#f9fafb;}';(document.head||document.documentElement).appendChild(b);}}catch(e){}"#
     } else {
         ""
     };

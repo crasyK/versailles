@@ -2,7 +2,7 @@
 
 Versailles parses one HTML file: `Documents\Widgets\desktop\index.html`. The parser is [`src-tauri/src/page.rs`](../src-tauri/src/page.rs). It only looks at opening tags. Nested markup is not scanned.
 
-The host is a small windowing + hooks layer. Pieces on the page are the product. A command bar in the starter (or your page) is an example of what the dialect can do, like a clock tile. Delete that template and Versailles still runs (tray, HTML desktop, hooks, spawn).
+The host is a small windowing + hooks layer. Pieces on the page are the product. The host does not style them: the page's CSS decides how everything looks (the starter's Paper look is just an example). A command bar in the starter (or your page) is an example of what the dialect can do, like a clock tile. Delete that template and Versailles still runs (tray, HTML desktop, hooks, spawn).
 
 ## Classes
 

@@ -1,6 +1,8 @@
 # Paper theme
 
-Monochrome, high-contrast visual language for Versailles widgets and desktop surfaces. Paper canvas, 2px ink strokes, rounded pills and cards, hard offset shadows. No glass, acrylic, mica, or soft drop shadows.
+**Scope.** Paper is the look of the host's own chrome and of the starter template (`templates/starter/`). It is not a rule for user desktops: a user's `desktop/index.html` can use any look, and the host never imposes styling on user pieces. Where a host window needs a fallback (an opaque spawn window's backdrop), it uses a zero-specificity `:where()` rule so any page rule wins.
+
+Monochrome, high-contrast visual language for Versailles host chrome and the starter desktop. Paper canvas, 2px ink strokes, rounded pills and cards, hard offset shadows. No glass, acrylic, mica, or soft drop shadows.
 
 ---
 

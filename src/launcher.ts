@@ -679,7 +679,12 @@ function flushPtyWriteBuf() {
   term.write(chunk);
 }
 
+function pulsePtyIo(dir: "in" | "out") {
+  root?.dispatchEvent(new CustomEvent("pty-io", { detail: dir }));
+}
+
 function enqueuePtyData(text: string) {
+  if (text) pulsePtyIo("in");
   ptyWriteBuf += text;
   if (ptyRaf == null) {
     ptyRaf = requestAnimationFrame(flushPtyWriteBuf);
@@ -1179,6 +1184,7 @@ function ensureTerm(): Terminal {
   }
 
   t.onData((data) => {
+    if (data) pulsePtyIo("out");
     void invoke("pty_write", { data }).catch(() => {});
   });
 
@@ -1382,6 +1388,7 @@ async function enterTerminal(seedCmd?: string, opts: { fresh?: boolean } = {}) {
       if (mode === "terminal" && sessionAlive && !fresh) {
         if (termSeed) {
           const payload = termSeed.endsWith("\n") ? termSeed : termSeed + "\r";
+          pulsePtyIo("out");
           await invoke("pty_write", { data: payload });
           termSeed = null;
         }
@@ -1404,6 +1411,7 @@ async function enterTerminal(seedCmd?: string, opts: { fresh?: boolean } = {}) {
         term?.focus();
         if (termSeed) {
           const payload = termSeed.endsWith("\n") ? termSeed : termSeed + "\r";
+          pulsePtyIo("out");
           await invoke("pty_write", { data: payload });
           termSeed = null;
         }
@@ -1443,6 +1451,7 @@ async function enterTerminal(seedCmd?: string, opts: { fresh?: boolean } = {}) {
       if (termSeed) {
         await delay(180);
         const payload = termSeed.endsWith("\n") ? termSeed : termSeed + "\r";
+        pulsePtyIo("out");
         await invoke("pty_write", { data: payload });
         termSeed = null;
       }

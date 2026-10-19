@@ -83,6 +83,9 @@ pub struct SpawnableEngineOpts {
     pub time_aware_defaults: Option<bool>,
     #[serde(default)]
     pub auto_dismiss_launch: Option<bool>,
+    /// `tc` pieces: the window covers the monitor and the page lays out the chrome.
+    #[serde(default)]
+    pub cover_monitor: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]

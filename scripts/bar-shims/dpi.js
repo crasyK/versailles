@@ -13,3 +13,11 @@ export class PhysicalPosition {
     this.type = "Physical";
   }
 }
+
+export class PhysicalSize {
+  constructor(width, height) {
+    this.width = width;
+    this.height = height;
+    this.type = "Physical";
+  }
+}

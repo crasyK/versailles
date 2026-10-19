@@ -1034,6 +1034,101 @@ fn overlay_center_position(app: &AppHandle, piece: &crate::page::PagePiece) -> P
     Position { x, y }
 }
 
+/// Where an existing `tc` window lands on reveal. Page JS owns its size and
+/// position, so keep where the page left it, measured from the `tc` anchor of
+/// the monitor it sits on: horizontal offset of its centre from the monitor's
+/// centre line, vertical offset from the monitor's top. Offsets scale with the
+/// DPI of the target monitor. A window that covers its monitor covers the
+/// target monitor instead. The result is clamped onto `dst`.
+fn top_pin_reveal_rect(win: Rect, src: Rect, src_scale: f64, dst: Rect, dst_scale: f64) -> Rect {
+    let near = |a: i32, b: i32| (a - b).abs() <= 2;
+    if near(win.width, src.width) && near(win.height, src.height) {
+        return dst;
+    }
+    let ratio = if src_scale > 0.0 && dst_scale > 0.0 {
+        dst_scale / src_scale
+    } else {
+        1.0
+    };
+    let width = ((win.width as f64) * ratio).round() as i32;
+    let height = ((win.height as f64) * ratio).round() as i32;
+    let dx = (win.x + win.width / 2) - (src.x + src.width / 2);
+    let dy = win.y - src.y;
+    let x = dst.x + dst.width / 2 + ((dx as f64) * ratio).round() as i32 - width / 2;
+    let y = dst.y + ((dy as f64) * ratio).round() as i32;
+    let clamp = |v: i32, lo: i32, len: i32, span: i32| {
+        if len >= span {
+            lo
+        } else {
+            v.clamp(lo, lo + span - len)
+        }
+    };
+    Rect {
+        x: clamp(x, dst.x, width, dst.width),
+        y: clamp(y, dst.y, height, dst.height),
+        width,
+        height,
+    }
+}
+
+/// Physical rect + scale of the monitor holding the window's centre.
+fn window_monitor(window: &WebviewWindow, win: Rect) -> Option<(Rect, f64)> {
+    let cx = win.x + win.width / 2;
+    let cy = win.y + win.height / 2;
+    window
+        .available_monitors()
+        .ok()?
+        .into_iter()
+        .map(|m| {
+            let rect = Rect {
+                x: m.position().x,
+                y: m.position().y,
+                width: m.size().width as i32,
+                height: m.size().height as i32,
+            };
+            (rect, m.scale_factor())
+        })
+        .find(|(r, _)| cx >= r.x && cx < r.x + r.width && cy >= r.y && cy < r.y + r.height)
+}
+
+/// Re-place an existing `tc` window on the cursor monitor without undoing the
+/// page's layout (see `top_pin_reveal_rect`). Returns the position to re-apply.
+fn reveal_top_pin(window: &WebviewWindow) -> Option<Position> {
+    let pos = window.outer_position().ok()?;
+    let size = window.outer_size().ok()?;
+    let win = Rect {
+        x: pos.x,
+        y: pos.y,
+        width: size.width as i32,
+        height: size.height as i32,
+    };
+    let (left, top, mon_w, mon_h, dst_scale) = launcher_monitor_bounds(window);
+    let dst = Rect {
+        x: left,
+        y: top,
+        width: mon_w as i32,
+        height: mon_h as i32,
+    };
+    let (src, src_scale) = window_monitor(window, win).unwrap_or((dst, dst_scale));
+    let next = top_pin_reveal_rect(win, src, src_scale, dst, dst_scale);
+    let _ = window.set_position(tauri::Position::Physical(PhysicalPosition {
+        x: next.x,
+        y: next.y,
+    }));
+    // Only a monitor-covering window is resized; any other size is the page's
+    // (Windows rescales it on its own when it crosses a DPI boundary).
+    if next == dst && (win.width != dst.width || win.height != dst.height) {
+        let _ = window.set_size(tauri::Size::Physical(PhysicalSize {
+            width: dst.width.max(1) as u32,
+            height: dst.height.max(1) as u32,
+        }));
+    }
+    Some(Position {
+        x: next.x,
+        y: next.y,
+    })
+}
+
 fn show_overlay_dim(app: &AppHandle, anchor: &WebviewWindow) {
     let (left, top, width, height, _scale) = launcher_monitor_bounds(anchor);
     let _ = ensure_launcher_dim(app);
@@ -1116,18 +1211,25 @@ pub fn reveal_overlay(
 
     if let Some(window) = app.get_webview_window(&label) {
         suppress_snap_for(id, 1200);
-        // Re-apply catalog size on every reveal so a stale session rect never wins.
-        // `tc` (action bar) sizes itself from page JS, so leave it alone.
-        if overlay && !crate::page::piece_overlay_top_pin(piece) {
-            let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize {
-                width: piece.width as f64,
-                height: piece.height as f64,
+        // `tc` sizes and places itself from page JS: keep its layout and only
+        // carry it to the cursor monitor. The 120 px pin applies on first open.
+        let top_pin = overlay && crate::page::piece_overlay_top_pin(piece);
+        let pos = if top_pin {
+            reveal_top_pin(&window).unwrap_or(pos)
+        } else {
+            // Re-apply catalog size on every reveal so a stale session rect never wins.
+            if overlay {
+                let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize {
+                    width: piece.width as f64,
+                    height: piece.height as f64,
+                }));
+            }
+            let _ = window.set_position(tauri::Position::Physical(PhysicalPosition {
+                x: pos.x,
+                y: pos.y,
             }));
-        }
-        let _ = window.set_position(tauri::Position::Physical(PhysicalPosition {
-            x: pos.x,
-            y: pos.y,
-        }));
+            pos
+        };
         if overlay {
             show_overlay_dim(app, &window);
             clip_round_window(&window);
@@ -1683,4 +1785,61 @@ pub fn set_guides_visible(app: &AppHandle, visible: bool, guides: &[SnapGuide]) 
     }
     let _ = app.emit("layout://guides", guides);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn r(x: i32, y: i32, width: i32, height: i32) -> Rect {
+        Rect { x, y, width, height }
+    }
+
+    const MON: Rect = Rect { x: 0, y: 0, width: 1920, height: 1080 };
+
+    #[test]
+    fn top_pin_keeps_the_page_layout_on_the_same_monitor() {
+        // Bar resting at the documented 120 px pin.
+        let bar = r(560, 120, 800, 440);
+        assert_eq!(top_pin_reveal_rect(bar, MON, 1.0, MON, 1.0), bar);
+        // Page moved it lower and left: stays there.
+        let moved = r(100, 600, 800, 300);
+        assert_eq!(top_pin_reveal_rect(moved, MON, 1.0, MON, 1.0), moved);
+    }
+
+    #[test]
+    fn top_pin_monitor_sized_window_covers_the_target_monitor() {
+        assert_eq!(top_pin_reveal_rect(MON, MON, 1.0, MON, 1.0), MON);
+        // Off by a rounding pixel still counts as covering.
+        assert_eq!(top_pin_reveal_rect(r(0, 0, 1919, 1081), MON, 1.0, MON, 1.0), MON);
+        let right = r(1920, 0, 2560, 1440);
+        assert_eq!(top_pin_reveal_rect(MON, MON, 1.0, right, 1.0), right);
+    }
+
+    #[test]
+    fn top_pin_stays_centred_on_a_wider_monitor() {
+        let bar = r(560, 120, 800, 440);
+        let right = r(1920, 0, 2560, 1440);
+        let next = top_pin_reveal_rect(bar, MON, 1.0, right, 1.0);
+        assert_eq!(next, r(1920 + (2560 - 800) / 2, 120, 800, 440));
+    }
+
+    #[test]
+    fn top_pin_scales_offsets_with_dpi() {
+        let bar = r(560, 120, 800, 440);
+        let hi = r(-3840, 0, 3840, 2160);
+        let next = top_pin_reveal_rect(bar, MON, 1.0, hi, 2.0);
+        assert_eq!(next, r(-3840 + (3840 - 1600) / 2, 240, 1600, 880));
+    }
+
+    #[test]
+    fn top_pin_clamps_onto_the_target_monitor() {
+        // Window hanging off the bottom-right of a small monitor.
+        let small = r(0, 0, 1280, 720);
+        let next = top_pin_reveal_rect(r(1500, 900, 800, 440), MON, 1.0, small, 1.0);
+        assert_eq!(next, r(1280 - 800, 720 - 440, 800, 440));
+        // Bigger than the monitor: pinned to its origin.
+        let next = top_pin_reveal_rect(r(0, 0, 1600, 900), MON, 1.0, small, 1.0);
+        assert_eq!((next.x, next.y), (0, 0));
+    }
 }

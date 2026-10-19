@@ -30,6 +30,12 @@ export function getCurrentWindow() {
     async setPosition(position) {
       return invoke("plugin:window|set_position", { label: l, value: ipcPos(position) });
     },
+    async outerPosition() {
+      return invoke("plugin:window|outer_position", { label: l });
+    },
+    async outerSize() {
+      return invoke("plugin:window|outer_size", { label: l });
+    },
     async currentMonitor() {
       return invoke("plugin:window|current_monitor");
     },

@@ -56,6 +56,13 @@
       this.type = "Physical";
     }
   };
+  var PhysicalSize = class {
+    constructor(width, height) {
+      this.width = width;
+      this.height = height;
+      this.type = "Physical";
+    }
+  };
 
   // scripts/bar-shims/window.js
   function invoke2(cmd, args) {
@@ -85,6 +92,12 @@
       },
       async setPosition(position) {
         return invoke2("plugin:window|set_position", { label: l, value: ipcPos(position) });
+      },
+      async outerPosition() {
+        return invoke2("plugin:window|outer_position", { label: l });
+      },
+      async outerSize() {
+        return invoke2("plugin:window|outer_size", { label: l });
       },
       async currentMonitor() {
         return invoke2("plugin:window|current_monitor");
@@ -147,7 +160,8 @@
     launchTick: false,
     searchHf: "https://huggingface.co/models?search={q}",
     timeAwareDefaults: true,
-    autoDismissLaunch: true
+    autoDismissLaunch: true,
+    coverMonitor: false
   };
   function spawnableId() {
     const w = window;
@@ -168,7 +182,8 @@
       launchTick: host?.launchTick ?? block.launchTick ?? DEFAULT_OPTS.launchTick,
       searchHf: host?.searchHf ?? block.searchHf ?? DEFAULT_OPTS.searchHf,
       timeAwareDefaults: host?.timeAwareDefaults ?? block.timeAwareDefaults ?? DEFAULT_OPTS.timeAwareDefaults,
-      autoDismissLaunch: host?.autoDismissLaunch ?? block.autoDismissLaunch ?? DEFAULT_OPTS.autoDismissLaunch
+      autoDismissLaunch: host?.autoDismissLaunch ?? block.autoDismissLaunch ?? DEFAULT_OPTS.autoDismissLaunch,
+      coverMonitor: host?.coverMonitor ?? block.coverMonitor ?? DEFAULT_OPTS.coverMonitor
     };
   }
   async function loadSpawnableEngineContext() {
@@ -2030,7 +2045,8 @@
     launchTick: false,
     searchHf: "https://huggingface.co/models?search={q}",
     timeAwareDefaults: true,
-    autoDismissLaunch: true
+    autoDismissLaunch: true,
+    coverMonitor: false
   };
   var ENGINE_RUNTIME = { recents: [], pins: [] };
   var lastLaunchError = null;
@@ -2485,7 +2501,11 @@
     ptyWriteBuf = "";
     term.write(chunk);
   }
+  function pulsePtyIo(dir) {
+    root?.dispatchEvent(new CustomEvent("pty-io", { detail: dir }));
+  }
   function enqueuePtyData(text) {
+    if (text) pulsePtyIo("in");
     ptyWriteBuf += text;
     if (ptyRaf == null) {
       ptyRaf = requestAnimationFrame(flushPtyWriteBuf);
@@ -2932,11 +2952,43 @@
       }).observe(termHost);
     }
     t.onData((data) => {
+      if (data) pulsePtyIo("out");
       void invoke("pty_write", { data }).catch(() => {
       });
     });
     bindTermChrome(t);
     return t;
+  }
+  var STAGE_TOP = 120;
+  function coversMonitor() {
+    return ENGINE_OPTS.coverMonitor && PIECE.anchor === "tc";
+  }
+  function applyStage(box) {
+    const html = document.documentElement;
+    const surface = root?.parentElement;
+    if (!box) {
+      if (!html.dataset.stage) return;
+      delete html.dataset.stage;
+      surface?.removeAttribute("data-stage-box");
+      return;
+    }
+    if (!document.getElementById("cli-stage-style")) {
+      const s = document.createElement("style");
+      s.id = "cli-stage-style";
+      s.textContent = [
+        "html[data-stage],html[data-stage] body{background:transparent!important;}",
+        "html[data-stage] [data-stage-box]{position:fixed!important;margin:0!important;flex:none!important;",
+        "left:var(--stage-x)!important;top:var(--stage-y)!important;",
+        "width:var(--stage-w)!important;height:var(--stage-h)!important;}"
+      ].join("");
+      (document.head || html).appendChild(s);
+    }
+    html.dataset.stage = "monitor";
+    html.style.setProperty("--stage-x", `${box.x}px`);
+    html.style.setProperty("--stage-y", `${box.y}px`);
+    html.style.setProperty("--stage-w", `${box.w}px`);
+    html.style.setProperty("--stage-h", `${box.h}px`);
+    surface?.setAttribute("data-stage-box", "");
   }
   async function resizeLauncher(next) {
     const win = getCurrentWindow();
@@ -2954,6 +3006,24 @@
         w = PIECE.w;
         h = PIECE.h;
       }
+      if (monitor && coversMonitor()) {
+        const pos = await win.outerPosition();
+        if (pos.x !== monitor.position.x || pos.y !== monitor.position.y) {
+          await win.setPosition(new PhysicalPosition(monitor.position.x, monitor.position.y));
+        }
+        const size = await win.outerSize();
+        if (size.width !== monitor.size.width || size.height !== monitor.size.height) {
+          await win.setSize(new PhysicalSize(monitor.size.width, monitor.size.height));
+        }
+        applyStage({
+          x: Math.round((monW - w) / 2),
+          y: next === "action" ? STAGE_TOP : Math.round((monH - h) / 2),
+          w,
+          h
+        });
+        return;
+      }
+      applyStage(null);
       await win.setSize(new LogicalSize(w, h));
       document.body.style.width = "";
       document.body.style.height = "";
@@ -2963,6 +3033,7 @@
         await win.setPosition(new PhysicalPosition(x, y));
       }
     } catch {
+      applyStage(null);
       await win.setSize(
         next === "terminal" ? new LogicalSize(1100, 720) : new LogicalSize(PIECE.w, PIECE.h)
       );
@@ -3094,6 +3165,7 @@
         if (mode === "terminal" && sessionAlive && !fresh) {
           if (termSeed) {
             const payload = termSeed.endsWith("\n") ? termSeed : termSeed + "\r";
+            pulsePtyIo("out");
             await invoke("pty_write", { data: payload });
             termSeed = null;
           }
@@ -3114,6 +3186,7 @@
           term?.focus();
           if (termSeed) {
             const payload = termSeed.endsWith("\n") ? termSeed : termSeed + "\r";
+            pulsePtyIo("out");
             await invoke("pty_write", { data: payload });
             termSeed = null;
           }
@@ -3149,6 +3222,7 @@
         if (termSeed) {
           await delay(180);
           const payload = termSeed.endsWith("\n") ? termSeed : termSeed + "\r";
+          pulsePtyIo("out");
           await invoke("pty_write", { data: payload });
           termSeed = null;
         }
@@ -3962,6 +4036,17 @@
       if (mode === "terminal") term?.focus();
     });
     root.addEventListener("mousedown", () => clearBlurTimer());
+    document.addEventListener(
+      "pointerdown",
+      (e) => {
+        if (!coversMonitor() || !document.documentElement.dataset.stage) return;
+        const target = e.target instanceof Element ? e.target : null;
+        if (!target || root.parentElement?.contains(target)) return;
+        if (target.closest("[data-stage-keep]")) return;
+        dismissAction("outside-click");
+      },
+      true
+    );
     void getCurrentWindow().onFocusChanged(({ payload: focused }) => {
       if (focused) {
         clearBlurTimer();
@@ -4036,6 +4121,8 @@
       if (id == null && now - lastShown < OVERLAY_DEDUPE_MS) return;
       lastShown = now;
       resetBar(seed);
+      if (coversMonitor() && mode === "action") void resizeLauncher("action").catch(() => {
+      });
     });
     await listen("overlay://hidden", (ev) => {
       const payload = ev?.payload;
@@ -4121,6 +4208,8 @@
     await refreshPresets();
     await refreshSessionAlive();
     applyChrome("action");
+    if (hosted && coversMonitor()) await resizeLauncher("action").catch(() => {
+    });
     setPrompt();
     refreshProposals();
     focusPrompt();

@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { LogicalSize, PhysicalPosition } from "@tauri-apps/api/dpi";
+import { LogicalSize, PhysicalPosition, PhysicalSize } from "@tauri-apps/api/dpi";
 import { getCurrentWindow, currentMonitor } from "@tauri-apps/api/window";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -177,6 +177,7 @@ let ENGINE_OPTS = {
   searchHf: "https://huggingface.co/models?search={q}",
   timeAwareDefaults: true,
   autoDismissLaunch: true,
+  coverMonitor: false,
 };
 let ENGINE_RUNTIME: EngineRuntimeState = { recents: [], pins: [] };
 let lastLaunchError: { preset: Preset; err: string } | null = null;
@@ -1193,6 +1194,51 @@ function ensureTerm(): Terminal {
   return t;
 }
 
+/** Resting place of a `tc` bar, logical px from the top of the monitor (host rule). */
+const STAGE_TOP = 120;
+
+/**
+ * `opts.coverMonitor` on a `tc` piece: the window covers the monitor, so page
+ * motion is not clipped at the bar's edge. The host keeps a monitor-sized `tc`
+ * window on the monitor; the bar lays its chrome out inside it.
+ */
+function coversMonitor(): boolean {
+  return ENGINE_OPTS.coverMonitor && PIECE.anchor === "tc";
+}
+
+/**
+ * Place the chrome box inside a monitor-sized window. Sets `html[data-stage]`
+ * and `--stage-x/y/w/h` so page CSS can restyle; the default rule pins the
+ * bar's surface (`#cli-root`'s parent) to that box. `null` clears it.
+ */
+function applyStage(box: { x: number; y: number; w: number; h: number } | null) {
+  const html = document.documentElement;
+  const surface = root?.parentElement;
+  if (!box) {
+    if (!html.dataset.stage) return;
+    delete html.dataset.stage;
+    surface?.removeAttribute("data-stage-box");
+    return;
+  }
+  if (!document.getElementById("cli-stage-style")) {
+    const s = document.createElement("style");
+    s.id = "cli-stage-style";
+    s.textContent = [
+      "html[data-stage],html[data-stage] body{background:transparent!important;}",
+      "html[data-stage] [data-stage-box]{position:fixed!important;margin:0!important;flex:none!important;",
+      "left:var(--stage-x)!important;top:var(--stage-y)!important;",
+      "width:var(--stage-w)!important;height:var(--stage-h)!important;}",
+    ].join("");
+    (document.head || html).appendChild(s);
+  }
+  html.dataset.stage = "monitor";
+  html.style.setProperty("--stage-x", `${box.x}px`);
+  html.style.setProperty("--stage-y", `${box.y}px`);
+  html.style.setProperty("--stage-w", `${box.w}px`);
+  html.style.setProperty("--stage-h", `${box.h}px`);
+  surface?.setAttribute("data-stage-box", "");
+}
+
 async function resizeLauncher(next: LauncherMode) {
   const win = getCurrentWindow();
   // Resize from the webview side — avoids IPC→main-thread deadlock that hangs the app process.
@@ -1214,6 +1260,27 @@ async function resizeLauncher(next: LauncherMode) {
       h = PIECE.h;
     }
 
+    if (monitor && coversMonitor()) {
+      // Keep the window on the whole monitor; only the chrome box moves.
+      // Position first: crossing a DPI boundary rescales the window.
+      const pos = await win.outerPosition();
+      if (pos.x !== monitor.position.x || pos.y !== monitor.position.y) {
+        await win.setPosition(new PhysicalPosition(monitor.position.x, monitor.position.y));
+      }
+      const size = await win.outerSize();
+      if (size.width !== monitor.size.width || size.height !== monitor.size.height) {
+        await win.setSize(new PhysicalSize(monitor.size.width, monitor.size.height));
+      }
+      applyStage({
+        x: Math.round((monW - w) / 2),
+        y: next === "action" ? STAGE_TOP : Math.round((monH - h) / 2),
+        w,
+        h,
+      });
+      return;
+    }
+    applyStage(null);
+
     await win.setSize(new LogicalSize(w, h));
     document.body.style.width = "";
     document.body.style.height = "";
@@ -1229,6 +1296,7 @@ async function resizeLauncher(next: LauncherMode) {
     }
   } catch {
     // Fallback sizes if monitor query fails.
+    applyStage(null);
     await win.setSize(
       next === "terminal" ? new LogicalSize(1100, 720) : new LogicalSize(PIECE.w, PIECE.h),
     );
@@ -2334,6 +2402,19 @@ termWrap.addEventListener("mousedown", (e) => {
   if (mode === "terminal") term?.focus();
 });
 root.addEventListener("mousedown", () => clearBlurTimer());
+// A monitor-sized window takes the clicks the dim would get: a press outside
+// the bar's surface (or a page element marked `data-stage-keep`) dismisses.
+document.addEventListener(
+  "pointerdown",
+  (e) => {
+    if (!coversMonitor() || !document.documentElement.dataset.stage) return;
+    const target = e.target instanceof Element ? e.target : null;
+    if (!target || root.parentElement?.contains(target)) return;
+    if (target.closest("[data-stage-keep]")) return;
+    dismissAction("outside-click");
+  },
+  true,
+);
 
 void getCurrentWindow()
   .onFocusChanged(({ payload: focused }) => {
@@ -2431,6 +2512,8 @@ async function bindOverlayEvents() {
     if (id == null && now - lastShown < OVERLAY_DEDUPE_MS) return;
     lastShown = now;
     resetBar(seed);
+    // The host carried the window to the cursor monitor; refit the chrome box.
+    if (coversMonitor() && mode === "action") void resizeLauncher("action").catch(() => {});
   });
   await listen<unknown>("overlay://hidden", (ev) => {
     const payload = ev?.payload;
@@ -2535,6 +2618,7 @@ async function bootBar() {
 
   await refreshSessionAlive();
   applyChrome("action");
+  if (hosted && coversMonitor()) await resizeLauncher("action").catch(() => {});
   setPrompt();
   // Keep anything typed while the catalog loaded.
   refreshProposals();

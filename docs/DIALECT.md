@@ -21,7 +21,7 @@ The host is a small windowing + hooks layer. Pieces on the page are the product.
 | `data-id` | yes | Catalog id. Unique, case-insensitive. `calc` aliases `calculator`. |
 | `data-w` | no | Window width in CSS pixels. Default 280. |
 | `data-h` | no | Window height. Default 200. |
-| `data-anchor` | no | Placement. `c` / `center` / `overlay` = mid-screen overlay (covers apps, dim). `tc` = top-center overlay (action bar): horizontally centered, pinned at a fixed 120 px (logical) from the top of the monitor. `tr` = docked top-right slide-out. |
+| `data-anchor` | no | Placement. `c` / `center` / `overlay` = mid-screen overlay (covers apps, dim). `tc` = top-center overlay (action bar): opens horizontally centered, 120 px (logical) from the top of the monitor. After that, page JS owns its size and position (see [Top-center overlays](#top-center-overlays)). `tr` = docked top-right slide-out. |
 | `data-hotkey` | no | Global accelerator for this spawnable when `data-hooks` includes `hotkey`. Format: Tauri accelerators (`Alt+Space`, `Ctrl+Shift+D`, `CommandOrControl+K`). Duplicate combos: first piece on the page wins. A hook piece with no `data-hotkey` uses `#versailles` `launcher.hotkey` (once). |
 | `data-hooks` | no | Comma-separated allowlist. See [`HOOKS.md`](HOOKS.md). |
 | `data-dismiss-on-blur` | no | Overlays only. `true` / `false`: hide the overlay when its window loses focus. Wins over `#versailles` `spawnables.<id>.overlay.dismissOnBlur`. Default `true`, except pieces with the `pty` hook default to `false` (a terminal survives focus flicker). |
@@ -93,13 +93,25 @@ The widget/spawnable parser ignores this. The JSON must not contain the literal 
       "launchTick": false,
       "searchHf": "https://huggingface.co/models?search={q}",
       "timeAwareDefaults": true,
-      "autoDismissLaunch": true
+      "autoDismissLaunch": true,
+      "coverMonitor": false
     }
   }
 }
 ```
 
 `overlay.*` is read by the host. `opts` is handed to the piece's page JS (the example bar reads it via `get_spawnable_engine_context`); the host does not interpret it. A `data-dismiss-on-blur` attribute on the tag beats `overlay.dismissOnBlur`.
+
+## Top-center overlays
+
+The host places a `tc` window itself only when it first opens: centered, 120 px from the top of the cursor monitor, at `data-w` × `data-h`. From then on the page owns the window. On each reveal the host carries it to the monitor under the cursor and keeps the page's layout:
+
+- The window keeps its size and its offset from the `tc` anchor (centre line, top edge), scaled to the target monitor's DPI and clamped onto it.
+- A window that covers its monitor covers the target monitor (origin and size follow that monitor).
+
+So a page can make its `tc` window as large as the monitor and lay the chrome out inside it. Motion that starts above the chrome (a drop-in, a swing) is then not clipped at the window edge. A monitor-sized window takes the clicks the dim would get, so the page decides what dismisses it (`dismiss_launcher`).
+
+The example bar does this with `"coverMonitor": true` in `spawnables.<id>.opts`. Its window covers the monitor; it sets `html[data-stage]` and `--stage-x` / `--stage-y` / `--stage-w` / `--stage-h` (logical px) and pins its surface (`#cli-root`'s parent, marked `data-stage-box`) to that box: 120 px from the top in action mode, centered in terminal mode. A press outside the surface dismisses, except on elements marked `data-stage-keep`.
 
 ## Example command bar
 

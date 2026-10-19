@@ -10,6 +10,8 @@ export type SpawnableEngineOpts = {
   searchHf?: string;
   timeAwareDefaults?: boolean;
   autoDismissLaunch?: boolean;
+  /** `tc` pieces: the window covers the monitor and the chrome is laid out inside it. */
+  coverMonitor?: boolean;
 };
 
 export type SpawnableEngineContext = {
@@ -26,6 +28,7 @@ const DEFAULT_OPTS: Required<SpawnableEngineOpts> = {
   searchHf: "https://huggingface.co/models?search={q}",
   timeAwareDefaults: true,
   autoDismissLaunch: true,
+  coverMonitor: false,
 };
 
 export function spawnableId(): string {
@@ -64,6 +67,7 @@ export function mergeOpts(
       host?.timeAwareDefaults ?? block.timeAwareDefaults ?? DEFAULT_OPTS.timeAwareDefaults,
     autoDismissLaunch:
       host?.autoDismissLaunch ?? block.autoDismissLaunch ?? DEFAULT_OPTS.autoDismissLaunch,
+    coverMonitor: host?.coverMonitor ?? block.coverMonitor ?? DEFAULT_OPTS.coverMonitor,
   };
 }
 

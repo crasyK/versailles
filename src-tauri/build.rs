@@ -8,6 +8,7 @@ fn main() {
                 "close_widget",
                 "list_open_widgets",
                 "move_widget_cmd",
+                "layout_update",
                 "set_widget_always_on_top",
                 "set_widget_opacity",
                 "get_mouse_position_cmd",

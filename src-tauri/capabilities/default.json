@@ -73,6 +73,7 @@
     "allow-close-widget",
     "allow-list-open-widgets",
     "allow-move-widget-cmd",
+    "allow-layout-update",
     "allow-set-widget-always-on-top",
     "allow-set-widget-opacity",
     "allow-get-mouse-position-cmd",

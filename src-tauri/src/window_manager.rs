@@ -2,6 +2,7 @@ use crate::config::{LayoutPlacement, LayoutTemplate, MonitorFingerprint, Positio
 use crate::error::{AppError, AppResult};
 use crate::layout::{snap, Rect, SnapGuide, SnapResult};
 use crate::placement::{self, Align, Anchor, DimMode};
+
 use crate::state::AppState;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -783,6 +784,7 @@ pub fn open_widget_window(
                 }
             }
             tauri::WindowEvent::Destroyed => {
+                hit_regions().lock().unwrap().remove(&widget_label(&sync_id));
                 let state = sync_app.state::<AppState>();
                 let removed = state.window_manager.lock().unwrap().open.remove(&sync_id);
                 widget_menu_handler_labels()
@@ -1105,13 +1107,18 @@ fn overlay_rect(
         return mon;
     }
     let current = window.and_then(|w| window_rect(w).map(|r| (w, r)));
+    let keeps = crate::page::piece_keeps_layout(piece) || page_owns_layout(&piece.id);
     match current {
-        Some((window, win)) if crate::page::piece_keeps_layout(piece) => {
+        Some((window, win)) if keeps => {
             if crate::page::piece_anchor(piece) == Some(Anchor::Cursor) {
                 return piece_anchor_rect(piece, mon, scale, Some((win.width, win.height)));
             }
             let (src, src_scale) = window_monitor(window, win).unwrap_or((mon, scale));
-            let (h, v) = crate::page::piece_layout_axes(piece);
+            let (h, v) = if crate::page::piece_keeps_layout(piece) {
+                crate::page::piece_layout_axes(piece)
+            } else {
+                (Align::Center, Align::Center)
+            };
             placement::keep_layout_rect(win, src, src_scale, mon, scale, h, v)
         }
         _ => piece_anchor_rect(piece, mon, scale, None),
@@ -1285,7 +1292,7 @@ pub fn reveal_overlay(
         // Kept layouts keep their size (Windows rescales across DPI); a
         // monitor-covering result, a page dim, or a centered overlay is sized.
         let resize = dim == DimMode::Page
-            || !crate::page::piece_keeps_layout(piece)
+            || !(crate::page::piece_keeps_layout(piece) || page_owns_layout(id))
             || next == mon;
         let resize = resize
             && window_rect(&window)
@@ -1320,6 +1327,193 @@ pub fn reveal_overlay(
     }
     emit_overlay_shown(app, id, stage);
     Ok(())
+}
+
+/// Ids whose window the page sized or anchored through the `layout` hook.
+/// Their layout survives reveals even for `c` overlays.
+fn page_layouts() -> &'static Mutex<HashSet<String>> {
+    static SET: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    SET.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn page_owns_layout(id: &str) -> bool {
+    page_layouts()
+        .lock()
+        .unwrap()
+        .contains(&id.to_ascii_lowercase())
+}
+
+/// One `layout` hook call. Every field is optional; all apply to the piece's
+/// own window. Sizes and offsets are logical px.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LayoutPatch {
+    pub width: Option<f64>,
+    pub height: Option<f64>,
+    /// Grid anchor (`tl` … `br`, `c`, `cursor`) on the window's current monitor.
+    pub anchor: Option<String>,
+    /// Inset from `anchor` (needs `anchor`).
+    pub offset: Option<(i32, i32)>,
+    pub always_on_top: Option<bool>,
+    /// Absent: unchanged. `null`: clicks hit the whole window again. A list:
+    /// only those rects (logical px, window-relative) take clicks; the rest
+    /// of the window passes them through to whatever is below.
+    #[serde(default, deserialize_with = "some_or_null")]
+    pub hit_regions: Option<Option<Vec<HitRect>>>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
+pub struct HitRect {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+impl HitRect {
+    fn contains(&self, x: f64, y: f64) -> bool {
+        x >= self.x && x < self.x + self.width && y >= self.y && y < self.y + self.height
+    }
+}
+
+/// A present JSON field (even `null`) becomes `Some(..)`, so `null` and
+/// "absent" differ.
+fn some_or_null<'de, D, T>(de: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(de).map(Some)
+}
+
+/// Apply a `layout` hook patch to piece `id`'s own window.
+pub fn apply_layout_patch(app: &AppHandle, id: &str, patch: LayoutPatch) -> AppResult<()> {
+    let label = widget_label(id);
+    let window = app
+        .get_webview_window(&label)
+        .ok_or_else(|| AppError::msg(format!("layout: '{id}' has no window of its own")))?;
+    if patch.offset.is_some() && patch.anchor.is_none() {
+        return Err(AppError::msg("layout: offset needs an anchor"));
+    }
+    let anchor = match patch.anchor.as_deref() {
+        Some(raw) => Some(placement::parse_anchor(Some(raw)).ok_or_else(|| {
+            AppError::msg(format!("layout: '{raw}' is not an overlay anchor"))
+        })?),
+        None => None,
+    };
+    let mut owned = false;
+    suppress_snap_for(id, 1200);
+
+    if patch.width.is_some() || patch.height.is_some() {
+        let scale = window.scale_factor().unwrap_or(1.0);
+        let current = window
+            .outer_size()
+            .map(|s| s.to_logical::<f64>(scale))
+            .map_err(|e| AppError::msg(e.to_string()))?;
+        let clamp = |v: f64| v.clamp(1.0, 16384.0);
+        let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize {
+            width: clamp(patch.width.unwrap_or(current.width)),
+            height: clamp(patch.height.unwrap_or(current.height)),
+        }));
+        owned = true;
+    }
+
+    if let Some(anchor) = anchor {
+        let win = window_rect(&window).ok_or_else(|| AppError::msg("layout: window has no rect"))?;
+        let (mon, scale) = window_monitor(&window, win)
+            .or_else(|| cursor_monitor(app))
+            .ok_or_else(|| AppError::msg("layout: no monitor"))?;
+        let (ox, oy) = patch.offset.unwrap_or((0, 0));
+        let px = |n: i32| ((n as f64) * scale).round() as i32;
+        let next = placement::anchor_rect(
+            anchor,
+            mon,
+            win.width,
+            win.height,
+            (px(ox), px(oy)),
+            crate::hotkeys::launcher_anchor(),
+        );
+        apply_rect(&window, next, false);
+        owned = true;
+    }
+
+    if let Some(on) = patch.always_on_top {
+        let _ = window.set_always_on_top(on);
+    }
+
+    if let Some(regions) = patch.hit_regions {
+        set_hit_regions(&window, regions);
+    }
+
+    if owned {
+        page_layouts().lock().unwrap().insert(id.to_ascii_lowercase());
+    }
+    Ok(())
+}
+
+/// Window label → its click-through hit regions (logical, window-relative).
+fn hit_regions() -> &'static Mutex<HashMap<String, Vec<HitRect>>> {
+    static MAP: OnceLock<Mutex<HashMap<String, Vec<HitRect>>>> = OnceLock::new();
+    MAP.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Whether a cursor at physical `(cx, cy)` lands in one of `regions` of a
+/// window at physical `win` with `scale`.
+fn cursor_hits(regions: &[HitRect], win: Rect, scale: f64, cx: i32, cy: i32) -> bool {
+    let s = if scale > 0.0 { scale } else { 1.0 };
+    let x = (cx - win.x) as f64 / s;
+    let y = (cy - win.y) as f64 / s;
+    regions.iter().any(|r| r.contains(x, y))
+}
+
+/// Make a window click-through outside `regions` (`None` turns it off).
+/// Windows has no per-pixel hit testing for a WebView2 window, so a watcher
+/// polls the cursor and flips the window's ignore-cursor flag as it crosses a
+/// region edge. While ignored, clicks reach the window below.
+fn set_hit_regions(window: &WebviewWindow, regions: Option<Vec<HitRect>>) {
+    let label = window.label().to_string();
+    let Some(regions) = regions else {
+        hit_regions().lock().unwrap().remove(&label);
+        let _ = window.set_ignore_cursor_events(false);
+        return;
+    };
+    let fresh = hit_regions()
+        .lock()
+        .unwrap()
+        .insert(label.clone(), regions)
+        .is_none();
+    if !fresh {
+        return; // A watcher is already running for this window.
+    }
+    let window = window.clone();
+    std::thread::spawn(move || {
+        let mut ignoring: Option<bool> = None;
+        loop {
+            let Some(regions) = hit_regions().lock().unwrap().get(&label).cloned() else {
+                break;
+            };
+            if !window.is_visible().unwrap_or(false) {
+                std::thread::sleep(Duration::from_millis(120));
+                continue;
+            }
+            let hit = match (window_rect(&window), crate::media::get_mouse_position()) {
+                (Some(win), Ok((cx, cy))) => {
+                    let scale = window.scale_factor().unwrap_or(1.0);
+                    cursor_hits(&regions, win, scale, cx, cy)
+                }
+                _ => true,
+            };
+            let ignore = !hit;
+            if ignoring != Some(ignore) {
+                if window.set_ignore_cursor_events(ignore).is_err() {
+                    break; // Window is gone.
+                }
+                ignoring = Some(ignore);
+            }
+            std::thread::sleep(Duration::from_millis(16));
+        }
+        let _ = window.set_ignore_cursor_events(false);
+    });
 }
 
 /// Show the host dim only for `host` mode; `page` / `none` draw no backdrop.
@@ -1862,4 +2056,34 @@ pub fn set_guides_visible(app: &AppHandle, visible: bool, guides: &[SnapGuide]) 
     }
     let _ = app.emit("layout://guides", guides);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn layout_patch_tells_null_from_absent() {
+        let p: LayoutPatch = serde_json::from_str(r#"{ "width": 300 }"#).unwrap();
+        assert_eq!(p.hit_regions, None);
+        let p: LayoutPatch = serde_json::from_str(r#"{ "hitRegions": null }"#).unwrap();
+        assert_eq!(p.hit_regions, Some(None));
+        let p: LayoutPatch = serde_json::from_str(
+            r#"{ "hitRegions": [{ "x": 0, "y": 0, "width": 10, "height": 5 }] }"#,
+        )
+        .unwrap();
+        assert_eq!(p.hit_regions.unwrap().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn cursor_hits_in_logical_window_space() {
+        let regions = [HitRect { x: 10.0, y: 10.0, width: 100.0, height: 40.0 }];
+        let win = Rect { x: 1000, y: 500, width: 400, height: 200 };
+        // 2x DPI: logical (10,10) is physical (1020,520).
+        assert!(cursor_hits(&regions, win, 2.0, 1020, 520));
+        assert!(cursor_hits(&regions, win, 2.0, 1219, 599));
+        assert!(!cursor_hits(&regions, win, 2.0, 1019, 520));
+        assert!(!cursor_hits(&regions, win, 2.0, 1220, 520));
+        assert!(!cursor_hits(&[], win, 1.0, 1100, 550));
+    }
 }

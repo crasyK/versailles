@@ -12,7 +12,7 @@ The host never grants more than that list. The catalog is fixed in [`src-tauri/s
 | ---- | -------------- |
 | `media` | GSMTC now-playing (`media_now`, play/pause/next/previous) |
 | `mouse` | Cursor position |
-| `layout` | Move the spawn window |
+| `layout` | The piece's own window: move, resize, re-anchor, always-on-top, click-through regions (`move_widget_cmd`, `layout_update`) |
 | `spawn` | Open/toggle another spawnable |
 | `shell` | Open a URL or path (`cli_open`); from a spawn window also run commands (`cli_exec`, `cli_exec_term`, `cli_search_files`) |
 | `hotkey` | Global accelerator for this spawnable (`data-hotkey` on that piece, else `#versailles` `launcher.hotkey` for the first hook piece) |
@@ -50,7 +50,31 @@ That piece must list the hook in `data-hooks`. A piece that omitted `data-hooks=
 
 `cli_open` refuses network (UNC) paths and dangerous URL handlers (`ms-msdt:`, `search-ms:`, `search:`, `ms-officecmd:`, Office `ms-word:` / `ms-excel:` / … and their `ofe|u|` forms, `file://host/…`). `http(s)`, `ms-settings:`, `shell:`, local paths and installed app names keep working.
 
-`layout.move` only moves the piece's own window.
+`layout` only ever touches the piece's own window (a wallpaper widget has none, so it is refused).
+
+## Layout
+
+```js
+const layout = versailles.for("hud").layout;
+await layout.resize(480, 120);                 // logical px
+await layout.setAnchor("bc", [0, 24]);         // grid anchor + inset, on the window's monitor
+await layout.setAlwaysOnTop(true);
+await layout.update({ width: 480, anchor: "br", offset: [16, 16] }); // several at once
+```
+
+A size or anchor set this way survives later reveals, even for a `c` overlay (see [Overlay placement](DIALECT.md#overlay-placement)).
+
+**Click-through.** `setHitRegions(rects)` makes only those rects (`{ x, y, width, height }`, CSS px inside the window) take clicks. Everywhere else the window passes clicks to whatever is below: other apps, or the host dim. `null` turns it off. `trackHits()` keeps the regions in sync with elements marked `data-hit` (pass another selector to change that) and returns a function that stops tracking.
+
+```html
+<template class="spawnable" data-id="hud" data-anchor="c" data-dim="page"
+          data-hooks="layout" data-dismiss-on-blur="false" data-w="720" data-h="480">
+  <div class="ring" data-hit>…</div>
+  <script>versailles.for("hud").layout.trackHits();</script>
+</template>
+```
+
+Windows has no per-pixel hit testing for these windows, so the host follows the cursor (about 60 times a second while the window is visible) and switches the window between catching and passing clicks at region edges. A click that passes through focuses the app below, which blurs the overlay: set `data-dismiss-on-blur="false"` on click-through pieces that should stay up. Windows are never click-through unless the page asks.
 
 `sys_stats` is a host command, not a named hook. Example widgets call `versailles.invoke("sys_stats")` without a caller.
 

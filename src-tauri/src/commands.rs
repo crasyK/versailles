@@ -256,6 +256,23 @@ pub async fn move_widget_cmd(
     .await?
 }
 
+/// `layout` hook: resize, re-anchor, pin on top, or set click-through regions
+/// on the caller's own window. See `LayoutPatch`.
+#[tauri::command]
+pub async fn layout_update(
+    app: AppHandle,
+    webview: Webview,
+    state: State<'_, AppState>,
+    patch: crate::window_manager::LayoutPatch,
+    caller: Option<String>,
+) -> AppResult<()> {
+    let acting = require_hook(&state, &webview, caller.as_deref(), "layout", HookClass::Plain)?;
+    on_main_thread(&app, move |app| {
+        crate::window_manager::apply_layout_patch(app, &acting, patch)
+    })
+    .await?
+}
+
 #[tauri::command]
 pub fn set_widget_always_on_top(
     app: AppHandle,

@@ -242,6 +242,85 @@
           if (!tauri()?.core?.invoke) return { host: false };
           return invoke("move_widget_cmd", { id, x, y, caller: id });
         },
+        /** Change the piece's own window in one call. See docs/HOOKS.md. */
+        async update(patch) {
+          return hostInvoke("layout", "layout_update", { patch: patch || {} });
+        },
+        async resize(width, height) {
+          return hostInvoke("layout", "layout_update", { patch: { width, height } });
+        },
+        /** Grid anchor (`tl` … `br`, `c`, `cursor`) + optional `[x, y]` inset. */
+        async setAnchor(anchor, offset) {
+          const patch = { anchor };
+          if (offset) patch.offset = [offset[0] | 0, offset[1] | 0];
+          return hostInvoke("layout", "layout_update", { patch });
+        },
+        async setAlwaysOnTop(on) {
+          return hostInvoke("layout", "layout_update", { patch: { alwaysOnTop: !!on } });
+        },
+        /**
+         * Only these rects ({ x, y, width, height }, CSS px in the window) take
+         * clicks; the rest of the window passes them through. `null` = off.
+         */
+        async setHitRegions(rects) {
+          return hostInvoke("layout", "layout_update", { patch: { hitRegions: rects } });
+        },
+        /**
+         * Keep hit regions in sync with elements matching `selector`
+         * (default `[data-hit]`). Returns a function that stops tracking and
+         * makes the whole window take clicks again.
+         */
+        trackHits(selector) {
+          const sel = selector || "[data-hit]";
+          const doc = global.document;
+          if (!doc) return () => {};
+          const setHits = (rects) =>
+            hostInvoke("layout", "layout_update", { patch: { hitRegions: rects } });
+          let last = "";
+          let frame = 0;
+          let stopped = false;
+          const send = () => {
+            frame = 0;
+            if (stopped) return;
+            const rects = Array.from(doc.querySelectorAll(sel))
+              .map((el) => el.getBoundingClientRect())
+              .filter((r) => r.width > 0 && r.height > 0)
+              .map((r) => ({
+                x: Math.floor(r.left),
+                y: Math.floor(r.top),
+                width: Math.ceil(r.width),
+                height: Math.ceil(r.height),
+              }));
+            const key = JSON.stringify(rects);
+            if (key === last) return;
+            last = key;
+            setHits(rects).catch(() => {});
+          };
+          const schedule = () => {
+            if (!frame && !stopped) frame = global.requestAnimationFrame(send);
+          };
+          const mo = new MutationObserver(schedule);
+          mo.observe(doc.documentElement, { subtree: true, childList: true, attributes: true });
+          const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(schedule) : null;
+          if (ro) ro.observe(doc.documentElement);
+          global.addEventListener("resize", schedule);
+          doc.addEventListener("transitionend", schedule, true);
+          doc.addEventListener("animationend", schedule, true);
+          // Transforms mid-animation change no attribute: sample a few times a second.
+          const tick = global.setInterval(schedule, 250);
+          schedule();
+          return () => {
+            stopped = true;
+            mo.disconnect();
+            if (ro) ro.disconnect();
+            global.removeEventListener("resize", schedule);
+            doc.removeEventListener("transitionend", schedule, true);
+            doc.removeEventListener("animationend", schedule, true);
+            global.clearInterval(tick);
+            if (frame) global.cancelAnimationFrame(frame);
+            setHits(null).catch(() => {});
+          };
+        },
       },
       async spawn(spawnId) {
         const id = await gate("spawn");

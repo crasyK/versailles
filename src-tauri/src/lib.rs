@@ -375,6 +375,7 @@ pub fn run() {
             commands::close_widget,
             commands::list_open_widgets,
             commands::move_widget_cmd,
+            commands::layout_update,
             commands::set_widget_always_on_top,
             commands::set_widget_opacity,
             commands::get_mouse_position_cmd,

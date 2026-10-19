@@ -693,6 +693,13 @@ pub fn open_widget_window(
     } else {
         widget_host_chrome_script(id, opacity, radius)
     };
+    // A `page`-dim overlay gets its stage before any page script runs, so
+    // the first frame is laid out at the right box.
+    let inject = match pending_stages().lock().unwrap().remove(&id.to_ascii_lowercase()) {
+        Some(stage) => format!("{inject}
+{}", stage_script(Some(stage))),
+        None => inject,
+    };
 
     // Session coords are physical (from Moved / outer_position). Builder.position
     // is logical — set physical after build so restore matches the saved layout.
@@ -1160,15 +1167,27 @@ fn piece_stage(piece: &crate::page::PagePiece, mon: Rect, scale: f64) -> StageRe
     }
 }
 
-/// Hand a `page`-dim overlay its box: `window.__VERSAILLES_STAGE__`,
+/// Script handing a `page`-dim overlay its box: `window.__VERSAILLES_STAGE__`,
 /// `--piece-x/y/w/h` on `<html>`, and a `versailles:stage` window event.
-/// Variables only — the page decides what to do with them.
-fn publish_stage(window: &WebviewWindow, stage: Option<StageRect>) {
+/// Variables only — the page decides what to do with them. Safe to run as an
+/// initialization script: before `<html>` exists it waits for it, so the
+/// first paint already has the values.
+fn stage_script(stage: Option<StageRect>) -> String {
     let json = serde_json::to_string(&stage).unwrap_or_else(|_| "null".into());
-    let js = format!(
-        r#"(function(s){{try{{window.__VERSAILLES_STAGE__=s;var d=document.documentElement;var k={{'--piece-x':'x','--piece-y':'y','--piece-w':'width','--piece-h':'height'}};Object.keys(k).forEach(function(n){{if(s)d.style.setProperty(n,s[k[n]]+'px');else d.style.removeProperty(n);}});window.dispatchEvent(new CustomEvent('versailles:stage',{{detail:s}}));}}catch(e){{}}}})({json});"#
-    );
-    let _ = window.eval(&js);
+    format!(
+        r#"(function(s){{try{{window.__VERSAILLES_STAGE__=s;var k={{'--piece-x':'x','--piece-y':'y','--piece-w':'width','--piece-h':'height'}};function apply(){{var d=document.documentElement;if(!d)return false;Object.keys(k).forEach(function(n){{if(s)d.style.setProperty(n,s[k[n]]+'px');else d.style.removeProperty(n);}});return true;}}if(!apply()){{var mo=new MutationObserver(function(){{if(apply())mo.disconnect();}});mo.observe(document,{{childList:true}});}}window.dispatchEvent(new CustomEvent('versailles:stage',{{detail:s}}));}}catch(e){{}}}})({json});"#
+    )
+}
+
+fn publish_stage(window: &WebviewWindow, stage: Option<StageRect>) {
+    let _ = window.eval(&stage_script(stage));
+}
+
+/// Stage for a window about to be created, picked up by `open_widget_window`
+/// into its initialization script (keyed by lower-case piece id).
+fn pending_stages() -> &'static Mutex<HashMap<String, StageRect>> {
+    static MAP: OnceLock<Mutex<HashMap<String, StageRect>>> = OnceLock::new();
+    MAP.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn show_overlay_dim(app: &AppHandle, anchor: &WebviewWindow) {
@@ -1308,22 +1327,21 @@ pub fn reveal_overlay(
         return Ok(());
     }
 
-    open_widget_window(app, manager, id, Some(pos), Some(true))?;
+    if let Some(stage) = stage {
+        pending_stages()
+            .lock()
+            .unwrap()
+            .insert(piece.id.to_ascii_lowercase(), stage);
+    }
+    let opened = open_widget_window(app, manager, id, Some(pos), Some(true));
+    pending_stages().lock().unwrap().remove(&piece.id.to_ascii_lowercase());
+    opened?;
     if let Some(window) = app.get_webview_window(&label) {
         if dim == DimMode::Page {
             apply_rect(&window, next, true);
         }
         sync_overlay_dim(app, &window, dim);
         clip_round_window(&window);
-        // The page may not have loaded yet: publish again once it has.
-        publish_stage(&window, stage);
-        if stage.is_some() {
-            let later = window.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(Duration::from_millis(400));
-                publish_stage(&later, stage);
-            });
-        }
     }
     emit_overlay_shown(app, id, stage);
     Ok(())

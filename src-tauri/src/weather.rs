@@ -363,12 +363,18 @@ pub async fn lookup(q: WeatherQuery) -> Result<WeatherPayload, String> {
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
 
-    if q.save {
-        write_saved_location(explicit.as_deref().unwrap_or(""))?;
+    // Clearing is immediate. A typed name is written only after it resolves,
+    // so a misspelled town does not replace the last working place.
+    if q.save && explicit.is_none() {
+        write_saved_location("")?;
     }
 
-    let (lat, lon, mut place, source) = if let Some(raw) = explicit {
-        resolve_named(&raw, "manual").await?
+    let (lat, lon, mut place, source) = if let Some(raw) = explicit.as_deref() {
+        let resolved = resolve_named(raw, "manual").await?;
+        if q.save {
+            write_saved_location(raw)?;
+        }
+        resolved
     } else {
         match tokio::task::spawn_blocking(windows_coordinates)
             .await

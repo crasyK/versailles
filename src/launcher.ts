@@ -1226,7 +1226,8 @@ function applyStage(box: { x: number; y: number; w: number; h: number } | null) 
     s.id = "cli-stage-style";
     s.textContent = [
       "html[data-stage],html[data-stage] body{background:transparent!important;}",
-      "html[data-stage] [data-stage-box]{position:fixed!important;margin:0!important;flex:none!important;",
+      // `:has(> #cli-root)` outranks page rules that pin the surface to the window.
+      "html[data-stage] [data-stage-box]:has(> #cli-root){position:fixed!important;margin:0!important;flex:none!important;",
       "left:var(--stage-x)!important;top:var(--stage-y)!important;",
       "width:var(--stage-w)!important;height:var(--stage-h)!important;}",
     ].join("");

@@ -172,13 +172,45 @@ pub async fn toggle_slideout(
     webview: Webview,
     state: State<'_, AppState>,
     id: String,
+    data: Option<serde_json::Value>,
     caller: Option<String>,
 ) -> AppResult<bool> {
     require_hook(&state, &webview, caller.as_deref(), "spawn", HookClass::Plain)?;
+    // `spawn(id, data)`: hand the spawnable structured data. With data, an
+    // open piece stays open and just receives it.
+    if let Some(data) = data.as_ref() {
+        let script = crate::bus::spawn_data_script(data)?;
+        let target = crate::desktop::page_catalog(&state)
+            .spawnable(&id)
+            .map(|p| p.id.clone())
+            .ok_or_else(|| crate::page::unknown_spawn(&id))?;
+        let label = crate::window_manager::widget_label(&target);
+        if let Some(window) = app.get_webview_window(&label) {
+            if window.is_visible().unwrap_or(false) {
+                let _ = window.eval(&script);
+                return Ok(true);
+            }
+        }
+        crate::window_manager::queue_init_script(&target, script.clone());
+        let opened = toggle_slideout_on_main(&app, &id).await;
+        crate::window_manager::clear_init_scripts(&target);
+        let opened = opened?;
+        if let Some(window) = app.get_webview_window(&label) {
+            let _ = window.eval(&script);
+        }
+        persist_session_on_main(&app).await?;
+        return Ok(opened);
+    }
+    let opened = toggle_slideout_on_main(&app, &id).await?;
+    persist_session_on_main(&app).await?;
+    Ok(opened)
+}
+
+async fn toggle_slideout_on_main(app: &AppHandle, id: &str) -> AppResult<bool> {
     // Never create WebView2 directly from the IPC/async stack — that hangs
     // Windows (same pattern as toggle_hotkey_piece / show_launcher).
     let app2 = app.clone();
-    let id2 = id.clone();
+    let id2 = id.to_string();
     let (tx, rx) = tokio::sync::oneshot::channel();
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(10));
@@ -195,10 +227,11 @@ pub async fn toggle_slideout(
         });
     });
 
-    let opened = rx
-        .await
-        .map_err(|e| crate::error::AppError::msg(e.to_string()))??;
+    rx.await
+        .map_err(|e| crate::error::AppError::msg(e.to_string()))?
+}
 
+async fn persist_session_on_main(app: &AppHandle) -> AppResult<()> {
     let app3 = app.clone();
     let (tx2, rx2) = tokio::sync::oneshot::channel();
     app.run_on_main_thread(move || {
@@ -206,9 +239,7 @@ pub async fn toggle_slideout(
     })
     .map_err(|e| crate::error::AppError::msg(e.to_string()))?;
     rx2.await
-        .map_err(|e| crate::error::AppError::msg(e.to_string()))??;
-
-    Ok(opened)
+        .map_err(|e| crate::error::AppError::msg(e.to_string()))?
 }
 
 #[tauri::command]
@@ -254,6 +285,76 @@ pub async fn move_widget_cmd(
         Ok(result)
     })
     .await?
+}
+
+/// `storage` hook: the caller's own key-value store.
+#[tauri::command]
+pub fn storage_op(
+    webview: Webview,
+    state: State<'_, AppState>,
+    op: crate::storage::StorageOp,
+    caller: Option<String>,
+) -> AppResult<serde_json::Value> {
+    let acting = require_hook(&state, &webview, caller.as_deref(), "storage", HookClass::Plain)?;
+    let dir = state.store.lock().unwrap().storage_dir();
+    crate::storage::apply(&dir, &acting, op)
+}
+
+/// `clipboard` hook: plain text on the system clipboard (`null` when none).
+#[tauri::command]
+pub async fn clipboard_read(
+    webview: Webview,
+    state: State<'_, AppState>,
+    caller: Option<String>,
+) -> AppResult<Option<String>> {
+    require_hook(&state, &webview, caller.as_deref(), "clipboard", HookClass::Plain)?;
+    tokio::task::spawn_blocking(crate::clipboard::read_text)
+        .await
+        .map_err(|e| crate::error::AppError::msg(e.to_string()))?
+}
+
+#[tauri::command]
+pub async fn clipboard_write(
+    webview: Webview,
+    state: State<'_, AppState>,
+    text: String,
+    caller: Option<String>,
+) -> AppResult<()> {
+    require_hook(&state, &webview, caller.as_deref(), "clipboard", HookClass::Plain)?;
+    tokio::task::spawn_blocking(move || crate::clipboard::write_text(&text))
+        .await
+        .map_err(|e| crate::error::AppError::msg(e.to_string()))?
+}
+
+/// `power` hook: lock / sleep / sign out / restart / shut down.
+#[tauri::command]
+pub async fn power_action(
+    webview: Webview,
+    state: State<'_, AppState>,
+    action: crate::power::PowerAction,
+    caller: Option<String>,
+) -> AppResult<()> {
+    let acting = require_hook(&state, &webview, caller.as_deref(), "power", HookClass::Plain)?;
+    tracing::info!("power: '{acting}' requested {action:?}");
+    tokio::task::spawn_blocking(move || crate::power::run(action))
+        .await
+        .map_err(|e| crate::error::AppError::msg(e.to_string()))?
+}
+
+/// `bus` hook: relay a message to every open piece that declared `bus`.
+/// Returns how many windows it reached.
+#[tauri::command]
+pub fn bus_publish(
+    app: AppHandle,
+    webview: Webview,
+    state: State<'_, AppState>,
+    topic: String,
+    data: Option<serde_json::Value>,
+    caller: Option<String>,
+) -> AppResult<usize> {
+    let acting = require_hook(&state, &webview, caller.as_deref(), "bus", HookClass::Plain)?;
+    let cat = crate::desktop::page_catalog(&state);
+    crate::bus::publish(&app, &cat, &acting, &topic, &data.unwrap_or(serde_json::Value::Null))
 }
 
 /// `layout` hook: resize, re-anchor, pin on top, or set click-through regions

@@ -13,10 +13,14 @@ The host never grants more than that list. The catalog is fixed in [`src-tauri/s
 | `media` | GSMTC now-playing (`media_now`, play/pause/next/previous) |
 | `mouse` | Cursor position |
 | `layout` | The piece's own window: move, resize, re-anchor, always-on-top, click-through regions (`move_widget_cmd`, `layout_update`) |
-| `spawn` | Open/toggle another spawnable |
+| `spawn` | Open/toggle another spawnable, optionally handing it data |
 | `shell` | Open a URL or path (`cli_open`); from a spawn window also run commands (`cli_exec`, `cli_exec_term`, `cli_search_files`) |
 | `hotkey` | Global accelerator for this spawnable (`data-hotkey` on that piece, else `#versailles` `launcher.hotkey` for the first hook piece) |
 | `pty` | Embedded ConPTY (`pty_open` / write / resize / close) |
+| `storage` | The piece's own key-value store under `.versailles/storage/` (`storage_op`) |
+| `clipboard` | Read / write plain text, change notice (`clipboard_read`, `clipboard_write`, `clipboard://changed`) |
+| `power` | Lock, sleep, sign out, restart, shut down (`power_action`) |
+| `bus` | Messages between pieces on the page (`bus_publish`) |
 
 Unknown hook names are rejected.
 
@@ -78,6 +82,62 @@ Windows has no per-pixel hit testing for these windows, so the host follows the 
 
 `sys_stats` is a host command, not a named hook. Example widgets call `versailles.invoke("sys_stats")` without a caller.
 
+## Storage
+
+```js
+const store = versailles.for("todo").storage;
+await store.set("items", [{ text: "milk", done: false }]);
+const items = (await store.get("items")) ?? [];
+await store.keys();   // ["items"]
+await store.delete("items");
+await store.clear();
+```
+
+Values are any JSON. Each piece has its own file (`.versailles/storage/<id>.json`, written atomically) and cannot read another piece's. The wallpaper and a spawn window of the same piece share it. Keys are 1–256 bytes; a store is capped at 1 MB.
+
+## Clipboard
+
+```js
+const clip = versailles.for("clips").clipboard;
+const text = await clip.readText();   // null when the clipboard holds no text
+await clip.writeText("hello");
+await clip.onChange(async () => console.log(await clip.readText()));
+```
+
+Plain text only. `onChange` fires on every clipboard change (the notice carries no content; read it if you need it). The host keeps no history: a clipboard manager keeps its own, e.g. in `storage`.
+
+## Power
+
+```js
+button.onclick = () => versailles.for("power-menu").power.lock();
+// also: sleep(), signOut(), restart(), shutdown()
+```
+
+The SDK only runs these inside a click or key press (`navigator.userActivation`), so a page cannot lock or shut down the machine on its own. `restart` and `shutdown` are immediate. The host logs every request.
+
+## Bus
+
+```js
+// Publisher
+await versailles.for("player").bus.publish("track", { title: "…" });
+
+// Subscriber (another piece; "*" receives every topic)
+const off = await versailles.for("ticker").bus.subscribe("track", (data, msg) => {
+  console.log(msg.from, data.title);
+});
+```
+
+The host relays each message to every open window of a piece that declares `bus`. It is delivered by a script run in those windows only, not as a broadcast event, so pieces without the hook never see it. A piece does not receive its own messages. Windows that are not open miss the message (keep state in `storage` if a late opener needs it). Topics are 1–128 bytes; data is any JSON up to 256 KB.
+
+**Spawn data.** `spawn(id, data)` opens a spawnable (or keeps it open) and hands it `data`; the spawnable reads it with `versailles.spawnData()` or `versailles.onSpawn(fn)`. On first open the data is there before the page's scripts run.
+
+```js
+await versailles.for("launcher").spawn("notes", { open: "groceries" });
+// inside notes:
+versailles.onSpawn((data) => openNote(data.open));
+const first = versailles.spawnData();
+```
+
 ## Events
 
 | Event | Payload |
@@ -85,6 +145,7 @@ Windows has no per-pixel hit testing for these windows, so the host follows the 
 | `pty://data` | `{ "session": <u64>, "data": "<base64>" }` |
 | `pty://exit` | `{ "session": <u64> }` |
 | `overlay://shown` | `{ "id": "<piece id>", "seed": "<string>" }` |
+| `clipboard://changed` | `null` — to windows of pieces that declare `clipboard` |
 | `overlay://hidden` | `{ "id": "<piece id>" }` (`null` when only the backdrop hid) |
 | `launcher://shown` / `launcher://hidden` | Legacy: bare seed string / `true` |
 

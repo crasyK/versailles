@@ -1,7 +1,9 @@
 mod api;
 mod apps;
 mod boot;
+mod bus;
 mod cli;
+mod clipboard;
 mod commands;
 mod config;
 mod crash;
@@ -10,6 +12,7 @@ mod engine_runtime;
 mod error;
 mod page;
 mod placement;
+mod power;
 mod hotkeys;
 mod layout;
 mod media;
@@ -19,6 +22,7 @@ mod pty;
 mod registry;
 mod single_instance_fixup;
 mod state;
+mod storage;
 mod watcher;
 mod weather;
 mod window_manager;
@@ -279,6 +283,7 @@ pub fn run() {
 
             watcher::start_widget_watcher(app.handle().clone());
             crash::start_hang_watchdog(app.handle());
+            clipboard::start_change_watcher(app.handle().clone());
 
             // Session restore off the setup path; bounded to 2 concurrent WebView2
             // creations to avoid the documented deadlock risk. Desktop wallpaper
@@ -376,6 +381,11 @@ pub fn run() {
             commands::list_open_widgets,
             commands::move_widget_cmd,
             commands::layout_update,
+            commands::storage_op,
+            commands::clipboard_read,
+            commands::clipboard_write,
+            commands::power_action,
+            commands::bus_publish,
             commands::set_widget_always_on_top,
             commands::set_widget_opacity,
             commands::get_mouse_position_cmd,

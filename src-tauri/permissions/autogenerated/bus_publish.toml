@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-bus-publish"
+description = "Enables the bus_publish command without any pre-configured scope."
+commands.allow = ["bus_publish"]
+
+[[permission]]
+identifier = "deny-bus-publish"
+description = "Denies the bus_publish command without any pre-configured scope."
+commands.deny = ["bus_publish"]

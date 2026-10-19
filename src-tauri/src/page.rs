@@ -6,7 +6,9 @@ use crate::placement::{self, Align, Anchor, DimMode};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-pub const KNOWN_HOOKS: &[&str] = &["media", "mouse", "layout", "spawn", "shell", "hotkey", "pty"];
+pub const KNOWN_HOOKS: &[&str] = &[
+    "media", "mouse", "layout", "spawn", "shell", "hotkey", "pty", "storage", "clipboard", "power", "bus",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

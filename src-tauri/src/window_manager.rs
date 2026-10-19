@@ -693,11 +693,10 @@ pub fn open_widget_window(
     } else {
         widget_host_chrome_script(id, opacity, radius)
     };
-    // A `page`-dim overlay gets its stage before any page script runs, so
-    // the first frame is laid out at the right box.
-    let inject = match pending_stages().lock().unwrap().remove(&id.to_ascii_lowercase()) {
-        Some(stage) => format!("{inject}
-{}", stage_script(Some(stage))),
+    // Queued scripts (a `page`-dim stage, spawn data) run before any page
+    // script, so the first frame already has them.
+    let inject = match pending_init_scripts().lock().unwrap().remove(&id.to_ascii_lowercase()) {
+        Some(scripts) => format!("{inject}\n{}", scripts.join("\n")),
         None => inject,
     };
 
@@ -1183,11 +1182,26 @@ fn publish_stage(window: &WebviewWindow, stage: Option<StageRect>) {
     let _ = window.eval(&stage_script(stage));
 }
 
-/// Stage for a window about to be created, picked up by `open_widget_window`
-/// into its initialization script (keyed by lower-case piece id).
-fn pending_stages() -> &'static Mutex<HashMap<String, StageRect>> {
-    static MAP: OnceLock<Mutex<HashMap<String, StageRect>>> = OnceLock::new();
+/// Scripts for a window about to be created, added by `open_widget_window`
+/// to its initialization script so they run before any page script (keyed by
+/// lower-case piece id). Used for the `page`-dim stage and spawn data.
+fn pending_init_scripts() -> &'static Mutex<HashMap<String, Vec<String>>> {
+    static MAP: OnceLock<Mutex<HashMap<String, Vec<String>>>> = OnceLock::new();
     MAP.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub fn queue_init_script(id: &str, script: String) {
+    pending_init_scripts()
+        .lock()
+        .unwrap()
+        .entry(id.to_ascii_lowercase())
+        .or_default()
+        .push(script);
+}
+
+/// Drop scripts that no window creation picked up (the window already existed).
+pub fn clear_init_scripts(id: &str) {
+    pending_init_scripts().lock().unwrap().remove(&id.to_ascii_lowercase());
 }
 
 fn show_overlay_dim(app: &AppHandle, anchor: &WebviewWindow) {
@@ -1328,13 +1342,10 @@ pub fn reveal_overlay(
     }
 
     if let Some(stage) = stage {
-        pending_stages()
-            .lock()
-            .unwrap()
-            .insert(piece.id.to_ascii_lowercase(), stage);
+        queue_init_script(&piece.id, stage_script(Some(stage)));
     }
     let opened = open_widget_window(app, manager, id, Some(pos), Some(true));
-    pending_stages().lock().unwrap().remove(&piece.id.to_ascii_lowercase());
+    clear_init_scripts(&piece.id);
     opened?;
     if let Some(window) = app.get_webview_window(&label) {
         if dim == DimMode::Page {

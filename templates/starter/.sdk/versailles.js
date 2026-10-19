@@ -208,6 +208,14 @@
       return invoke(cmd, Object.assign({ caller: id }, args || {}));
     }
 
+    async function power(action) {
+      const activation = global.navigator && global.navigator.userActivation;
+      if (activation && !activation.isActive) {
+        throw new Error("power." + action + " needs a click or key press");
+      }
+      return hostInvoke("power", "power_action", { action });
+    }
+
     return {
       media: {
         async now() {
@@ -322,17 +330,111 @@
           };
         },
       },
-      async spawn(spawnId) {
+      /**
+       * Toggle a spawnable. With `data`, it opens (or stays open) and receives
+       * the data: `versailles.spawnData()` / `versailles.onSpawn(fn)` there.
+       */
+      async spawn(spawnId, data) {
         const id = await gate("spawn");
         if (!tauri()?.core?.invoke) return { host: false, ok: false };
-        return invoke("toggle_slideout", { id: spawnId, caller: id });
+        const args = { id: spawnId, caller: id };
+        if (data !== undefined) args.data = data;
+        return invoke("toggle_slideout", args);
       },
       shell: {
         async open(target) {
           return hostInvoke("shell", "cli_open", { target });
         },
       },
+      /** The piece's own key-value store (JSON values, ~1 MB per piece). */
+      storage: {
+        async get(key) {
+          return hostInvoke("storage", "storage_op", { op: { op: "get", key } });
+        },
+        async set(key, value) {
+          return hostInvoke("storage", "storage_op", { op: { op: "set", key, value } });
+        },
+        async delete(key) {
+          return hostInvoke("storage", "storage_op", { op: { op: "delete", key } });
+        },
+        async keys() {
+          return hostInvoke("storage", "storage_op", { op: { op: "keys" } });
+        },
+        async clear() {
+          return hostInvoke("storage", "storage_op", { op: { op: "clear" } });
+        },
+      },
+      clipboard: {
+        async readText() {
+          return hostInvoke("clipboard", "clipboard_read");
+        },
+        async writeText(text) {
+          return hostInvoke("clipboard", "clipboard_write", { text: String(text) });
+        },
+        /** `fn()` whenever the system clipboard changes (read it if you need it). */
+        async onChange(fn) {
+          await gate("clipboard");
+          if (!tauri()?.event?.listen) return () => {};
+          return listen("clipboard://changed", () => fn());
+        },
+      },
+      /**
+       * Lock / sleep / sign out / restart / shut down. Only runs inside a
+       * click or key press, so a page cannot do it on its own.
+       */
+      power: {
+        async lock() {
+          return power("lock");
+        },
+        async sleep() {
+          return power("sleep");
+        },
+        async signOut() {
+          return power("signOut");
+        },
+        async restart() {
+          return power("restart");
+        },
+        async shutdown() {
+          return power("shutdown");
+        },
+      },
+      /** Messages between pieces that declare `bus`. */
+      bus: {
+        async publish(topic, data) {
+          return hostInvoke("bus", "bus_publish", { topic: String(topic), data: data === undefined ? null : data });
+        },
+        /**
+         * `fn(data, message)` for each message on `topic` (`"*"` = all) from
+         * another piece. Returns a function that unsubscribes.
+         */
+        async subscribe(topic, fn) {
+          const own = await gate("bus");
+          return busSubscribe(own, String(topic), fn);
+        },
+      },
     };
+
+  }
+
+  // The host delivers bus messages by calling this in each receiving window.
+  const busSubscribers = new Set();
+  global.__VERSAILLES_BUS__ = function (message) {
+    if (!message || typeof message.topic !== "string") return;
+    busSubscribers.forEach((sub) => {
+      if (sub.own && message.from && message.from.toLowerCase() === sub.own.toLowerCase()) return;
+      if (sub.topic !== "*" && sub.topic !== message.topic) return;
+      try {
+        sub.fn(message.data, message);
+      } catch (err) {
+        console.error(err);
+      }
+    });
+  };
+  function busSubscribe(own, topic, fn) {
+    const sub = { own, topic, fn };
+    busSubscribers.add(sub);
+    return () => busSubscribers.delete(sub);
   }
 
   const scoped = makeApi(null);
@@ -353,6 +455,20 @@
     layout: scoped.layout,
     spawn: scoped.spawn,
     shell: scoped.shell,
+    storage: scoped.storage,
+    clipboard: scoped.clipboard,
+    power: scoped.power,
+    bus: scoped.bus,
+    /** Data the last `spawn(id, data)` handed this spawnable (or undefined). */
+    spawnData() {
+      return global.__VERSAILLES_SPAWN_DATA__;
+    },
+    /** `fn(data)` each time `spawn(id, data)` hands this spawnable data. */
+    onSpawn(fn) {
+      const handler = (e) => fn(e.detail);
+      global.addEventListener("versailles:spawn", handler);
+      return () => global.removeEventListener("versailles:spawn", handler);
+    },
     async closeWidget(id) {
       return invoke("close_widget", { id: id || widgetIdFromLabel() });
     },

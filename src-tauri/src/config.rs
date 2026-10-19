@@ -456,6 +456,11 @@ impl ConfigStore {
         self.root.join("layouts")
     }
 
+    /// Per-piece key-value stores (`storage` hook).
+    pub fn storage_dir(&self) -> PathBuf {
+        self.root.join("storage")
+    }
+
     pub fn desktop_html_path(&self) -> PathBuf {
         self.widgets_root.join("desktop").join("index.html")
     }

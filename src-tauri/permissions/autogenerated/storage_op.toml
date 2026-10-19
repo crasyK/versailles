@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-storage-op"
+description = "Enables the storage_op command without any pre-configured scope."
+commands.allow = ["storage_op"]
+
+[[permission]]
+identifier = "deny-storage-op"
+description = "Denies the storage_op command without any pre-configured scope."
+commands.deny = ["storage_op"]

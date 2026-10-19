@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-power-action"
+description = "Enables the power_action command without any pre-configured scope."
+commands.allow = ["power_action"]
+
+[[permission]]
+identifier = "deny-power-action"
+description = "Denies the power_action command without any pre-configured scope."
+commands.deny = ["power_action"]

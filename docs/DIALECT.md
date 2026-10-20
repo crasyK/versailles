@@ -146,7 +146,7 @@ A spawnable with `data-anchor="top"`, `"bottom"`, `"left"` or `"right"` is a doc
 <template class="spawnable" data-id="rail" data-anchor="right" data-dock="auto-hide" data-w="320" data-peek="4"></template>
 ```
 
-- `reserve` (default) registers a Windows AppBar: the work area shrinks, maximized windows stop at the bar, and it moves out of the way when the taskbar or another bar moves. While a fullscreen app (a video, a game) is up, the bar drops behind it. The space is given back when the bar hides or Versailles quits; if Versailles crashes, Windows releases it on its own.
+- `reserve` (default) registers a Windows AppBar: the work area shrinks, maximized windows stop at the bar, and it moves out of the way when the taskbar or another bar moves. While a fullscreen app (a video, a game) is up, the bar drops behind it. The space is given back when the bar hides or Versailles quits; if Versailles crashes, Windows releases it on its own. If Windows will not grant a usable reservation (seen for a bottom bar on a secondary monitor whose taskbar a shell mod moved to the top), the bar floats at its edge instead and the host logs a warning.
 - `float` sits on top inside the work area without reserving space.
 - `auto-hide` leaves a `data-peek` px strip at the edge. Touching the edge with the mouse slides it out (the piece gets `shown`); moving off it tucks it back after half a second (`hiding`, then `hidden`).
 

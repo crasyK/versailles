@@ -119,6 +119,8 @@ button.onclick = () => versailles.for("power-menu").power.lock();
 
 The SDK only runs these inside a click or key press (`navigator.userActivation`), so a page cannot lock or shut down the machine on its own. `restart` and `shutdown` are immediate. The host logs every request.
 
+`sleep()` needs classic (S3) sleep. Many newer laptops only have Modern Standby (`powercfg /a` lists "S0 low power idle"), which Windows gives apps no supported way to start; there `sleep()` rejects with an error saying so. Catch it and hide or disable your sleep button.
+
 ## Bus
 
 ```js

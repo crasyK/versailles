@@ -1,0 +1,66 @@
+    <!-- ── e2e test pieces, injected by scripts/e2e.mjs ── -->
+    <article class="widget" data-id="e2e-wall" data-hooks="storage,battery,network,focus,audio,bus,spawn"
+             style="position:fixed;left:8px;top:8px;font:12px monospace">e2e</article>
+    <script>
+      /* Reports what the wallpaper sees into its storage ("report"). */
+      (function e2eWall() {
+        if (/[?&]m=spawn/.test(location.search)) return;
+        if (window.__e2eWall) return;
+        window.__e2eWall = true;
+        var report = { sdk: null, sensors: {}, pushes: {}, bus: [], persisted: null, errors: {} };
+        (function wait(n) {
+          var v = window.versailles;
+          if (!v || typeof v.for !== 'function') { if (n < 400) setTimeout(function () { wait(n + 1); }, 50); return; }
+          var me = v.for('e2e-wall');
+          function save() { me.storage.set('report', report).catch(function () {}); }
+          function err(key) { return function (e) { report.errors[key] = String((e && e.message) || e); save(); }; }
+          report.sdk = v.version || 'unknown';
+          me.storage.get('persist').then(function (p) {
+            report.persisted = p == null ? 0 : p;
+            return me.storage.set('persist', report.persisted + 1);
+          }).then(save, err('storage'));
+          ['battery', 'network', 'focus', 'audio'].forEach(function (h) {
+            me[h].now().then(function (x) { report.sensors[h] = x == null ? 'null' : 'ok'; save(); }, err(h));
+            me.on(h, function () { report.pushes[h] = (report.pushes[h] || 0) + 1; }).catch(err(h + '.on'));
+          });
+          me.bus.subscribe('e2e-hello', function (d, m) { report.bus.push(m.from); save(); }).then(function () {
+            setTimeout(function () { me.spawn('e2e-overlay').catch(err('spawn')); }, 1500);
+          }, err('bus'));
+        })(0);
+      })();
+    </script>
+    <template class="spawnable" data-id="e2e-overlay" data-anchor="c" data-dim="none" data-dismiss-on-blur="false"
+              data-hooks="storage,bus" data-w="200" data-h="80">
+      <div style="font:12px monospace;padding:8px">e2e overlay</div>
+      <script>
+        /* Counts its own runs (template scripts must run once) and says hello on the bus. */
+        window.__e2eRuns = (window.__e2eRuns || 0) + 1;
+        (function wait(n) {
+          var v = window.versailles;
+          if (!v || typeof v.for !== 'function') { if (n < 400) setTimeout(function () { wait(n + 1); }, 50); return; }
+          if (window.__e2eOverlay) return;
+          window.__e2eOverlay = true;
+          var me = v.for('e2e-overlay');
+          setTimeout(function () {
+            me.storage.set('report', { runs: window.__e2eRuns }).catch(function () {});
+            me.bus.publish('e2e-hello', {}).catch(function () {});
+          }, 500);
+        })(0);
+      </script>
+    </template>
+    <template class="spawnable" data-id="e2e-bar" data-anchor="bottom" data-h="24" data-hooks="storage">
+      <div style="font:12px monospace;padding:4px 8px">E2E BAR</div>
+      <script>
+        /* Counts its page loads: a page edit must reload it, not hide it. */
+        (function wait(n) {
+          var v = window.versailles;
+          if (!v || typeof v.for !== 'function') { if (n < 400) setTimeout(function () { wait(n + 1); }, 50); return; }
+          if (window.__e2eBar) return;
+          window.__e2eBar = true;
+          var me = v.for('e2e-bar');
+          me.storage.get('loads').then(function (n) { return me.storage.set('loads', (n || 0) + 1); }).catch(function () {});
+        })(0);
+      </script>
+    </template>
+    <!-- ── end of e2e test pieces ── -->
+

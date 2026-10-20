@@ -13,10 +13,12 @@
     "smoke:shortcuts": "node scripts/smoke-shortcuts.mjs",
     "smoke:desktop": "node scripts/smoke-desktop.mjs",
     "bench:boot": "node scripts/bench-boot.mjs",
+    "e2e": "node scripts/e2e.mjs",
     "test:host": "cargo test --manifest-path src-tauri/Cargo.toml",
     "tauri": "node scripts/run-tauri.mjs",
     "tauri:dev": "node scripts/verify-acl.mjs && node scripts/run-tauri.mjs dev",
-    "tauri:build": "node scripts/verify-acl.mjs && node scripts/run-tauri.mjs build"
+    "tauri:build": "node scripts/verify-acl.mjs && node scripts/run-tauri.mjs build",
+    "build:test": "node scripts/verify-acl.mjs && node scripts/run-tauri.mjs build -- --profile release-test"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

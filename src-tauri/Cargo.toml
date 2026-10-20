@@ -82,6 +82,15 @@ panic = "abort"
 codegen-units = 1
 lto = true
 
+# Test installers (`npm run build:test`): thin LTO and parallel codegen build
+# and link much faster, with less memory, at a small runtime cost. Releases
+# keep [profile.release].
+[profile.release-test]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
+incremental = true
+
 # Debug ACL context overflows Tauri's default 8MiB thread on Windows.
 [patch.crates-io]
 tauri-codegen = { path = "vendor/tauri-codegen" }

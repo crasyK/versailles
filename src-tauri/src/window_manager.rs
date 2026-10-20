@@ -2370,6 +2370,7 @@ pub fn toggle_slideout_widget(
             .get_webview_window(&label)
             .and_then(|w| w.is_visible().ok())
             .unwrap_or(false);
+        tracing::info!("toggle overlay '{resolved}': {}", if visible { "hide" } else { "show" });
         if visible {
             conceal_overlay(app, &resolved)?;
             return Ok(false);

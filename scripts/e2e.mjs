@@ -192,10 +192,19 @@ async function main() {
     const keyOpened = await until("Win+F24 piece", () => store(dest, "e2e-key")?.opened, 10_000).catch(() => false);
     check("Win+F24 opens its piece", keyOpened);
     check("Win+F24 does not open Start", !winF24.shellOpen, `foreground ${winF24.foreground}`);
-    const copilot = press("A0,5B,86");
+    // Again, now that its piece is in front: it closes, and Start stays shut
+    // (the first press hid a broken mask because opening the piece took focus).
+    await sleep(800);
+    const keyShown = probe(child.pid).texts.some((t) => /e2e key/i.test(t));
+    const winF24Again = press("5B,87");
+    await sleep(800);
+    const keyHidden = !probe(child.pid).texts.some((t) => /e2e key/i.test(t));
+    check("Win+F24 again closes its piece", keyShown && keyHidden, `shown ${keyShown}, hidden after ${keyHidden}`);
+    check("Win+F24 again does not open Start", !winF24Again.shellOpen, `foreground ${winF24Again.foreground}`);
+    const copilot = press("A2,A0,5B,86");
     const copilotOpened = await until("Copilot piece", () => store(dest, "e2e-copilot")?.opened, 10_000).catch(() => false);
-    check("Copilot key opens its piece", copilotOpened);
-    check("Copilot key does not open Windows' own", !copilot.shellOpen, `foreground ${copilot.foreground}`);
+    check("Ctrl+Copilot opens its piece", copilotOpened);
+    check("Ctrl+Copilot does not open Windows' own", !copilot.shellOpen, `foreground ${copilot.foreground}`);
 
     // Restart: storage survives, the reservation is released while down.
     kill(child);

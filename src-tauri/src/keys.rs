@@ -6,13 +6,19 @@
 //! a low-level keyboard hook instead, the way PowerToys and AutoHotkey do it:
 //!
 //! - a matched key's down and up are swallowed; the shell never sees them;
-//! - before a Win key-up that ends a swallowed combo (or a bound Win tap), an
-//!   unassigned key (`vkE8`, tagged) goes out so Start does not open;
+//! - a Win key-up that ends a swallowed combo (or a bound Win tap) is held
+//!   back and sent again after an unassigned key (`vkE8`), both tagged, so
+//!   the shell sees Win+vkE8 instead of a lone Win and Start does not open.
+//!   They are sent from a separate thread: `SendInput` inside the hook
+//!   callback stalls the callback past Windows' timeout, the keys then
+//!   arrive out of order, and Windows silently removes the hook.
 //! - the Copilot key sends LShift+LWin+F23, so `"Copilot"` is Win+Shift+F23.
 //!
 //! The hook runs on its own thread with its own message loop and does no I/O;
-//! the action is posted to the main thread. Windows silently drops a hook that
-//! takes too long, so it is installed again every 30 s. It exists only while
+//! the action is posted to the main thread. Windows silently drops a hook
+//! whose thread answered late once (a UI Automation client reading our
+//! windows is enough), so it is installed again after every second without
+//! key traffic. It exists only while
 //! a Win binding or a suppress entry exists, and dies with the process, so
 //! the keyboard is never left changed. Win+L and Ctrl+Alt+Del cannot be
 //! intercepted, and keys typed into an elevated window are not seen (UIPI).
@@ -205,7 +211,8 @@ mod hook {
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::System::Threading::GetCurrentThreadId;
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VIRTUAL_KEY,
+        GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP,
+        VIRTUAL_KEY,
         VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
@@ -218,7 +225,11 @@ mod hook {
     const TAG: usize = 0x5652_534C;
     /// Unassigned virtual key (AutoHotkey's suggestion for a menu mask).
     const MASK_VK: u16 = 0xE8;
-    const REINSTALL_MS: u32 = 30_000;
+    /// Re-install after this long without a key reaching the hook. Windows
+    /// silently drops a hook whose thread answered late once (UI Automation
+    /// clients reading our windows can stall it briefly), so a drop costs at
+    /// most this long of missed keys.
+    const REINSTALL_MS: u32 = 1_000;
 
     struct Running {
         thread_id: u32,
@@ -285,12 +296,16 @@ mod hook {
         unsafe {
             'outer: loop {
                 if MsgWaitForMultipleObjects(None, false, REINSTALL_MS, QS_ALLINPUT) == WAIT_TIMEOUT {
-                    // Windows removes a hook that once ran past its timeout
-                    // without telling us; a fresh one costs nothing.
-                    if let Some(h) = hook.take() {
-                        let _ = UnhookWindowsHookEx(h);
+                    // New hook first, then drop the old one: no moment without
+                    // a hook, and calls queued meanwhile reach only the new one.
+                    let fresh = install();
+                    if fresh.is_some() {
+                        if let Some(h) = hook.take() {
+                            let _ = UnhookWindowsHookEx(h);
+                        }
+                        hook = fresh;
+                        reset_if_released();
                     }
-                    hook = install();
                     continue;
                 }
                 let mut msg = MSG::default();
@@ -332,6 +347,24 @@ mod hook {
         };
     }
 
+    /// A dropped hook may have missed a key-up; forget keys no longer down.
+    fn reset_if_released() {
+        STATE.with(|s| {
+            if s.win_held.get() && !held(VK_LWIN) && !held(VK_RWIN) {
+                s.win_held.set(false);
+            }
+            let mut swallowed = s.swallowed.borrow_mut();
+            for (vk, on) in swallowed.iter_mut().enumerate() {
+                if *on && !held(VIRTUAL_KEY(vk as u16)) {
+                    *on = false;
+                }
+            }
+            if !held(VK_SHIFT) && !held(VK_CONTROL) && !held(VK_MENU) {
+                s.mods.set(0);
+            }
+        });
+    }
+
     fn held(vk: VIRTUAL_KEY) -> bool {
         (unsafe { GetAsyncKeyState(vk.0 as i32) }) < 0
     }
@@ -346,14 +379,43 @@ mod hook {
         }
     }
 
-    fn send_mask() {
-        let key = |flags| INPUT {
+    /// Queue the mask key and the held-back Win key-up for the sender thread.
+    fn mask_then_release(win_vk: u16) {
+        static SENDER: std::sync::OnceLock<Option<Mutex<mpsc::Sender<u16>>>> = std::sync::OnceLock::new();
+        let sender = SENDER.get_or_init(|| {
+            let (tx, rx) = mpsc::channel::<u16>();
+            std::thread::Builder::new()
+                .name("versailles-keys-send".into())
+                .spawn(move || {
+                    while let Ok(vk) = rx.recv() {
+                        send_mask_then_release(vk);
+                    }
+                })
+                .ok()
+                .map(|_| Mutex::new(tx))
+        });
+        match sender {
+            Some(tx) => {
+                let _ = tx.lock().unwrap().send(win_vk);
+            }
+            // No sender thread: better a late mask than a stuck Win key.
+            None => send_mask_then_release(win_vk),
+        }
+    }
+
+    /// The mask key down and up, then the held-back Win key-up.
+    fn send_mask_then_release(win_vk: u16) {
+        let key = |vk: u16, flags| INPUT {
             r#type: INPUT_KEYBOARD,
             Anonymous: INPUT_0 {
-                ki: KEYBDINPUT { wVk: VIRTUAL_KEY(MASK_VK), dwFlags: flags, dwExtraInfo: TAG, ..Default::default() },
+                ki: KEYBDINPUT { wVk: VIRTUAL_KEY(vk), dwFlags: flags, dwExtraInfo: TAG, ..Default::default() },
             },
         };
-        let inputs = [key(Default::default()), key(KEYEVENTF_KEYUP)];
+        let inputs = [
+            key(MASK_VK, Default::default()),
+            key(MASK_VK, KEYEVENTF_KEYUP),
+            key(win_vk, KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY),
+        ];
         unsafe {
             SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
         }
@@ -398,9 +460,10 @@ mod hook {
                     }
                 }
                 if mask {
-                    send_mask();
+                    // Swallow this key-up; the copy sent after the mask key releases Win.
+                    mask_then_release(vk);
+                    return true;
                 }
-                // Let the Win key-up through: swallowing it would leave Win stuck.
                 return false;
             }
             let i = vk as usize & 0xFF;
@@ -435,13 +498,35 @@ mod hook {
         })
     }
 
+    /// `VERSAILLES_KEYS_DEBUG=1`: log every key event the hook sees to
+    /// `keys.log` (its own file: the main log may rotate under another
+    /// Versailles writing to it).
+    fn debug() -> bool {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *ON.get_or_init(|| std::env::var("VERSAILLES_KEYS_DEBUG").is_ok_and(|v| v == "1"))
+    }
+
     unsafe extern "system" fn proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         if code == HC_ACTION as i32 {
             let k = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
+            let t0 = std::time::Instant::now();
             let ours = k.flags.0 & LLKHF_INJECTED.0 != 0 && k.dwExtraInfo == TAG;
             let msg = wparam.0 as u32;
             let down = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
-            if !ours && handle(k.vkCode as u16, down) {
+            let swallow = !ours && handle(k.vkCode as u16, down);
+            if debug() {
+                crate::crash::append_log("keys.log", &format!(
+                    "pid {} key {:#04x} {} flags {:#x}{}{} in {} us",
+                    std::process::id(),
+                    k.vkCode,
+                    if down { "down" } else { "up" },
+                    k.flags.0,
+                    if ours { " ours" } else { "" },
+                    if swallow { " swallowed" } else { "" },
+                    t0.elapsed().as_micros()
+                ));
+            }
+            if swallow {
                 return LRESULT(1);
             }
         }

@@ -8,7 +8,12 @@ Add-Type -Namespace E2E -Name K -MemberDefinition @'
 [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
 [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
 [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr h, int a, out int v, int s);
+[StructLayout(LayoutKind.Sequential)] public struct LASTINPUTINFO { public uint cbSize; public uint dwTime; }
+[DllImport("user32.dll")] public static extern bool GetLastInputInfo(ref LASTINPUTINFO i);
 '@
+function LastInput { $l = New-Object E2E.K+LASTINPUTINFO; $l.cbSize = 8; [void][E2E.K]::GetLastInputInfo([ref]$l); $l.dwTime }
+$before = LastInput
+Start-Sleep -Milliseconds 20
 $keys = $Chord -split ',' | ForEach-Object { [byte][Convert]::ToInt32($_.Trim(), 16) }
 foreach ($k in $keys) { [E2E.K]::keybd_event($k, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 30 }
 [array]::Reverse($keys)
@@ -24,4 +29,4 @@ $shellOpen = ($name -match 'StartMenuExperienceHost|SearchHost|SearchApp|ShellEx
 if ($shellOpen) {
   [E2E.K]::keybd_event(0x1B, 0, 0, [UIntPtr]::Zero); [E2E.K]::keybd_event(0x1B, 0, 2, [UIntPtr]::Zero)
 }
-@{ foreground = $name; shellOpen = $shellOpen } | ConvertTo-Json -Compress
+@{ foreground = $name; shellOpen = $shellOpen; injected = ((LastInput) -ne $before) } | ConvertTo-Json -Compress

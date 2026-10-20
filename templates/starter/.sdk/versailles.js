@@ -1,4 +1,4 @@
-/*! versailles-sdk 0.6.0 */
+/*! versailles-sdk 0.7.0 */
 /**
  * Versailles widget SDK — named hooks, native chrome, browser stubs.
  *
@@ -14,7 +14,7 @@
   "use strict";
 
   /** Keep in step with the marker on the first line. */
-  const SDK_VERSION = "0.6.0";
+  const SDK_VERSION = "0.7.0";
 
   function inIframe() {
     try {

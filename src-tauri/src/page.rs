@@ -907,6 +907,34 @@ mod tests {
     }
 
     #[test]
+    fn starter_examples_are_off_until_uncommented() {
+        let starter = include_str!("../../templates/starter/desktop/index.html").replace('\r', "");
+        let cat = parse_page(&starter);
+        for id in ["clock", "note", "draw", "action-bar"] {
+            assert!(cat.get(id).is_some(), "{id} is on the starter page");
+        }
+        assert!(cat.get("note").unwrap().hooks == vec!["storage".to_string()]);
+        for id in ["topbar", "hello", "taskbar"] {
+            assert!(cat.get(id).is_none(), "{id} is commented out");
+        }
+        // Deleting the "try me" marker lines turns the examples on.
+        let on: String = starter
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("<!-- try me") && !l.trim_start().starts_with("try me"))
+            .map(|l| format!("{l}\n"))
+            .collect();
+        let cat = parse_page(&on);
+        let top = cat.spawnable("topbar").expect("top bar");
+        assert_eq!(crate::docks::piece_dock(top).map(|d| d.edge), Some(crate::docks::Edge::Top));
+        assert!(cat.is_overlay("hello"));
+        assert_eq!(piece_offset(cat.spawnable("hello").unwrap()), (24, 24));
+        let taskbar = cat.spawnable("taskbar").expect("taskbar");
+        assert!(crate::docks::on_every_monitor(taskbar));
+        assert_eq!(taskbar.hooks, vec!["windows".to_string(), "windows-control".to_string()]);
+        assert!(cat.get("clock").is_some() && cat.get("action-bar").is_some());
+    }
+
+    #[test]
     fn monitor_copies_act_as_their_bar() {
         let cat = parse_page(
             r#"

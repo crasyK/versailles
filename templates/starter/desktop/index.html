@@ -95,11 +95,20 @@
       .spawnable           template; host opens a native always-on-top window
       .action-bar          optional example class on a spawnable
       data-id              catalog id (calc aliases calculator)
-      data-w / data-h      overlay size
-      data-anchor          c/center/overlay = mid-screen overlay; tc = top-center; tr = docked slide-out
+      data-w / data-h      overlay size (a docked bar's depth)
+      data-anchor          tl tc ml c mr bl bc br / cursor = overlay; tr = docked slide-out;
+                           top / bottom / left / right = docked bar (top bar, taskbar, dock)
+      data-offset          x,y inset from an overlay's anchor
+      data-dock            docked bars: reserve (default) | float | auto-hide
+      data-monitor         primary (default) | <display number> | all
       data-hotkey          global accelerator when data-hooks includes hotkey
                            (any spawnable; Alt+Space, Ctrl+Shift+D, CommandOrControl+K)
-      data-hooks           allowlist: media, mouse, layout, spawn, shell, hotkey, pty
+      data-hooks           allowlist: media, mouse, layout, spawn, shell, hotkey, pty, storage,
+                           clipboard, power, bus, battery, network, focus, audio,
+                           windows, windows-control
+
+      A piece inside an HTML comment is not on the page: the examples near the
+      end of <body> are commented out until you remove their comment markers.
 
       Preview: ?m=desktop (default) | widgets | spawn | spawn&id=draw | action_bar
     -->
@@ -415,6 +424,37 @@
         <div class="clock-time"><span id="clk">--:--</span><span class="sec" id="clk-sec">--</span></div>
         <div class="clock-date" id="clk-date"></div>
       </article>
+
+      <!-- Example: a note that keeps its text with the `storage` hook
+           (.versailles/storage/note.json). Delete this article and the style and
+           script blocks after it to remove it. -->
+      <article class="widget note" data-id="note" data-hooks="storage">
+        <div class="note-label">note</div>
+        <textarea class="note-text" spellcheck="false" placeholder="Write something; it stays."></textarea>
+      </article>
+      <style>
+        .note { width: 280px; height: 150px; padding: 14px 18px; display: flex; flex-direction: column; gap: 6px; }
+        .note-label { font: 600 11px/1 var(--font-sans); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-mut); }
+        .note-text { flex: 1; min-height: 0; resize: none; border: 0; outline: none; background: transparent; color: var(--ink); font: 14px/1.45 var(--font-sans); }
+      </style>
+      <script>
+        (function noteWidget() {
+          var box = document.querySelector('.note .note-text');
+          if (!box) return;
+          // The SDK loads after this script; wait for it.
+          (function whenSdk(fn) { window.versailles ? fn(window.versailles) : setTimeout(function () { whenSdk(fn); }, 50); })(function (v) {
+            var store = v.for('note').storage;
+            store.get('text').then(function (text) {
+              if (typeof text === 'string') box.value = text; // { host: false } in a plain browser
+            }, function () {});
+            var timer = 0;
+            box.addEventListener('input', function () {
+              clearTimeout(timer);
+              timer = setTimeout(function () { store.set('text', box.value).catch(function () {}); }, 400);
+            });
+          });
+        })();
+      </script>
     </section>
 
     <template class="spawnable" data-id="draw" data-w="920" data-h="660" data-anchor="c" data-dismiss-on-blur="false" data-hooks="layout,spawn">
@@ -988,6 +1028,165 @@
         })();
       </script>
     </template>
+
+    <!-- ===== Example: a top bar with clock, network and battery =====
+         A docked bar along the top of the primary monitor. It reserves its strip
+         like the Windows taskbar, so maximized apps stop below it. Network and
+         battery arrive by push (the host sends a value when it changes); the
+         button opens "hello", an overlay pinned 24 px from the bottom-right
+         corner with data-anchor and data-offset.
+         To try it, delete the two "try me" marker lines around the templates below.
+         To remove it, delete everything down to the end of the example. -->
+    <!-- try me (top bar): delete this line
+    <template class="spawnable" data-id="topbar" data-anchor="top" data-h="32"
+              data-hooks="battery,network,spawn">
+      <style>
+        .spawn-surface.solo:has(.topbar) { border: 0 !important; box-shadow: none !important; border-radius: 0 !important; }
+        .topbar {
+          height: 100%; display: flex; align-items: center; gap: 12px; padding: 0 10px 0 14px;
+          background: var(--paper); border-bottom: var(--stroke); color: var(--ink);
+          font: 600 12px/1 var(--font-sans); white-space: nowrap;
+        }
+        .topbar .tb-time { font-variant-numeric: tabular-nums; }
+        .topbar .tb-date { color: var(--ink-mut); }
+        .topbar .tb-right { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+        .topbar .tb-chip {
+          padding: 4px 10px; border-radius: var(--radius-chip); border: var(--stroke-dashed);
+          font: 600 11px/1 var(--font-sans); letter-spacing: 0.06em; text-transform: uppercase;
+        }
+        .topbar button.tb-chip:hover { background: var(--ink); color: var(--paper); border-style: solid; }
+      </style>
+      <div class="topbar">
+        <span class="tb-time">--:--</span>
+        <span class="tb-date"></span>
+        <span class="tb-right">
+          <span class="tb-chip tb-net">net</span>
+          <span class="tb-chip tb-bat">power</span>
+          <button class="tb-chip tb-hello" type="button">hello</button>
+        </span>
+      </div>
+      <script>
+        (function topBar() {
+          var root = document.currentScript && document.currentScript.closest('.spawn-surface');
+          if (!root) return;
+          var time = root.querySelector('.tb-time');
+          var date = root.querySelector('.tb-date');
+          var net = root.querySelector('.tb-net');
+          var bat = root.querySelector('.tb-bat');
+          function tick() {
+            var n = new Date();
+            time.textContent = String(n.getHours()).padStart(2, '0') + ':' + String(n.getMinutes()).padStart(2, '0');
+            date.textContent = n.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+          }
+          tick();
+          setInterval(tick, 1000);
+          // The SDK loads after this script; wait for it.
+          (function whenSdk(fn) { window.versailles ? fn(window.versailles) : setTimeout(function () { whenSdk(fn); }, 50); })(function (v) {
+            var me = v.for('topbar');
+            // Called now and on every change.
+            me.on('network', function (n) {
+              if (!n) return;
+              net.textContent = n.online ? (n.wifi ? 'wi-fi ' + (n.signalBars == null ? '' : n.signalBars + '/5') : n.name || 'online') : n.level;
+            }).catch(function () {});
+            me.on('battery', function (b) {
+              if (!b) return;
+              bat.textContent = !b.present ? 'ac' : b.percent + '%' + (b.charging ? ' +' : '');
+            }).catch(function () {});
+            root.querySelector('.tb-hello').addEventListener('click', function () {
+              me.spawn('hello').catch(function () {});
+            });
+          });
+        })();
+      </script>
+    </template>
+
+    <template class="spawnable" data-id="hello" data-anchor="br" data-offset="24,24"
+              data-dim="none" data-w="300" data-h="112">
+      <style>
+        .hello { height: 100%; padding: 16px 18px; display: flex; flex-direction: column; gap: 8px; color: var(--ink); }
+        .hello b { font: 600 11px/1 var(--font-sans); letter-spacing: 0.08em; text-transform: uppercase; }
+        .hello span { font: 13px/1.45 var(--font-sans); color: var(--ink-mut); }
+      </style>
+      <div class="hello">
+        <b>pinned overlay</b>
+        <span>data-anchor="br" data-offset="24,24": 24 px in from the bottom-right corner. Click anywhere else to close it.</span>
+      </div>
+    </template>
+    try me (top bar): and this line -->
+    <!-- ===== end of the top bar example ===== -->
+
+    <!-- ===== Example: a taskbar on every monitor =====
+         A docked bar along the bottom of each monitor (data-monitor="all": one
+         copy per monitor) listing that monitor's app windows with the windows
+         hook. Click a window to bring it up, click the focused one to minimize
+         it, middle-click to close it (windows-control). It sits above the
+         Windows taskbar; set that to hide automatically if you want this one
+         alone. To try it, delete the two "try me" marker lines around the template
+         below. To remove it, delete everything down to the end of the example. -->
+    <!-- try me (taskbar): delete this line
+    <template class="spawnable" data-id="taskbar" data-anchor="bottom" data-h="44"
+              data-monitor="all" data-hooks="windows,windows-control">
+      <style>
+        .spawn-surface.solo:has(.taskbar) { border: 0 !important; box-shadow: none !important; border-radius: 0 !important; }
+        .taskbar {
+          height: 100%; display: flex; align-items: center; gap: 6px; padding: 0 8px;
+          background: var(--paper); border-top: var(--stroke); overflow: hidden;
+        }
+        .taskbar .tk-win {
+          display: inline-flex; align-items: center; gap: 8px; height: 32px; min-width: 0; max-width: 200px;
+          padding: 0 12px 0 8px; border-radius: var(--radius-chip); border: var(--stroke-dashed);
+          background: var(--paper); color: var(--ink); font: 600 12px/1 var(--font-sans);
+        }
+        .taskbar .tk-win:hover { background: var(--chip); }
+        .taskbar .tk-win.focused { background: var(--ink); color: var(--paper); border-style: solid; }
+        .taskbar .tk-win.minimized { opacity: 0.55; }
+        .taskbar .tk-win img { width: 18px; height: 18px; flex: none; }
+        .taskbar .tk-win span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      </style>
+      <div class="taskbar"></div>
+      <script>
+        (function taskbar() {
+          var root = document.currentScript && document.currentScript.closest('.spawn-surface');
+          var bar = root && root.querySelector('.taskbar');
+          if (!bar) return;
+          (function whenSdk(fn) { window.versailles ? fn(window.versailles) : setTimeout(function () { whenSdk(fn); }, 50); })(function (v) {
+            var wins = v.for('taskbar').windows;
+            function render(list, here) {
+              bar.replaceChildren();
+              list.forEach(function (w) {
+                if (here != null && w.monitor !== here) return; // this copy shows its own monitor
+                var b = document.createElement('button');
+                b.type = 'button';
+                b.className = 'tk-win' + (w.focused ? ' focused' : '') + (w.minimized ? ' minimized' : '');
+                b.title = w.title;
+                if (w.icon) {
+                  var img = document.createElement('img');
+                  img.src = w.icon;
+                  img.alt = '';
+                  b.appendChild(img);
+                }
+                var label = document.createElement('span');
+                label.textContent = w.title; // titles come from other apps: text only
+                b.appendChild(label);
+                b.addEventListener('click', function () {
+                  (w.focused && !w.minimized ? wins.minimize(w.id) : wins.focus(w.id)).catch(function () {});
+                });
+                b.addEventListener('auxclick', function (e) {
+                  if (e.button === 1) wins.close(w.id).catch(function () {});
+                });
+                bar.appendChild(b);
+              });
+            }
+            v.monitor().then(function (m) {
+              var here = m ? m.number : null;
+              return wins.track(function (list) { render(list, here); }, { icons: true });
+            }).catch(function () {});
+          });
+        })();
+      </script>
+    </template>
+    try me (taskbar): and this line -->
+    <!-- ===== end of the taskbar example ===== -->
 
     <div id="preview-root" hidden></div>
 

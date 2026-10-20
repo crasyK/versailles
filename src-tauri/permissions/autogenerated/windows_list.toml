@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-windows-list"
+description = "Enables the windows_list command without any pre-configured scope."
+commands.allow = ["windows_list"]
+
+[[permission]]
+identifier = "deny-windows-list"
+description = "Denies the windows_list command without any pre-configured scope."
+commands.deny = ["windows_list"]

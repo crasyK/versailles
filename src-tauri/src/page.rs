@@ -8,7 +8,7 @@ use std::collections::HashSet;
 
 pub const KNOWN_HOOKS: &[&str] = &[
     "media", "mouse", "layout", "spawn", "shell", "hotkey", "pty", "storage", "clipboard", "power", "bus",
-    "battery", "network", "focus", "audio",
+    "battery", "network", "focus", "audio", "windows", "windows-control",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -261,8 +261,116 @@
       throw new Error("unknown push '" + name + "'");
     }
 
+    function windowControl(id, action, to) {
+      const args = { id: Number(id), action };
+      if (to) args.to = to;
+      return hostInvoke("windows-control", "windows_control", args);
+    }
+
+    /**
+     * App windows (`windows` hook to read, `windows-control` to act). A
+     * window: { id, title, app, exe, pid, monitor, minimized, maximized,
+     * focused, rect, icon? }. `rect` and `move` use physical screen pixels.
+     */
+    const windows = {
+      async list(opts) {
+        const icons = !!(opts && opts.icons);
+        const list = await hostInvoke("windows", "windows_list", { icons });
+        return Array.isArray(list) ? list : [];
+      },
+      /** 32×32 PNG data URL of one window's icon, or null. */
+      async icon(id) {
+        return hostInvoke("windows", "windows_icon", { id: Number(id) });
+      },
+      /** `fn({ type: "opened"|"closed"|"focused"|"changed", id, window })` per change. */
+      async onChange(fn) {
+        return on("windows", fn);
+      },
+      /**
+       * `fn(list)` now and after every change: the current windows in a
+       * stable order (new ones last). `{ icons: true }` fills `icon`. Returns
+       * a function that stops tracking.
+       */
+      async track(fn, opts) {
+        const icons = !!(opts && opts.icons);
+        const iconOf = new Map();
+        const pending = [];
+        let list = null;
+        const emit = () => {
+          try {
+            fn(list.slice());
+          } catch (err) {
+            console.error(err);
+          }
+        };
+        const fetchIcon = (id) => {
+          windows.icon(id).then(
+            (url) => {
+              iconOf.set(id, url || null);
+              const k = list ? list.findIndex((w) => w.id === id) : -1;
+              if (k >= 0 && url) {
+                list[k] = Object.assign({}, list[k], { icon: url });
+                emit();
+              }
+            },
+            () => {}
+          );
+        };
+        const apply = (ev) => {
+          if (!ev || ev.id == null) return;
+          const i = list.findIndex((w) => w.id === ev.id);
+          if (ev.type === "closed") {
+            if (i >= 0) list.splice(i, 1);
+            iconOf.delete(ev.id);
+            return;
+          }
+          if (!ev.window) return;
+          if (ev.type === "focused") list.forEach((w) => (w.focused = false));
+          const next = Object.assign({}, ev.window);
+          if (iconOf.get(ev.id)) next.icon = iconOf.get(ev.id);
+          if (i >= 0) list[i] = next;
+          else list.push(next);
+          if (icons && !iconOf.has(ev.id)) fetchIcon(ev.id);
+        };
+        const off = await on("windows", (ev) => {
+          if (!list) {
+            pending.push(ev);
+            return;
+          }
+          apply(ev);
+          emit();
+        });
+        list = await windows.list({ icons });
+        list.forEach((w) => iconOf.set(w.id, w.icon || null));
+        pending.splice(0).forEach(apply);
+        emit();
+        return off;
+      },
+      focus(id) {
+        return windowControl(id, "focus");
+      },
+      minimize(id) {
+        return windowControl(id, "minimize");
+      },
+      restore(id) {
+        return windowControl(id, "restore");
+      },
+      maximize(id) {
+        return windowControl(id, "maximize");
+      },
+      /** Asks the app to close (it may still prompt to save). */
+      close(id) {
+        return windowControl(id, "close");
+      },
+      /** `{ x, y }`, `{ width, height }` or all four, physical px. */
+      move(id, to) {
+        return windowControl(id, "move", to || {});
+      },
+    };
+
     return {
       on,
+      windows,
       battery: sensor("battery"),
       network: sensor("network"),
       focus: sensor("focus"),
@@ -506,7 +614,7 @@
     return () => pushSubscribers.delete(sub);
   }
   /** Hooks whose changes the host pushes; `on()` needs them declared. */
-  const PUSH_HOOKS = new Set(["media", "battery", "network", "focus", "audio", "clipboard"]);
+  const PUSH_HOOKS = new Set(["media", "battery", "network", "focus", "audio", "clipboard", "windows"]);
   const SENSOR_HOOKS = new Set(["battery", "network", "focus", "audio"]);
   // On the wallpaper this page runs in an iframe of the host shell, which
   // forwards bus messages and pushes here. Only the parent may send them.
@@ -598,6 +706,7 @@
     network: scoped.network,
     focus: scoped.focus,
     audio: scoped.audio,
+    windows: scoped.windows,
     /** Data the last `spawn(id, data)` handed this spawnable (or undefined). */
     monitors,
     monitor,

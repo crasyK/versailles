@@ -25,6 +25,8 @@ The host never grants more than that list. The catalog is fixed in [`src-tauri/s
 | `network` | Online state, connectivity level, profile name, Wi-Fi and signal bars |
 | `focus` | The active window: title, app, exe path, pid |
 | `audio` | Default output device, volume (0–100), mute |
+| `windows` | The app windows a taskbar would show, their icons, and pushed changes (`windows_list`, `windows_icon`) |
+| `windows-control` | Focus, minimize, restore, maximize, close, move / resize one of those windows (`windows_control`) |
 
 Unknown hook names are rejected.
 
@@ -164,8 +166,49 @@ await hud.focus.onChange((w) => (title.textContent = w.title));
 | `focus` | 0.5 s | `{ title, app, exe, pid, self }` (`self`: a Versailles window) |
 | `audio` | 1 s | `{ device, volume, muted }` |
 | `media` | on change | same as `media.now()` |
+| `windows` | 0.25 s | `{ type: "opened"\|"closed"\|"focused"\|"changed", id, window }` (see [Windows](#windows)) |
 
 A sensor is only read while some piece on the page declares its hook, and a value is pushed only when it changed. Pushes go only to the windows of pieces that declare the hook, by a script run in those windows (not a broadcast event). Sensor subscriptions also get the current value right away.
+
+## Windows
+
+`windows` reads the app windows a taskbar would show; `windows-control` acts on them. Declare only what a piece needs: a window switcher that only lists needs `windows`.
+
+```html
+<template class="spawnable" data-id="taskbar" data-anchor="bottom" data-h="44"
+          data-monitor="all" data-hooks="windows,windows-control"></template>
+```
+
+```js
+const bar = versailles.for("taskbar");
+const here = (await versailles.monitor())?.number;
+await bar.windows.track((list) => render(list.filter((w) => w.monitor === here)), { icons: true });
+
+button.onclick = () => (w.focused && !w.minimized ? bar.windows.minimize(w.id) : bar.windows.focus(w.id));
+```
+
+A window:
+
+| Field | |
+| ----- | - |
+| `id` | Window handle (a number); pass it to the control calls |
+| `title`, `app`, `exe`, `pid` | Title, executable name without `.exe`, full path, process id |
+| `monitor` | Display number (as in `versailles.monitors()`) |
+| `minimized`, `maximized` | Window state |
+| `focused` | The app window with focus. Clicking a Versailles window (the taskbar itself, the wallpaper) does not take it away, so "click the focused window to minimize it" works. |
+| `rect` | `{ x, y, width, height }` in physical screen pixels; where a minimized window restores to |
+| `icon` | 32×32 PNG data URL, only with `{ icons: true }` or from `icon(id)`; `null` / absent if the app has none |
+
+Read (`windows`):
+
+- `windows.list({ icons })`: every window, top of the z-order first.
+- `windows.icon(id)`: one window's icon. Icons are cached by the host.
+- `windows.onChange(fn)` / `on("windows", fn)`: `fn({ type, id, window })` for each change. `closed` carries the last known window. `changed` covers title, minimized / maximized, focus lost and monitor; moving or resizing alone sends nothing (read `rect` with `list()` when you need it).
+- `windows.track(fn, { icons })`: `fn(list)` now and after every change, in a stable order (new windows last). Returns a function that stops tracking.
+
+Control (`windows-control`): `focus(id)` (restores a minimized window), `minimize(id)`, `restore(id)`, `maximize(id)`, `close(id)` (posts `WM_CLOSE`: the app may still ask to save), `move(id, { x, y, width, height })` (physical px; `x` / `y` alone moves, `width` / `height` alone resizes; a maximized or minimized window is restored first).
+
+Listed are visible, titled top-level windows without a tool-window style or owner (or with `WS_EX_APPWINDOW`). Never listed: Versailles' own windows, the shell's desktop and taskbars, and cloaked windows (other virtual desktops, suspended store apps). Control calls only accept a listed window and refuse Versailles' own. Store apps show as `ApplicationFrameHost`. The list is only read while a piece on the page declares `windows`.
 
 ## Piece events
 

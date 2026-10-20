@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-windows-icon"
+description = "Enables the windows_icon command without any pre-configured scope."
+commands.allow = ["windows_icon"]
+
+[[permission]]
+identifier = "deny-windows-icon"
+description = "Denies the windows_icon command without any pre-configured scope."
+commands.deny = ["windows_icon"]

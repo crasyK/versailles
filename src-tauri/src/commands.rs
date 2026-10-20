@@ -360,6 +360,56 @@ pub async fn sense_now(
         .map_err(|e| crate::error::AppError::msg(e.to_string()))?
 }
 
+/// `windows` hook: the app windows a taskbar would show (top of the z-order
+/// first). `icons` adds a 32×32 PNG data URL per window. Changes are pushed
+/// (see `app_windows::start_watcher`).
+#[tauri::command]
+pub async fn windows_list(
+    webview: Webview,
+    state: State<'_, AppState>,
+    icons: Option<bool>,
+    caller: Option<String>,
+) -> AppResult<Vec<crate::app_windows::WindowInfo>> {
+    require_hook(&state, &webview, caller.as_deref(), "windows", HookClass::Plain)?;
+    let icons = icons.unwrap_or(false);
+    tokio::task::spawn_blocking(move || crate::app_windows::list(icons))
+        .await
+        .map_err(|e| crate::error::AppError::msg(e.to_string()))?
+}
+
+/// `windows` hook: one window's icon as a PNG data URL (`null` if it has none).
+#[tauri::command]
+pub async fn windows_icon(
+    webview: Webview,
+    state: State<'_, AppState>,
+    id: i64,
+    caller: Option<String>,
+) -> AppResult<Option<String>> {
+    require_hook(&state, &webview, caller.as_deref(), "windows", HookClass::Plain)?;
+    tokio::task::spawn_blocking(move || crate::app_windows::icon(id))
+        .await
+        .map_err(|e| crate::error::AppError::msg(e.to_string()))?
+}
+
+/// `windows-control` hook: focus / minimize / restore / maximize / close /
+/// move another app's window. Only windows `windows_list` would show; never
+/// one of Versailles' own.
+#[tauri::command]
+pub async fn windows_control(
+    webview: Webview,
+    state: State<'_, AppState>,
+    id: i64,
+    action: crate::app_windows::Action,
+    to: Option<crate::app_windows::MoveTo>,
+    caller: Option<String>,
+) -> AppResult<()> {
+    let acting = require_hook(&state, &webview, caller.as_deref(), "windows-control", HookClass::Plain)?;
+    tracing::debug!("windows: '{acting}' {action:?} {id}");
+    tokio::task::spawn_blocking(move || crate::app_windows::control(id, action, to))
+        .await
+        .map_err(|e| crate::error::AppError::msg(e.to_string()))?
+}
+
 /// Every monitor (logical sizes, display numbers, primary flag) and the one
 /// the calling window is on. Read-only; no hook needed.
 #[tauri::command]

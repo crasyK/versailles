@@ -30,9 +30,9 @@ See [`docs/DIALECT.md`](docs/DIALECT.md).
 
 - `.widget` / `.spawnable` (optional `.action-bar` class)
 - `data-id` (required). `calc` aliases `calculator`.
-- `data-w` / `data-h` overlay size. `data-anchor`: grid overlays `tl tc ml c mr bl bc br` or `cursor`; `tr` = docked slide-out. `data-offset="x,y"` insets from the anchor. `data-dim="host|page|none"` picks the backdrop. `data-monitor="primary|all|<n>"` picks the monitor (widgets get a wallpaper per named monitor). `data-anchor="top|bottom|left|right"` + `data-dock="reserve|float|auto-hide"` = a docked bar. Overlays other than `c` keep the page's own size/position across reveals.
+- `data-w` / `data-h` overlay size. `data-anchor`: grid overlays `tl tc ml c mr bl bc br` or `cursor`; `tr` = docked slide-out. `data-offset="x,y"` insets from the anchor. `data-dim="host|page|none"` picks the backdrop. `data-monitor="primary|all|<n>"` picks the monitor (widgets get a wallpaper per named monitor). `data-anchor="top|bottom|left|right"` + `data-dock="reserve|float|auto-hide"` = a docked bar (`data-monitor="all"`: one copy per monitor, windows `widget-<id>` / `widget-<id>:<n>`, all acting as `<id>`). Overlays other than `c` keep the page's own size/position across reveals.
 - `data-hotkey` with the `hotkey` hook on any spawnable — each combo toggles that piece. Fallback for the first hook piece with no `data-hotkey`: `#versailles` / sidecar `launcher.hotkey`.
-- `data-hooks` allowlist: `media`, `mouse`, `layout`, `spawn`, `shell`, `hotkey`, `pty`, `storage`, `clipboard`, `power`, `bus`, `battery`, `network`, `focus`, `audio`
+- `data-hooks` allowlist: `media`, `mouse`, `layout`, `spawn`, `shell`, `hotkey`, `pty`, `storage`, `clipboard`, `power`, `bus`, `battery`, `network`, `focus`, `audio`, `windows`, `windows-control`
 
 Example command-bar ids (`#cli-*`) belong to `desktop/bar.js`, not the host.
 

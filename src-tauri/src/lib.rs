@@ -1,4 +1,5 @@
 mod api;
+mod app_windows;
 mod apps;
 mod boot;
 mod bus;
@@ -298,6 +299,7 @@ pub fn run() {
             crash::start_hang_watchdog(app.handle());
             clipboard::start_change_watcher(app.handle().clone());
             sensors::start_watcher(app.handle().clone());
+            app_windows::start_watcher(app.handle().clone());
             monitors::start_watcher(app.handle().clone());
 
             // Session restore off the setup path; bounded to 2 concurrent WebView2
@@ -403,6 +405,9 @@ pub fn run() {
             commands::bus_publish,
             commands::sense_now,
             commands::monitor_info,
+            commands::windows_list,
+            commands::windows_icon,
+            commands::windows_control,
             commands::set_widget_always_on_top,
             commands::set_widget_opacity,
             commands::get_mouse_position_cmd,

@@ -52,9 +52,10 @@ export function ptyEventData(payload: unknown): string | null {
   return null;
 }
 
-/** Tauri accelerator → footer label: `CommandOrControl+Shift+K` → `ctrl+shift+k`. */
+/** Tauri accelerator → footer label: `CommandOrControl+Shift+K` → `ctrl+shift+k`.
+ * A list (`"Alt+Space, Win"`) shows its first combo. */
 export function hotkeyLabel(accel: string): string {
-  return accel
+  return (accel.split(/(?<!\+)\s*,\s*/)[0] || "")
     .split("+")
     .map((k) => k.trim())
     .filter(Boolean)

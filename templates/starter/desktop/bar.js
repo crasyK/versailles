@@ -1952,7 +1952,7 @@
     return null;
   }
   function hotkeyLabel(accel) {
-    return accel.split("+").map((k) => k.trim()).filter(Boolean).map((k) => {
+    return (accel.split(/(?<!\+)\s*,\s*/)[0] || "").split("+").map((k) => k.trim()).filter(Boolean).map((k) => {
       const low = k.toLowerCase();
       if (low === "commandorcontrol" || low === "cmdorctrl" || low === "control") return "ctrl";
       if (low === "option") return "alt";

@@ -103,7 +103,8 @@ impl PageCatalog {
     }
 
     /// Global accelerators for spawnables that list the `hotkey` hook.
-    /// `(accelerator, piece id)` in page order. Duplicate combos: first wins.
+    /// `(accelerator, piece id)` in page order. `data-hotkey` may list several,
+    /// comma-separated (`"Alt+Space, Win"`). Duplicate combos: first wins.
     /// A piece with no `data-hotkey` uses `fallback` (once), typically `#versailles` `launcher.hotkey`.
     pub fn hotkey_bindings(&self, fallback: &str) -> Vec<(String, String)> {
         let fallback = fallback.trim();
@@ -122,19 +123,19 @@ impl PageCatalog {
                 .as_deref()
                 .map(str::trim)
                 .filter(|s| !s.is_empty());
-            let accel = if let Some(value) = explicit {
-                value.to_string()
+            let accels = if let Some(value) = explicit {
+                split_accelerators(value)
             } else if !used_fallback && !fallback.is_empty() {
                 used_fallback = true;
-                fallback.to_string()
+                vec![fallback.to_string()]
             } else {
                 continue;
             };
-            let key = accel.to_ascii_lowercase();
-            if !seen.insert(key) {
-                continue;
+            for accel in accels {
+                if seen.insert(accel.to_ascii_lowercase()) {
+                    out.push((accel, piece.id.clone()));
+                }
             }
-            out.push((accel, piece.id.clone()));
         }
         out
     }
@@ -600,6 +601,25 @@ pub fn extract_versailles_json(html: &str) -> Option<&str> {
     None
 }
 
+/// `"Alt+Space, Win"` → both. A comma right after `+` is the key itself
+/// (`"Ctrl+,"`), not a separator.
+fn split_accelerators(value: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    for ch in value.chars() {
+        if ch == ',' && !cur.trim_end().ends_with('+') {
+            out.push(std::mem::take(&mut cur));
+        } else {
+            cur.push(ch);
+        }
+    }
+    out.push(cur);
+    out.into_iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -755,6 +775,13 @@ mod tests {
                 ("Super+K".into(), "notes".into()),
             ]
         );
+    }
+
+    #[test]
+    fn data_hotkey_lists_several() {
+        assert_eq!(split_accelerators("Alt+Space, Win,Copilot"), vec!["Alt+Space", "Win", "Copilot"]);
+        assert_eq!(split_accelerators("Ctrl+,, Win"), vec!["Ctrl+,", "Win"]);
+        assert_eq!(split_accelerators(" Alt+Space "), vec!["Alt+Space"]);
     }
 
     #[test]

@@ -186,13 +186,18 @@ fn reload_user_config(state: &AppState) {
             return;
         }
     };
-    let mut config = state.config.lock().unwrap();
-    config.apply_user_config(user);
-    tracing::info!(
-        "config reloaded (hotkey {}, primary {:?})",
-        config.launcher_hotkey,
-        config.launcher_primary
-    );
+    let hide_taskbar = {
+        let mut config = state.config.lock().unwrap();
+        config.apply_user_config(user);
+        tracing::info!(
+            "config reloaded (hotkey {}, primary {:?})",
+            config.launcher_hotkey,
+            config.launcher_primary
+        );
+        config.shell.hide_taskbar
+    };
+    // Outside the config lock: stopping waits for the restore.
+    crate::taskbar::apply(hide_taskbar);
 }
 
 /// A window that is closed now and opened again once WebView2 tore it down.

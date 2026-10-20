@@ -195,6 +195,15 @@ impl Default for ShortcutsSpec {
     }
 }
 
+/// `"shell"` in `#versailles`: how much of the Windows shell Versailles takes over.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ShellConfig {
+    /// Hide Explorer's taskbar (and its reserved strip) while Versailles runs.
+    #[serde(default)]
+    pub hide_taskbar: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct UserConfig {
@@ -214,6 +223,8 @@ pub struct UserConfig {
     pub api: ApiConfig,
     #[serde(default)]
     pub desktop: DesktopConfig,
+    #[serde(default)]
+    pub shell: ShellConfig,
     /// Per-spawnable engine and overlay options keyed by `data-id`.
     #[serde(default = "default_spawnables")]
     pub spawnables: HashMap<String, SpawnableConfig>,
@@ -230,6 +241,7 @@ impl Default for UserConfig {
             launcher: LauncherConfig::default(),
             api: ApiConfig::default(),
             desktop: DesktopConfig::default(),
+            shell: ShellConfig::default(),
             spawnables: default_spawnables(),
         }
     }
@@ -311,6 +323,8 @@ pub struct AppConfig {
     pub catalog: CatalogState,
     #[serde(default)]
     pub desktop: DesktopConfig,
+    #[serde(default)]
+    pub shell: ShellConfig,
 }
 
 impl AppConfig {
@@ -334,6 +348,7 @@ impl AppConfig {
                 enabled: runtime.desktop_enabled.unwrap_or(user.desktop.enabled),
                 page: user.desktop.page,
             },
+            shell: user.shell,
         }
     }
 
@@ -348,6 +363,7 @@ impl AppConfig {
         self.snap_threshold = user.snap_threshold;
         self.launcher_hotkey = user.launcher.hotkey;
         self.launcher_primary = user.launcher.primary;
+        self.shell = user.shell;
     }
 
     pub fn to_user_config(&self) -> UserConfig {
@@ -366,6 +382,7 @@ impl AppConfig {
                 port: self.api_port,
             },
             desktop: self.desktop.clone(),
+            shell: self.shell.clone(),
             spawnables: HashMap::new(),
         }
     }
@@ -766,6 +783,17 @@ mod tests {
             ShortcutsSpec::Path(_) => panic!("expected inline shortcuts"),
         }
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn shell_hide_taskbar_parses_and_defaults_off() {
+        let user: UserConfig = serde_json::from_str(r#"{ "shell": { "hideTaskbar": true } }"#).unwrap();
+        assert!(user.shell.hide_taskbar);
+        let user: UserConfig = serde_json::from_str("{}").unwrap();
+        assert!(!user.shell.hide_taskbar);
+        let mut app = AppConfig::from_parts(UserConfig::default(), RuntimeState::default());
+        app.apply_user_config(serde_json::from_str(r#"{ "shell": { "hideTaskbar": true } }"#).unwrap());
+        assert!(app.shell.hide_taskbar);
     }
 
     #[test]

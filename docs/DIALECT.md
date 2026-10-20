@@ -197,6 +197,22 @@ The widget/spawnable parser ignores this. The JSON must not contain the literal 
 
 `overlay.*` is read by the host. `overlay.dim` takes `"host"` / `"page"` / `"none"` (or `true` = host, `false` = none). `opts` is handed to the piece's page JS (the example bar reads it via `get_spawnable_engine_context`); the host interprets only `coverMonitor` (see [Overlay placement](#overlay-placement)). Attributes on the tag (`data-dismiss-on-blur`, `data-dim`) beat `overlay.*`.
 
+### Hiding the Windows taskbar
+
+```json
+"shell": { "hideTaskbar": true }
+```
+
+Hides Explorer's taskbar on every monitor and frees the strip it reserves, so a docked bar can take its place. It applies on save and comes back when you remove the line or quit. Explorer stays the shell: Start, Quick Settings, the notification center and toasts keep working, and nothing is injected into Explorer. Win+A, Win+N and Win+X still open Explorer's panels, and toasts still appear in the corner.
+
+The taskbar comes back even when Versailles does not end cleanly:
+- a small guard process restores it the moment the app crashes or is killed;
+- after a logoff or power loss while hidden, a one-time logon entry (`HKCU\...\RunOnce`) restores it;
+- a start with hiding off restores a taskbar an earlier run left hidden;
+- by hand: `versailles.exe --restore-taskbar` (does nothing while a running Versailles is hiding it on purpose).
+
+Your own auto-hide setting is saved before hiding and put back as it was. Taskbar mods (Windhawk and similar) that move or restyle the taskbar may fight the hiding; turn them off while it is on. Only one Versailles hides at a time.
+
 ## Preview query
 
 Same file, different surfaces:

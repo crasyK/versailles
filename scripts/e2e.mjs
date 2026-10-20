@@ -192,6 +192,34 @@ async function main() {
     const again = await until("wallpaper report after restart", () => store(dest, "e2e-wall")?.report?.persisted != null
       ? store(dest, "e2e-wall").report : null);
     check("storage survives a restart", before >= 1 && again.persisted === before, `stored ${before}, read back ${again.persisted}`);
+
+    // Hiding Explorer's taskbar (#30): config on, off, on, then a kill.
+    if (!probe(process.pid).taskbar) {
+      check("taskbar phase skipped", true, "the taskbar was already hidden (another Versailles?)");
+    } else {
+      const html = readFileSync(page, "utf8");
+      const on = html.replace('"autostart": true,', '"shell": { "hideTaskbar": true }, "autostart": true,');
+      if (on === html) throw new Error("starter page changed: no autostart line in #versailles");
+      const taskbar = (want, what) =>
+        until(what, () => {
+          const p = probe(process.pid);
+          return p.taskbar === want ? p : null;
+        }, 15_000).catch(() => probe(process.pid));
+      writeFileSync(page, on);
+      const hidden = await taskbar(false, "taskbar hidden");
+      check("config hides the taskbar", !hidden.taskbar);
+      check("hidden taskbar sets the logon restore", hidden.runOnce);
+      writeFileSync(page, html);
+      const shown = await taskbar(true, "taskbar shown");
+      check("config off restores the taskbar", shown.taskbar && !shown.runOnce);
+      writeFileSync(page, on);
+      await taskbar(false, "taskbar hidden again");
+      kill(child);
+      child = null;
+      const back = await taskbar(true, "taskbar back after a kill");
+      check("taskbar comes back when the app is killed", back.taskbar && !back.runOnce,
+        `visible ${back.taskbar}, RunOnce ${back.runOnce}`);
+    }
   } catch (err) {
     check("run completed", false, String(err && err.message ? err.message : err));
   } finally {
@@ -202,6 +230,14 @@ async function main() {
     }
     kill(child);
     await sleep(2500);
+    if (!probe(process.pid).taskbar) {
+      // Last resort if the taskbar checks failed half-way.
+      try {
+        execFileSync(exe, ["--restore-taskbar"], { stdio: "ignore" });
+      } catch {
+        /* reported by the checks */
+      }
+    }
     const after = reservedBottom(probe(process.pid));
     check("cleanup: no screen space left reserved", after <= baseline, `bottom ${after} px (was ${baseline})`);
     try {

@@ -37,9 +37,20 @@ fn env_flag(name: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// `%LOCALAPPDATA%\com.versailles.widgets`: per-machine state.
+pub fn app_data_dir() -> Option<PathBuf> {
+    dirs::data_local_dir().map(|d| d.join(IDENTIFIER))
+}
+
 /// Same folder tauri-plugin-log writes `Versailles.log` to.
 pub fn log_dir() -> Option<PathBuf> {
-    dirs::data_local_dir().map(|d| d.join(IDENTIFIER).join("logs"))
+    app_data_dir().map(|d| d.join("logs"))
+}
+
+/// A line in a log file of its own, for processes without the logger
+/// (supervisor, taskbar guard).
+pub fn append_log(name: &str, text: &str) {
+    write_log_file(name, text, true);
 }
 
 fn write_log_file(name: &str, text: &str, append: bool) {
@@ -206,7 +217,7 @@ pub fn supervise_if_needed() -> Option<i32> {
 }
 
 fn supervisor_log(text: &str) {
-    write_log_file("supervisor.log", text, true);
+    append_log("supervisor.log", text);
 }
 
 fn run_supervisor(exe: PathBuf) -> i32 {

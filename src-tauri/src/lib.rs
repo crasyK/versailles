@@ -24,6 +24,7 @@ mod protocol;
 mod quote;
 mod sdk;
 mod sensors;
+mod taskbar;
 mod pty;
 mod registry;
 mod single_instance_fixup;
@@ -54,6 +55,7 @@ use window_manager::{
 use tauri_plugin_log::{Target, TargetKind};
 
 pub use crash::supervise_if_needed;
+pub use taskbar::run_cli as taskbar_cli;
 
 /// Load config without ever failing boot: a locked / unreadable `config.json`
 /// (OneDrive, AV) falls back to in-memory defaults and the file is left alone.
@@ -261,6 +263,10 @@ pub fn run() {
                 }
             }
 
+            // `"shell": { "hideTaskbar": true }` (also restores a taskbar an
+            // earlier run left hidden).
+            taskbar::apply(config.shell.hide_taskbar);
+
             // Docked bars (data-anchor top / bottom / left / right) open with
             // the app, off the setup path like the other surfaces.
             let dock_app = app.handle().clone();
@@ -467,6 +473,7 @@ pub fn run() {
         Ok(app) => app.run(|app, event| match event {
             RunEvent::ExitRequested { code: Some(_), .. } | RunEvent::Exit => {
                 crash::note_exiting();
+                taskbar::release();
                 // Give reserved screen space back before the windows go.
                 docks::release_all(app);
             }

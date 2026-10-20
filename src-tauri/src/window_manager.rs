@@ -1968,9 +1968,11 @@ pub fn ensure_desktop_window(app: &AppHandle) -> AppResult<()> {
             let state = app.state::<AppState>();
             crate::desktop::page_catalog(&state)
         };
-        let wanted = crate::monitors::wallpaper_numbers(
-            &monitors,
-            &crate::monitors::widget_selections(&cat),
+        let selections = crate::monitors::widget_selections(&cat);
+        let wanted = crate::monitors::wallpaper_numbers(&monitors, &selections);
+        tracing::info!(
+            "wallpapers on displays {wanted:?} (monitors {:?}, data-monitor {selections:?})",
+            monitors.iter().map(|m| (m.number, m.primary)).collect::<Vec<_>>()
         );
         let mut keep = Vec::new();
         for m in monitors.iter().filter(|m| wanted.contains(&m.number)) {

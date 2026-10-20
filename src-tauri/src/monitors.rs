@@ -140,10 +140,8 @@ pub struct MonitorReport {
 
 /// Every monitor, with work area and primary flag from Win32.
 pub fn list(app: &AppHandle) -> Vec<MonitorInfo> {
-    let Some(window) = app.webview_windows().into_values().next() else {
-        return Vec::new();
-    };
-    let Ok(monitors) = window.available_monitors() else {
+    // Ask the app, not a window: at startup the wallpaper is the first window.
+    let Ok(monitors) = app.available_monitors() else {
         return Vec::new();
     };
     monitors

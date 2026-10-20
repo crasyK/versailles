@@ -286,7 +286,159 @@ fn open(app: &AppHandle, piece: &PagePiece) -> AppResult<()> {
         let _ = window.show();
     }
     states().lock().unwrap().insert(piece.id.clone(), st);
+    // A newly opened window is moved back to its open position by the
+    // deferred raise (~20 ms later): place it again after that.
+    let app2 = app.clone();
+    let id = piece.id.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(150));
+        let handle = app2.clone();
+        let _ = app2.run_on_main_thread(move || replace(&handle, &id));
+    });
+    start_fullscreen_watcher(app);
     Ok(())
+}
+
+/// Re-apply a dock's placement (keeps its AppBar reservation).
+fn replace(app: &AppHandle, id: &str) {
+    let Some(window) = app.get_webview_window(&label(id)) else {
+        return;
+    };
+    let mut map = states().lock().unwrap();
+    if let Some(st) = map.get_mut(id) {
+        place(&window, st);
+    }
+}
+
+/// Fullscreen apps (video, games) ignore the work area. While the active
+/// window covers a monitor, that monitor's bars step behind it; they come
+/// back on top when it leaves fullscreen or loses focus.
+fn start_fullscreen_watcher(app: &AppHandle) {
+    static RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if RUNNING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let mut behind: Option<(isize, Rect)> = None;
+        loop {
+            std::thread::sleep(Duration::from_millis(300));
+            if states().lock().unwrap().is_empty() {
+                continue;
+            }
+            let now = fullscreen::foreground_fullscreen();
+            if now.map(|(h, _)| h) == behind.map(|(h, _)| h) {
+                continue;
+            }
+            behind = now;
+            let handle = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                let ids: Vec<(String, Rect)> = states()
+                    .lock()
+                    .unwrap()
+                    .values()
+                    .map(|s| (s.id.clone(), s.monitor))
+                    .collect();
+                for (id, monitor) in ids {
+                    let Some(window) = handle.get_webview_window(&label(&id)) else {
+                        continue;
+                    };
+                    match now {
+                        Some((fs, fs_monitor)) if fs_monitor == monitor => fullscreen::step_behind(&window, fs),
+                        _ => fullscreen::back_on_top(&window),
+                    }
+                }
+            });
+        }
+    });
+}
+
+#[cfg(windows)]
+mod fullscreen {
+    use super::Rect;
+    use tauri::WebviewWindow;
+    use windows::Win32::Foundation::{HWND, RECT};
+    use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetClassNameW, GetForegroundWindow, GetWindowRect, GetWindowThreadProcessId, SetWindowPos,
+        HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    };
+
+    /// The foreground window and its monitor rect, when that window covers
+    /// the whole monitor (and is not the desktop or one of ours).
+    pub fn foreground_fullscreen() -> Option<(isize, Rect)> {
+        unsafe {
+            let fg = GetForegroundWindow();
+            if fg.is_invalid() {
+                return None;
+            }
+            let mut pid = 0u32;
+            GetWindowThreadProcessId(fg, Some(&mut pid));
+            if pid == std::process::id() {
+                return None;
+            }
+            let mut class = [0u16; 64];
+            let n = GetClassNameW(fg, &mut class).max(0) as usize;
+            let class = String::from_utf16_lossy(&class[..n]);
+            if matches!(class.as_str(), "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd") {
+                return None;
+            }
+            let mut r = RECT::default();
+            GetWindowRect(fg, &mut r).ok()?;
+            let mon = MonitorFromWindow(fg, MONITOR_DEFAULTTONEAREST);
+            let mut info = MONITORINFO {
+                cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+                ..Default::default()
+            };
+            if !GetMonitorInfoW(mon, &mut info).as_bool() {
+                return None;
+            }
+            let m = info.rcMonitor;
+            let covers = r.left <= m.left && r.top <= m.top && r.right >= m.right && r.bottom >= m.bottom;
+            covers.then(|| {
+                (
+                    fg.0 as isize,
+                    Rect { x: m.left, y: m.top, width: m.right - m.left, height: m.bottom - m.top },
+                )
+            })
+        }
+    }
+
+    fn hwnd(window: &WebviewWindow) -> Option<HWND> {
+        window.hwnd().ok().map(|h| HWND(h.0))
+    }
+
+    pub fn step_behind(window: &WebviewWindow, fullscreen: isize) {
+        let Some(h) = hwnd(window) else {
+            return;
+        };
+        let flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
+        unsafe {
+            // Leave the topmost band, then sit directly under the fullscreen window.
+            let _ = SetWindowPos(h, Some(HWND_NOTOPMOST), 0, 0, 0, 0, flags);
+            let _ = SetWindowPos(h, Some(HWND(fullscreen as *mut _)), 0, 0, 0, 0, flags);
+        }
+    }
+
+    pub fn back_on_top(window: &WebviewWindow) {
+        let Some(h) = hwnd(window) else {
+            return;
+        };
+        unsafe {
+            let _ = SetWindowPos(h, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        }
+    }
+}
+
+#[cfg(not(windows))]
+mod fullscreen {
+    use super::Rect;
+    use tauri::WebviewWindow;
+    pub fn foreground_fullscreen() -> Option<(isize, Rect)> {
+        None
+    }
+    pub fn step_behind(_window: &WebviewWindow, _fullscreen: isize) {}
+    pub fn back_on_top(_window: &WebviewWindow) {}
 }
 
 fn close(app: &AppHandle, id: &str) {

@@ -483,7 +483,8 @@ pub fn piece_draggable(piece: &PagePiece, user: &UserConfig) -> bool {
             }
         }
     }
-    !piece_is_overlay(piece)
+    // Slide-outs drag by default; overlays and docked bars are placed by the host.
+    !piece_is_overlay(piece) && crate::docks::piece_dock(piece).is_none()
 }
 
 fn find_ignore_ascii_case(hay: &str, needle: &str) -> Option<usize> {

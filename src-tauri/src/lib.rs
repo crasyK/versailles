@@ -27,6 +27,7 @@ mod sdk;
 mod sensors;
 mod taskbar;
 mod pty;
+mod quick;
 mod registry;
 mod single_instance_fixup;
 mod state;
@@ -416,6 +417,7 @@ pub fn run() {
             commands::clipboard_read,
             commands::clipboard_write,
             commands::power_action,
+            commands::quick_set,
             commands::bus_publish,
             commands::sense_now,
             commands::monitor_info,

@@ -39,6 +39,8 @@ portable-pty = "0.8"
 reqwest = { version = "0.13", default-features = false, features = ["json", "native-tls"] }
 
 [target.'cfg(windows)'.dependencies]
+# `#[interface]` for undocumented COM interfaces (quick.rs); same version as `windows`.
+windows-core = "0.61"
 windows = { version = "0.61", features = [
   "Foundation",
   "Devices_Geolocation",
@@ -54,6 +56,11 @@ windows = { version = "0.61", features = [
   "Win32_UI_WindowsAndMessaging",
   "Win32_UI_Accessibility",
   "Win32_System_LibraryLoader",
+  "Win32_System_Wmi",
+  "Win32_System_Rpc",
+  "Win32_Devices_Display",
+  "Devices_Radios",
+  "Foundation_Collections",
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_Shell",
   "Win32_Graphics_Gdi",

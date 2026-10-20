@@ -13,6 +13,7 @@ fn main() {
                 "clipboard_read",
                 "clipboard_write",
                 "power_action",
+                "quick_set",
                 "bus_publish",
                 "sense_now",
                 "monitor_info",

@@ -105,7 +105,8 @@
                            (any spawnable; Alt+Space, Ctrl+Shift+D, CommandOrControl+K)
       data-hooks           allowlist: media, mouse, layout, spawn, shell, hotkey, pty, storage,
                            clipboard, power, bus, battery, network, focus, audio,
-                           windows, windows-control
+                           windows, windows-control, notify, radios, audio-control,
+                           display, power-mode
 
       A piece inside an HTML comment is not on the page: the examples near the
       end of <body> are commented out until you remove their comment markers.
@@ -1187,6 +1188,129 @@
     </template>
     try me (taskbar): and this line -->
     <!-- ===== end of the taskbar example ===== -->
+
+    <!-- ===== Example: quick settings =====
+         A slide-out with Wi-Fi, Bluetooth, volume, the output, brightness,
+         projection and power mode, opened with Ctrl+Alt+Q. Settings change only
+         from a slide-out, bar or overlay and only on a click or key press: the
+         wallpaper can show them but never change them. Values arrive by push,
+         so changes made in Windows show up here too.
+         To try it, delete the two "try me" marker lines around the template below.
+         To remove it, delete everything down to the end of the example. -->
+    <!-- try me (quick settings): delete this line
+    <template class="spawnable" data-id="quick" data-anchor="tr" data-w="320" data-h="460"
+              data-hotkey="Ctrl+Alt+Q" data-hooks="hotkey,radios,audio,audio-control,display,power-mode">
+      <style>
+        .qs { height: 100%; padding: 16px; display: flex; flex-direction: column; gap: 14px; color: var(--ink);
+              font: 13px/1.3 var(--font-sans); overflow: auto; }
+        .qs h3 { margin: 0; font: 600 11px/1 var(--font-sans); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-mut); }
+        .qs .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+        .qs button { padding: 6px 10px; border-radius: var(--radius-chip); border: var(--stroke-dashed); background: none;
+                     color: inherit; font: 600 11px/1 var(--font-sans); letter-spacing: 0.04em; cursor: pointer; }
+        .qs button.on { background: var(--ink); color: var(--paper); border-style: solid; }
+        .qs input[type=range] { flex: 1; }
+        .qs select { flex: 1; font: inherit; }
+        .qs .err { color: var(--ink-mut); font-size: 11px; min-height: 1em; }
+      </style>
+      <div class="qs">
+        <h3>radios</h3>
+        <div class="row"><button class="q-wifi">wi-fi</button><button class="q-bt">bluetooth</button></div>
+        <h3>sound</h3>
+        <div class="row"><input class="q-vol" type="range" min="0" max="100"><button class="q-mute">mute</button></div>
+        <div class="row"><select class="q-out"></select></div>
+        <h3>display</h3>
+        <div class="q-bright"></div>
+        <div class="row q-proj">
+          <button data-mode="pc">pc</button><button data-mode="duplicate">duplicate</button>
+          <button data-mode="extend">extend</button><button data-mode="second">second</button>
+        </div>
+        <h3>power mode</h3>
+        <div class="row q-power">
+          <button data-mode="efficiency">efficiency</button><button data-mode="balanced">balanced</button>
+          <button data-mode="performance">performance</button>
+        </div>
+        <div class="err"></div>
+      </div>
+      <script>
+        (function quickSettings() {
+          var root = document.currentScript && document.currentScript.closest('.spawn-surface');
+          if (!root) return;
+          function $(s) { return root.querySelector(s); }
+          (function whenSdk(fn) { window.versailles && typeof window.versailles.for === 'function' ? fn(window.versailles) : setTimeout(function () { whenSdk(fn); }, 50); })(function (v) {
+            var me = v.for('quick');
+            var err = $('.err');
+            // Every change answers the new state, or a reason Windows refused.
+            function act(p) { err.textContent = ''; return p.catch(function (e) { err.textContent = String((e && e.message) || e); }); }
+
+            var radios = {};
+            me.on('radios', function (r) {
+              radios = r || {};
+              $('.q-wifi').classList.toggle('on', radios.wifi === true);
+              $('.q-bt').classList.toggle('on', radios.bluetooth === true);
+              $('.q-wifi').disabled = radios.wifi == null;
+              $('.q-bt').disabled = radios.bluetooth == null;
+            }).catch(function () {});
+            $('.q-wifi').onclick = function () { act(me.radios.set('wifi', !radios.wifi)); };
+            $('.q-bt').onclick = function () { act(me.radios.set('bluetooth', !radios.bluetooth)); };
+
+            var muted = false;
+            me.on('audio', function (a) {
+              if (!a) return;
+              muted = !!a.muted;
+              if (document.activeElement !== $('.q-vol')) $('.q-vol').value = a.volume == null ? 0 : a.volume;
+              $('.q-mute').classList.toggle('on', muted);
+            }).catch(function () {});
+            $('.q-vol').oninput = function () { act(me.audioControl.setVolume(this.value)); };
+            $('.q-mute').onclick = function () { act(me.audioControl.setMute(!muted)); };
+            me.on('audio-control', function (s) {
+              var select = $('.q-out');
+              select.innerHTML = '';
+              ((s && s.outputs) || []).forEach(function (o) {
+                var opt = document.createElement('option');
+                opt.value = o.id;
+                opt.textContent = o.name || o.id;
+                opt.selected = o.default;
+                select.appendChild(opt);
+              });
+            }).catch(function () {});
+            $('.q-out').onchange = function () { act(me.audioControl.setOutput(this.value)); };
+
+            me.on('display', function (d) {
+              if (!d) return;
+              root.querySelectorAll('.q-proj button').forEach(function (b) { b.classList.toggle('on', b.dataset.mode === d.projection); });
+              var box = $('.q-bright');
+              if (box.contains(document.activeElement)) return;
+              box.innerHTML = '';
+              (d.brightness || []).forEach(function (s) {
+                var row = document.createElement('div');
+                row.className = 'row';
+                row.innerHTML = '<span></span><input type="range" min="0" max="100">';
+                row.firstChild.textContent = s.kind === 'internal' ? 'built-in' : (s.device || 'screen').replace(/^\\\\\.\\/, '');
+                row.lastChild.value = s.level;
+                row.lastChild.onchange = function () { act(me.display.setBrightness(s.id, this.value)); };
+                box.appendChild(row);
+              });
+            }).catch(function () {});
+            root.querySelectorAll('.q-proj button').forEach(function (b) {
+              b.onclick = function () { act(me.display.project(b.dataset.mode)); };
+            });
+
+            me.on('power-mode', function (p) {
+              if (!p) return;
+              root.querySelectorAll('.q-power button').forEach(function (b) {
+                b.classList.toggle('on', b.dataset.mode === p.mode);
+                b.disabled = !p.supported;
+              });
+            }).catch(function () {});
+            root.querySelectorAll('.q-power button').forEach(function (b) {
+              b.onclick = function () { act(me.powerMode.set(b.dataset.mode)); };
+            });
+          });
+        })();
+      </script>
+    </template>
+    try me (quick settings): and this line -->
+    <!-- ===== end of the quick settings example ===== -->
 
     <div id="preview-root" hidden></div>
 

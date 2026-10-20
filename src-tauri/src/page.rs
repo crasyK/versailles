@@ -9,6 +9,7 @@ use std::collections::HashSet;
 pub const KNOWN_HOOKS: &[&str] = &[
     "media", "mouse", "layout", "spawn", "shell", "hotkey", "pty", "storage", "clipboard", "power", "bus",
     "battery", "network", "focus", "audio", "windows", "windows-control", "notify",
+    "radios", "audio-control", "display", "power-mode",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -297,11 +298,14 @@ pub enum Invoker {
 }
 
 /// `Exec` commands run code or drive a shell (`cli_exec*`, `cli_search_files`,
-/// `pty_*`): refused from the wallpaper, only allowed from a spawn window.
+/// `pty_*`); `Control` commands change a system setting (`quick_set`). Both
+/// are refused from the wallpaper and from folder widgets, only allowed from
+/// a spawn window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HookClass {
     Plain,
     Exec,
+    Control,
 }
 
 /// Map a webview label to an [`Invoker`]. `folder_hooks` resolves registry
@@ -379,7 +383,7 @@ pub fn authorize_hook(
     }
     let piece = match invoker {
         Invoker::Piece { id, spawn } => {
-            if class == HookClass::Exec && !spawn {
+            if class != HookClass::Plain && !spawn {
                 return Err(AppError::msg(format!(
                     "hook '{hook}' rejected: '{id}' is not a spawn window"
                 )));
@@ -393,6 +397,11 @@ pub fn authorize_hook(
                     "hook '{hook}' rejected: folder widget '{id}' cannot run commands"
                 )));
             }
+            if class == HookClass::Control {
+                return Err(AppError::msg(format!(
+                    "hook '{hook}' rejected: folder widget '{id}' cannot change settings"
+                )));
+            }
             if hooks.iter().any(|h| *h == hook) {
                 return Ok(id.clone());
             }
@@ -402,6 +411,11 @@ pub fn authorize_hook(
             if class == HookClass::Exec {
                 return Err(AppError::msg(format!(
                     "hook '{hook}' rejected: commands cannot run from the desktop wallpaper"
+                )));
+            }
+            if class == HookClass::Control {
+                return Err(AppError::msg(format!(
+                    "hook '{hook}' rejected: settings cannot change from the desktop wallpaper (use a bar or overlay)"
                 )));
             }
             let Some(id) = caller.map(str::trim).filter(|s| !s.is_empty()) else {
@@ -958,6 +972,26 @@ mod tests {
         assert!(authorize_hook(&cat, &watch, None, "media", HookClass::Plain).is_ok());
         assert!(authorize_hook(&cat, &watch, None, "media", HookClass::Exec).is_err());
         assert!(authorize_hook(&cat, &Invoker::Desktop, Some("now-playing"), "bogus", HookClass::Plain).is_err());
+    }
+
+    #[test]
+    fn control_class_only_from_a_spawn_window() {
+        let cat = parse_page(
+            r#"<template class="spawnable" data-id="qs" data-hooks="radios,display" data-anchor="top"></template>
+<article class="widget" data-id="wifi-tile" data-hooks="radios"></article>"#,
+        );
+        let bar = classify_invoker("widget-qs", &cat, folder_none);
+        assert_eq!(authorize_hook(&cat, &bar, None, "radios", HookClass::Control).unwrap(), "qs");
+        assert!(authorize_hook(&cat, &bar, None, "power-mode", HookClass::Control).is_err()); // undeclared
+        // The wallpaper reads but never changes a setting.
+        let desk = Invoker::Desktop;
+        assert!(authorize_hook(&cat, &desk, Some("wifi-tile"), "radios", HookClass::Plain).is_ok());
+        let refused = authorize_hook(&cat, &desk, Some("wifi-tile"), "radios", HookClass::Control).unwrap_err();
+        assert!(refused.to_string().contains("settings cannot change"));
+        let tile = Invoker::Piece { id: "wifi-tile".into(), spawn: false };
+        assert!(authorize_hook(&cat, &tile, None, "radios", HookClass::Control).is_err());
+        let folder = Invoker::Folder { id: "dice".into(), hooks: vec!["radios".into()] };
+        assert!(authorize_hook(&cat, &folder, None, "radios", HookClass::Control).is_err());
     }
 
     #[test]

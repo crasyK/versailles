@@ -55,6 +55,7 @@
     "allow-clipboard-read",
     "allow-clipboard-write",
     "allow-power-action",
+    "allow-quick-set",
     "allow-bus-publish",
     "allow-sense-now",
     "allow-monitor-info",

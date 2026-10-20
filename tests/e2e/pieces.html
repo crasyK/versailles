@@ -1,5 +1,5 @@
     <!-- ── e2e test pieces, injected by scripts/e2e.mjs ── -->
-    <article class="widget" data-id="e2e-wall" data-hooks="storage,battery,network,focus,audio,bus,spawn"
+    <article class="widget" data-id="e2e-wall" data-hooks="storage,battery,network,focus,audio,bus,spawn,radios,audio-control,display,power-mode"
              style="position:fixed;left:8px;top:8px;font:12px monospace">e2e</article>
     <script>
       /* Reports what the wallpaper sees into its storage ("report"). */
@@ -7,7 +7,7 @@
         if (/[?&]m=spawn/.test(location.search)) return;
         if (window.__e2eWall) return;
         window.__e2eWall = true;
-        var report = { sdk: null, sensors: {}, pushes: {}, bus: [], persisted: null, errors: {} };
+        var report = { sdk: null, sensors: {}, pushes: {}, bus: [], persisted: null, errors: {}, controlRefused: null };
         (function wait(n) {
           var v = window.versailles;
           if (!v || typeof v.for !== 'function') { if (n < 400) setTimeout(function () { wait(n + 1); }, 50); return; }
@@ -19,10 +19,15 @@
             report.persisted = p == null ? 0 : p;
             return me.storage.set('persist', report.persisted + 1);
           }).then(save, err('storage'));
-          ['battery', 'network', 'focus', 'audio'].forEach(function (h) {
-            me[h].now().then(function (x) { report.sensors[h] = x == null ? 'null' : 'ok'; save(); }, err(h));
+          ['battery', 'network', 'focus', 'audio', 'radios', 'audio-control', 'display', 'power-mode'].forEach(function (h) {
+            var api = me[{ 'audio-control': 'audioControl', 'power-mode': 'powerMode' }[h] || h];
+            api.now().then(function (x) { report.sensors[h] = x == null ? 'null' : 'ok'; save(); }, err(h));
             me.on(h, function () { report.pushes[h] = (report.pushes[h] || 0) + 1; }).catch(err(h + '.on'));
           });
+          // Settings never change from the wallpaper, whatever it declares.
+          v.invoke('quick_set', { action: { kind: 'mute', on: false }, caller: 'e2e-wall' }).then(
+            function () { report.controlRefused = 'allowed'; save(); },
+            function (e) { report.controlRefused = String((e && e.message) || e); save(); });
           me.bus.subscribe('e2e-hello', function (d, m) { report.bus.push(m.from); save(); }).then(function () {
             setTimeout(function () { me.spawn('e2e-overlay').catch(err('spawn')); }, 1500);
           }, err('bus'));
@@ -30,7 +35,7 @@
       })();
     </script>
     <template class="spawnable" data-id="e2e-overlay" data-anchor="c" data-dim="none" data-dismiss-on-blur="false"
-              data-hooks="storage,bus" data-w="200" data-h="80">
+              data-hooks="storage,bus,audio,audio-control" data-w="200" data-h="80">
       <div style="font:12px monospace;padding:8px">e2e overlay</div>
       <script>
         /* Counts its own runs (template scripts must run once) and says hello on the bus. */
@@ -42,6 +47,11 @@
           window.__e2eOverlay = true;
           var me = v.for('e2e-overlay');
           setTimeout(function () {
+            // A spawn window may change a setting: set mute to what it already is.
+            me.audio.now().then(function (a) {
+              return v.invoke('quick_set', { action: { kind: 'mute', on: !!a.muted }, caller: 'e2e-overlay' });
+            }).then(function () { return 'ok'; }, function (e) { return String((e && e.message) || e); })
+              .then(function (quickSet) { me.storage.set('quick', quickSet).catch(function () {}); });
             me.storage.set('report', { runs: window.__e2eRuns }).catch(function () {});
             me.bus.publish('e2e-hello', {}).catch(function () {});
           }, 500);

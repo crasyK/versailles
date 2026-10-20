@@ -28,6 +28,10 @@ The host never grants more than that list. The catalog is fixed in [`src-tauri/s
 | `windows` | The app windows a taskbar would show, their icons, and pushed changes (`windows_list`, `windows_icon`) |
 | `windows-control` | Focus, minimize, restore, maximize, close, move / resize one of those windows (`windows_control`) |
 | `notify` | Windows toast notifications, read-only: the recent ones and each new one (see [Notifications](#notifications)) |
+| `radios` | Wi-Fi and Bluetooth on / off; switch them from a bar or overlay (see [Quick settings](#quick-settings)) |
+| `audio-control` | The active outputs; set volume, mute and the default output from a bar or overlay |
+| `display` | Projection mode and brightness per screen; change them from a bar or overlay |
+| `power-mode` | Power mode (efficiency / balanced / performance), energy saver; change the mode from a bar or overlay |
 
 Unknown hook names are rejected.
 
@@ -35,7 +39,7 @@ Unknown hook names are rejected.
 
 - **Basics:** [SDK](#sdk) · [Enforcement](#enforcement) · [Events](#events)
 - **Reading the system:** [Push](#push) · [Notifications](#notifications) · [Windows](#windows)
-- **Acting:** [Layout](#layout) · [Power](#power) · [Clipboard](#clipboard)
+- **Acting:** [Layout](#layout) · [Power](#power) · [Quick settings](#quick-settings) · [Clipboard](#clipboard)
 - **Between pieces:** [Storage](#storage) · [Bus](#bus) · [Piece events](#piece-events)
 
 ## SDK
@@ -79,6 +83,8 @@ Identity comes from the **calling window**, never from an IPC argument:
 
 That piece must list the hook in `data-hooks`. A piece that omitted `data-hooks="media"` cannot call `media_now` even if the JS tries.
 
+**Control class.** `quick_set` (`radios`, `audio-control`, `display`, `power-mode`) changes a system setting. Like exec class it is refused from the desktop wallpaper and from folder widgets; only a spawn window (bar, slide-out, overlay) whose piece declares the hook may change a setting. The SDK also asks for a click or key press first. Reading those hooks works anywhere.
+
 **Exec class.** `cli_exec`, `cli_exec_term`, `cli_search_files` (`shell`) and `pty_open` / `pty_write` / `pty_resize` / `pty_is_alive` / `pty_close` (`pty`) run code. They are refused from the desktop wallpaper entirely and only work from a spawn window whose piece declares the hook. `cli_open` (open a URL/path) is not exec class: the wallpaper may call it via `versailles.for(id).shell.open(...)`.
 
 `cli_open` refuses network (UNC) paths and dangerous URL handlers (`ms-msdt:`, `search-ms:`, `search:`, `ms-officecmd:`, Office `ms-word:` / `ms-excel:` / … and their `ofe|u|` forms, `file://host/…`). `http(s)`, `ms-settings:`, `shell:`, local paths and installed app names keep working.
@@ -119,6 +125,10 @@ await hud.focus.onChange((w) => (title.textContent = w.title));
 | `media` | on change | same as `media.now()` |
 | `windows` | 0.25 s | `{ type: "opened"\|"closed"\|"focused"\|"changed", id, window }` (see [Windows](#windows)) |
 | `notify` | 2 s | one new toast (see [Notifications](#notifications)) |
+| `radios` | 2 s | `{ wifi, bluetooth }` (`true`, `false`, or `null` without that radio) |
+| `power-mode` | 2 s | `{ supported, mode: "efficiency"\|"balanced"\|"performance"\|null, energySaver }` |
+| `audio-control` | 3 s | `{ outputs: [{ id, name, default }] }` (volume and mute are the `audio` hook) |
+| `display` | 5 s | `{ projection: "pc"\|"duplicate"\|"extend"\|"second", brightness: [{ id, device, kind: "internal"\|"external", level }] }` |
 
 A sensor is only read while some piece on the page declares its hook, and a value is pushed only when it changed. Pushes go only to the windows of pieces that declare the hook, by a script run in those windows (not a broadcast event). Sensor subscriptions also get the current value right away.
 
@@ -219,6 +229,38 @@ button.onclick = () => versailles.for("power-menu").power.lock();
 The SDK only runs these inside a click or key press (`navigator.userActivation`), so a page cannot lock or shut down the machine on its own. `restart` and `shutdown` are immediate. The host logs every request.
 
 `sleep()` needs classic (S3) sleep. Many newer laptops only have Modern Standby (`powercfg /a` lists "S0 low power idle"), which Windows gives apps no supported way to start; there `sleep()` rejects with an error saying so. Catch it and hide or disable your sleep button.
+
+## Quick settings
+
+Four hooks for a quick-settings panel. Each reads like a sensor (`now()`, `onChange(fn)`, `on(hook, fn)`); each change goes through `quick_set` in the control class. It works only from a bar or overlay, only inside a click or key press, and answers the hook's new state. Every change is logged.
+
+```html
+<template class="spawnable" data-id="qs" data-anchor="tr" data-w="320" data-h="420"
+          data-hooks="radios,audio,audio-control,display,power-mode"> … </template>
+```
+
+```js
+const qs = versailles.for("qs");
+wifiToggle.onclick = async () => {
+  const { wifi } = await qs.radios.now();
+  await qs.radios.set("wifi", !wifi);                  // "wifi" | "bluetooth"
+};
+volume.oninput = () => qs.audioControl.setVolume(volume.value);   // 0–100
+muteButton.onclick = () => qs.audioControl.setMute(true);
+const { outputs } = await qs.audioControl.now();               // [{ id, name, default }]
+await qs.audioControl.setOutput(outputs[1].id);
+const { brightness, projection } = await qs.display.now();     // brightness: [{ id, kind, level }]
+await qs.display.setBrightness(brightness[0].id, 60);          // 0–100
+await qs.display.project("extend");                            // "pc" | "duplicate" | "extend" | "second"
+await qs.powerMode.set("balanced");                            // "efficiency" | "balanced" | "performance"
+```
+
+- **Radios:** Windows' radio switches. Wi-Fi and Bluetooth only; airplane mode is not covered.
+- **Volume and mute** act on the default output; read them through `audio`. **The default output** uses the same undocumented call as Windows' sound settings and takes only ids from `outputs`.
+- **Brightness:** built-in panels through WMI (`kind: "internal"`), external monitors over DDC/CI (`kind: "external"`, `device` is the screen, e.g. `\\.\DISPLAY2`; slow and not every monitor answers). A screen that offers neither is missing from the list.
+- **Projection** is Win+P. `"second"` turns the built-in screen off.
+- **Power mode** is the Settings slider (an undocumented Windows call). It needs the Balanced power plan; `supported: false` when Windows does not offer it. Energy saver is read-only.
+- A setting Windows refuses fails with a message (`radios: Windows refused access`, `power-mode: … the power plan must be Balanced`) instead of failing silently.
 
 ## Clipboard
 

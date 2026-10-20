@@ -361,6 +361,27 @@ pub async fn sense_now(
         .map_err(|e| crate::error::AppError::msg(e.to_string()))?
 }
 
+/// Quick settings (`radios`, `audio-control`, `display`, `power-mode`):
+/// change one. Control class: only a spawn window of a piece that declares
+/// the action's hook. Answers the hook's new state.
+#[tauri::command]
+pub async fn quick_set(
+    webview: Webview,
+    state: State<'_, AppState>,
+    action: crate::quick::QuickAction,
+    caller: Option<String>,
+) -> AppResult<serde_json::Value> {
+    let hook = action.hook();
+    let acting = require_hook(&state, &webview, caller.as_deref(), hook, HookClass::Control)?;
+    tracing::info!("quick settings: '{acting}' requested {action:?}");
+    tokio::task::spawn_blocking(move || {
+        crate::quick::apply(&action)?;
+        crate::quick::read(hook)
+    })
+    .await
+    .map_err(|e| crate::error::AppError::msg(e.to_string()))?
+}
+
 /// `windows` hook: the app windows a taskbar would show (top of the z-order
 /// first). `icons` adds a 32×32 PNG data URL per window. Changes are pushed
 /// (see `app_windows::start_watcher`).

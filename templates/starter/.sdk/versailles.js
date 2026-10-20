@@ -1,4 +1,4 @@
-/*! versailles-sdk 0.7.0 */
+/*! versailles-sdk 0.9.0 */
 /**
  * Versailles widget SDK — named hooks, native chrome, browser stubs.
  *
@@ -14,7 +14,7 @@
   "use strict";
 
   /** Keep in step with the marker on the first line. */
-  const SDK_VERSION = "0.7.0";
+  const SDK_VERSION = "0.9.0";
 
   function inIframe() {
     try {
@@ -225,6 +225,19 @@
       return hostInvoke("power", "power_action", { action });
     }
 
+    /**
+     * Change a quick setting (`radios`, `audio-control`, `display`,
+     * `power-mode`). Only inside a click or key press, and only from a bar or
+     * overlay: the host refuses the wallpaper. Answers the hook's new state.
+     */
+    async function quick(hook, action) {
+      const activation = global.navigator && global.navigator.userActivation;
+      if (activation && !activation.isActive) {
+        throw new Error(hook + ": changing a setting needs a click or key press");
+      }
+      return hostInvoke(hook, "quick_set", { action });
+    }
+
     function sensor(hook) {
       return {
         async now() {
@@ -239,7 +252,8 @@
 
     /**
      * `fn(data)` on each push of `name`: a hook (`media`, `battery`,
-     * `network`, `focus`, `audio`, `clipboard`, `notify`; must be declared) or a piece event
+     * `network`, `focus`, `audio`, `clipboard`, `notify`, `radios`,
+     * `audio-control`, `display`, `power-mode`; must be declared) or a piece event
      * (`shown`, `hidden`, `idle`, `active`, `theme-changed`). Sensor hooks
      * also call `fn` with the current value right away. Returns a function
      * that unsubscribes.
@@ -383,6 +397,42 @@
       network: sensor("network"),
       focus: sensor("focus"),
       audio: sensor("audio"),
+      /** Wi-Fi / Bluetooth radios: `{ wifi, bluetooth }` (true, false or null). */
+      radios: Object.assign(sensor("radios"), {
+        /** `set("wifi" | "bluetooth", on)`. */
+        async set(radio, on) {
+          return quick("radios", { kind: "radio", radio: String(radio), on: !!on });
+        },
+      }),
+      /** Volume, mute and the default output. `now()`: `{ outputs: [{ id, name, default }] }`. */
+      audioControl: Object.assign(sensor("audio-control"), {
+        async setVolume(level) {
+          return quick("audio-control", { kind: "volume", level: Number(level) });
+        },
+        async setMute(on) {
+          return quick("audio-control", { kind: "mute", on: !!on });
+        },
+        /** Make an output from `now().outputs` the default. */
+        async setOutput(id) {
+          return quick("audio-control", { kind: "output", id: String(id) });
+        },
+      }),
+      /** `{ projection, brightness: [{ id, device, kind, level }] }`. */
+      display: Object.assign(sensor("display"), {
+        async setBrightness(id, level) {
+          return quick("display", { kind: "brightness", id: String(id), level: Number(level) });
+        },
+        /** Win+P: `"pc"`, `"duplicate"`, `"extend"` or `"second"`. */
+        async project(mode) {
+          return quick("display", { kind: "project", mode: String(mode) });
+        },
+      }),
+      /** `{ supported, mode, energySaver }`; `mode`: `"efficiency"`, `"balanced"`, `"performance"`. */
+      powerMode: Object.assign(sensor("power-mode"), {
+        async set(mode) {
+          return quick("power-mode", { kind: "powerMode", mode: String(mode) });
+        },
+      }),
       /** Windows toast notifications, read-only. See docs/HOOKS.md. */
       notify: {
         /** `{ access, items }`: the recent toasts, newest first. */
@@ -633,8 +683,9 @@
     return () => pushSubscribers.delete(sub);
   }
   /** Hooks whose changes the host pushes; `on()` needs them declared. */
-  const PUSH_HOOKS = new Set(["media", "battery", "network", "focus", "audio", "clipboard", "windows", "notify"]);
-  const SENSOR_HOOKS = new Set(["battery", "network", "focus", "audio"]);
+  const QUICK_HOOKS = ["radios", "audio-control", "display", "power-mode"];
+  const PUSH_HOOKS = new Set(["media", "battery", "network", "focus", "audio", "clipboard", "windows", "notify"].concat(QUICK_HOOKS));
+  const SENSOR_HOOKS = new Set(["battery", "network", "focus", "audio"].concat(QUICK_HOOKS));
   // On the wallpaper this page runs in an iframe of the host shell, which
   // forwards bus messages and pushes here. Only the parent may send them.
   if (global.parent && global.parent !== global && typeof global.addEventListener === "function") {
@@ -726,6 +777,10 @@
     network: scoped.network,
     focus: scoped.focus,
     audio: scoped.audio,
+    radios: scoped.radios,
+    audioControl: scoped.audioControl,
+    display: scoped.display,
+    powerMode: scoped.powerMode,
     windows: scoped.windows,
     notify: scoped.notify,
     /** Data the last `spawn(id, data)` handed this spawnable (or undefined). */

@@ -209,6 +209,17 @@ fn work_area(_rect: Rect) -> Option<(Rect, bool)> {
 /// Watch for monitors being added, removed, resized or rescaled. On a
 /// change: re-place the wallpapers, bring stranded windows back on screen,
 /// tell the shells to reload their layout, and push `monitor-changed`.
+/// What makes a monitor setup "different": everything except the work area.
+/// Work areas also move when an AppBar (our docked bars, the taskbar)
+/// reserves or releases space; treating that as a monitor change re-placed
+/// the bars, which moved the work area again, in a loop.
+pub fn layout_key(monitors: &[MonitorInfo]) -> Vec<(u32, bool, String, i64, Rect)> {
+    monitors
+        .iter()
+        .map(|m| (m.number, m.primary, m.name.clone(), (m.scale * 1000.0).round() as i64, m.rect))
+        .collect()
+}
+
 pub fn start_watcher(app: AppHandle) {
     std::thread::spawn(move || {
         let mut last = list(&app);
@@ -218,7 +229,15 @@ pub fn start_watcher(app: AppHandle) {
             if now.is_empty() || now == last {
                 continue;
             }
+            let real_change = layout_key(&now) != layout_key(&last);
             last = now.clone();
+            if !real_change {
+                // Only a work area moved (a bar or the taskbar reserved space):
+                // re-fit the wallpapers, nothing else.
+                let handle = app.clone();
+                let _ = app.run_on_main_thread(move || crate::window_manager::refit_wallpapers(&handle));
+                continue;
+            }
             tracing::info!("monitors changed: {} connected", now.len());
             let handle = app.clone();
             let _ = app.run_on_main_thread(move || {
@@ -305,6 +324,18 @@ mod tests {
         assert!(select(&monitors, MonitorSel::Cursor).is_none());
         assert_eq!(at_point(&monitors, 2000, 10).unwrap().number, 2);
         assert!(at_point(&monitors, -5, 10).is_none());
+    }
+
+    #[test]
+    fn work_area_alone_is_not_a_monitor_change() {
+        let a = [mon(1, true, 0), mon(2, false, 1920)];
+        let mut b = a.clone();
+        b[0].work.y += 48; // a bar reserved space
+        assert_eq!(layout_key(&a), layout_key(&b));
+        let mut c = a.clone();
+        c[1].scale = 1.25; // rescaled
+        assert_ne!(layout_key(&a), layout_key(&c));
+        assert_ne!(layout_key(&a), layout_key(&a[..1]));
     }
 
     #[test]

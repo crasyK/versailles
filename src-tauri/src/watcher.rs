@@ -169,6 +169,10 @@ fn handle_changes(app: &AppHandle, root: &Path, changed: &[String]) {
         );
     }
 
+    if touches_page_assets || touches_config {
+        // Bars keep their windows (and reservations); reload their pages.
+        crate::docks::reload_pages(app);
+    }
     rebuild_stale_windows(app, root, changed, touches_page_assets);
 }
 
@@ -225,6 +229,11 @@ fn rebuild_stale_windows(app: &AppHandle, root: &Path, changed: &[String], page_
     let mut close = Vec::new();
     let mut reopen = Vec::new();
     for w in open {
+        // Docked bars follow the page through `docks::reconcile`; closing and
+        // "reopening" one here went through its toggle and hid it.
+        if crate::docks::is_dock(app, &w.id) {
+            continue;
+        }
         if cat.spawnable(&w.id).is_some() {
             if !page_assets {
                 continue;

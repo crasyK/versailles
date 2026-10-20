@@ -162,6 +162,10 @@ struct DockState {
     left_at: Option<Instant>,
     #[cfg(windows)]
     appbar: bool,
+    /// Windows granted no usable reservation on this monitor: float without
+    /// asking again until the monitor changes (each refused try moved the
+    /// work area and set off another round).
+    refused: bool,
 }
 
 /// Docked windows by label.
@@ -234,6 +238,9 @@ fn place(window: &WebviewWindow, st: &mut DockState) {
                 // Explorer judges an AppBar by the monitor its window is on:
                 // put the window on its edge first.
                 set_rect(window, strip(st.dock.edge, st.work, st.thick));
+                if st.refused {
+                    return;
+                }
                 if let Some(r) = appbar::set_pos(window, st.dock.edge, st.monitor, st.work, st.thick, !st.appbar) {
                     if !st.appbar {
                         tracing::info!("dock '{}': reserved {:?} on display {}", st.label, r, st.number);
@@ -246,6 +253,7 @@ fn place(window: &WebviewWindow, st: &mut DockState) {
                     "dock '{}': Windows granted no usable reservation on display {}; it floats instead",
                     st.label, st.number
                 );
+                st.refused = true;
             }
             set_rect(window, strip(st.dock.edge, st.work, st.thick));
         }
@@ -315,8 +323,13 @@ fn open(app: &AppHandle, piece: &PagePiece, label: &str, mon: &MonitorInfo) -> A
         left_at: None,
         #[cfg(windows)]
         appbar: false,
+        refused: false,
     });
-    // Mode, edge or monitor changed: drop a reservation made for the old one.
+    // Mode, edge or monitor changed: drop a reservation made for the old one,
+    // and ask Windows again even if it refused before.
+    if st.dock != dock || st.monitor != mon.rect {
+        st.refused = false;
+    }
     #[cfg(windows)]
     if st.appbar && (st.dock != dock || dock.mode != DockMode::Reserve || st.monitor != mon.rect) {
         if let Some(w) = app.get_webview_window(label) {
@@ -567,6 +580,17 @@ pub fn toggle(app: &AppHandle, id: &str) -> AppResult<bool> {
     }
     crate::push::to_piece(app, &piece.id, "shown", &serde_json::Value::Null);
     Ok(true)
+}
+
+/// The page changed: reload every bar window's page in place, keeping the
+/// window, its position and its reservation.
+pub fn reload_pages(app: &AppHandle) {
+    let labels: Vec<String> = states().lock().unwrap().keys().cloned().collect();
+    for label in labels {
+        if let Some(window) = app.get_webview_window(&label) {
+            let _ = window.eval("location.reload()");
+        }
+    }
 }
 
 /// Release every AppBar reservation (on quit, and before a crash restart).

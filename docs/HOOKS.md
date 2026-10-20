@@ -43,6 +43,8 @@ await versailles.for("launcher").spawn("calculator");
 
 Without Tauri (plain browser / `file:`), hook calls resolve `{ host: false }` instead of throwing.
 
+**Waiting for the SDK.** Scripts that run before the SDK has loaded must check `typeof window.versailles?.for === "function"`, not just `window.versailles`: a page with the `<script type="application/json" id="versailles">` config block has an element named `versailles`, and browsers expose it as `window.versailles` until the SDK replaces it.
+
 **Keeping it current.** The SDK ships inside Versailles; its first line carries its version (`/*! versailles-sdk 0.6.0 */`, also `versailles.version`). On start the host compares `.sdk\versailles.js` with the one it ships:
 
 | Desktop copy | What happens |

@@ -2132,6 +2132,16 @@ pub fn close_desktop_window(app: &AppHandle) -> AppResult<()> {
     Ok(())
 }
 
+/// A work area moved (a bar or the taskbar reserved space): re-fit the
+/// wallpapers to their monitors' work areas.
+pub fn refit_wallpapers(app: &AppHandle) {
+    if !desktop_window_labels(app).is_empty() {
+        if let Err(err) = ensure_desktop_window(app) {
+            tracing::warn!("wallpapers not re-fitted: {err}");
+        }
+    }
+}
+
 /// Monitors were added, removed, resized or rescaled: re-place the
 /// wallpapers and bring any window that ended up off-screen back on.
 pub fn on_monitors_changed(app: &AppHandle) {

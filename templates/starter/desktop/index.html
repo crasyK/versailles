@@ -442,7 +442,7 @@
           var box = document.querySelector('.note .note-text');
           if (!box) return;
           // The SDK loads after this script; wait for it.
-          (function whenSdk(fn) { window.versailles ? fn(window.versailles) : setTimeout(function () { whenSdk(fn); }, 50); })(function (v) {
+          (function whenSdk(fn) { window.versailles && typeof window.versailles.for === 'function' ? fn(window.versailles) : setTimeout(function () { whenSdk(fn); }, 50); })(function (v) {
             var store = v.for('note').storage;
             store.get('text').then(function (text) {
               if (typeof text === 'string') box.value = text; // { host: false } in a plain browser
@@ -1081,7 +1081,7 @@
           tick();
           setInterval(tick, 1000);
           // The SDK loads after this script; wait for it.
-          (function whenSdk(fn) { window.versailles ? fn(window.versailles) : setTimeout(function () { whenSdk(fn); }, 50); })(function (v) {
+          (function whenSdk(fn) { window.versailles && typeof window.versailles.for === 'function' ? fn(window.versailles) : setTimeout(function () { whenSdk(fn); }, 50); })(function (v) {
             var me = v.for('topbar');
             // Called now and on every change.
             me.on('network', function (n) {
@@ -1149,7 +1149,7 @@
           var root = document.currentScript && document.currentScript.closest('.spawn-surface');
           var bar = root && root.querySelector('.taskbar');
           if (!bar) return;
-          (function whenSdk(fn) { window.versailles ? fn(window.versailles) : setTimeout(function () { whenSdk(fn); }, 50); })(function (v) {
+          (function whenSdk(fn) { window.versailles && typeof window.versailles.for === 'function' ? fn(window.versailles) : setTimeout(function () { whenSdk(fn); }, 50); })(function (v) {
             var wins = v.for('taskbar').windows;
             function render(list, here) {
               bar.replaceChildren();

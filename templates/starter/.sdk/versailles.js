@@ -239,7 +239,7 @@
 
     /**
      * `fn(data)` on each push of `name`: a hook (`media`, `battery`,
-     * `network`, `focus`, `audio`; must be declared) or a piece event
+     * `network`, `focus`, `audio`, `clipboard`, `notify`; must be declared) or a piece event
      * (`shown`, `hidden`, `idle`, `active`, `theme-changed`). Sensor hooks
      * also call `fn` with the current value right away. Returns a function
      * that unsubscribes.
@@ -383,6 +383,17 @@
       network: sensor("network"),
       focus: sensor("focus"),
       audio: sensor("audio"),
+      /** Windows toast notifications, read-only. See docs/HOOKS.md. */
+      notify: {
+        /** `{ access, items }`: the recent toasts, newest first. */
+        async now() {
+          return hostInvoke("notify", "sense_now", { hook: "notify" });
+        },
+        /** `fn(toast)` for each new toast. Returns an unsubscribe function. */
+        async onToast(fn) {
+          return on("notify", fn);
+        },
+      },
       media: {
         async now() {
           return hostInvoke("media", "media_now");
@@ -622,7 +633,7 @@
     return () => pushSubscribers.delete(sub);
   }
   /** Hooks whose changes the host pushes; `on()` needs them declared. */
-  const PUSH_HOOKS = new Set(["media", "battery", "network", "focus", "audio", "clipboard", "windows"]);
+  const PUSH_HOOKS = new Set(["media", "battery", "network", "focus", "audio", "clipboard", "windows", "notify"]);
   const SENSOR_HOOKS = new Set(["battery", "network", "focus", "audio"]);
   // On the wallpaper this page runs in an iframe of the host shell, which
   // forwards bus messages and pushes here. Only the parent may send them.
@@ -716,6 +727,7 @@
     focus: scoped.focus,
     audio: scoped.audio,
     windows: scoped.windows,
+    notify: scoped.notify,
     /** Data the last `spawn(id, data)` handed this spawnable (or undefined). */
     monitors,
     monitor,

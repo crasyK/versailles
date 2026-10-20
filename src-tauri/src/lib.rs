@@ -29,6 +29,7 @@ mod registry;
 mod single_instance_fixup;
 mod state;
 mod storage;
+mod toasts;
 mod watcher;
 mod weather;
 mod window_manager;

@@ -1,7 +1,8 @@
 //! Read-only system hooks (`battery`, `network`, `focus`, `audio`) and the
-//! watcher that pushes their changes, plus page-wide `idle` / `active` and
-//! `theme-changed` events. A sensor is only read while some piece declares
-//! its hook, and only a changed value is pushed.
+//! watcher that pushes their changes, plus new toasts for `notify` (see
+//! `toasts`) and page-wide `idle` / `active` and `theme-changed` events. A
+//! sensor is only read while some piece declares its hook, and only a
+//! changed value is pushed.
 
 use crate::error::{AppError, AppResult};
 use serde_json::{json, Value};
@@ -20,17 +21,27 @@ pub const SENSORS: &[(&str, Duration)] = &[
 /// No input for this long sends `idle`; the next input sends `active`.
 pub const IDLE_AFTER_MS: u64 = 60_000;
 
+/// How often the watcher looks for new toasts (`notify`).
+pub const NOTIFY_EVERY: Duration = Duration::from_millis(2000);
+
 pub fn is_sensor(hook: &str) -> bool {
     SENSORS.iter().any(|(h, _)| *h == hook)
 }
 
-/// Current value of one sensor hook.
+/// Hooks `sense_now` answers: the sensors plus `notify` (whose pushes are
+/// new toasts, not a changed value).
+pub fn is_readable(hook: &str) -> bool {
+    is_sensor(hook) || hook == "notify"
+}
+
+/// Current value of one readable hook.
 pub fn read(hook: &str) -> AppResult<Value> {
     match hook {
         "battery" => imp::battery(),
         "network" => imp::network(),
         "focus" => imp::focus(),
         "audio" => imp::audio(),
+        "notify" => crate::toasts::read(),
         _ => Err(AppError::msg(format!("'{hook}' is not a sensor hook"))),
     }
 }
@@ -273,6 +284,8 @@ pub fn start_watcher(app: AppHandle) {
         let mut dark = imp::dark_mode();
         let mut next_idle = Instant::now();
         let mut next_theme = Instant::now();
+        let mut toasts = crate::toasts::Watch::default();
+        let mut next_toasts = Instant::now();
         loop {
             std::thread::sleep(Duration::from_millis(250));
             let now = Instant::now();
@@ -291,6 +304,16 @@ pub fn start_watcher(app: AppHandle) {
                     if last.get(hook) != Some(&value) {
                         crate::push::to_hook(&app, hook, &value);
                         last.insert(hook, value);
+                    }
+                }
+            }
+            if !declared.contains("notify") {
+                toasts.reset();
+            } else if now >= next_toasts {
+                next_toasts = now + NOTIFY_EVERY;
+                for toast in toasts.poll() {
+                    if let Ok(data) = serde_json::to_value(&toast) {
+                        crate::push::to_hook(&app, "notify", &data);
                     }
                 }
             }
@@ -367,5 +390,10 @@ mod tests {
         assert!(is_sensor("focus"));
         assert!(!is_sensor("media"));
         assert!(!is_sensor("pty"));
+        // `notify` is read through `sense_now` but is not a polled value.
+        assert!(!is_sensor("notify"));
+        assert!(is_readable("notify"));
+        assert!(is_readable("audio"));
+        assert!(!is_readable("bus"));
     }
 }

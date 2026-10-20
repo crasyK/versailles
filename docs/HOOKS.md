@@ -27,6 +27,7 @@ The host never grants more than that list. The catalog is fixed in [`src-tauri/s
 | `audio` | Default output device, volume (0–100), mute |
 | `windows` | The app windows a taskbar would show, their icons, and pushed changes (`windows_list`, `windows_icon`) |
 | `windows-control` | Focus, minimize, restore, maximize, close, move / resize one of those windows (`windows_control`) |
+| `notify` | Windows toast notifications, read-only: the recent ones and each new one (see [Notifications](#notifications)) |
 
 Unknown hook names are rejected.
 
@@ -181,6 +182,7 @@ await hud.focus.onChange((w) => (title.textContent = w.title));
 | `audio` | 1 s | `{ device, volume, muted }` |
 | `media` | on change | same as `media.now()` |
 | `windows` | 0.25 s | `{ type: "opened"\|"closed"\|"focused"\|"changed", id, window }` (see [Windows](#windows)) |
+| `notify` | 2 s | one new toast (see [Notifications](#notifications)) |
 
 A sensor is only read while some piece on the page declares its hook, and a value is pushed only when it changed. Pushes go only to the windows of pieces that declare the hook, by a script run in those windows (not a broadcast event). Sensor subscriptions also get the current value right away.
 
@@ -223,6 +225,27 @@ Read (`windows`):
 Control (`windows-control`): `focus(id)` (restores a minimized window), `minimize(id)`, `restore(id)`, `maximize(id)`, `close(id)` (posts `WM_CLOSE`: the app may still ask to save), `move(id, { x, y, width, height })` (physical px; `x` / `y` alone moves, `width` / `height` alone resizes; a maximized or minimized window is restored first).
 
 Listed are visible, titled top-level windows without a tool-window style or owner (or with `WS_EX_APPWINDOW`). Never listed: Versailles' own windows, the shell's desktop and taskbars, and cloaked windows (other virtual desktops, suspended store apps). Control calls only accept a listed window and refuse Versailles' own. Store apps show as `ApplicationFrameHost`. The list is only read while a piece on the page declares `windows`.
+
+## Notifications
+
+```js
+const feed = versailles.for("inbox").notify;
+const { access, items } = await feed.now();   // newest first, up to 50
+await feed.onToast((t) => prepend(t));        // each new toast, once
+```
+
+A toast is `{ id, app, aumid, title, body, time }`: `app` is the sending app's display name (`null` when Windows does not know it), `aumid` its app user model id, `title` the first text line, `body` the other lines joined by `\n`, `time` ms since the Unix epoch. Read-only: a piece cannot dismiss, clear or raise toasts.
+
+`access` is Windows' answer for Versailles:
+
+| `access` | Meaning |
+| -------- | ------- |
+| `allowed` | `items` holds the toasts in Action Center |
+| `denied` | The user turned notification access off (Settings > Privacy & security > Notifications). `items` is empty |
+| `unspecified` | Not decided yet. `items` is empty; the host never shows Windows' consent prompt |
+| `unavailable` | No notification listener on this system (or not Windows) |
+
+Windows offers no change event to an unpackaged app, so the host checks for new toasts every 2 s while some piece declares `notify` and pushes each one it has not seen (oldest first). The first check only notes what is already there. `onToast` does not fire on subscribe: call `now()` for the current list. Toast text can be private: declare `notify` only on pieces that need it.
 
 ## Piece events
 

@@ -188,6 +188,15 @@ pub fn parse_page(html: &str) -> PageCatalog {
             continue;
         }
         let rest = &html[i..];
+        // A commented-out piece is not on the page (the browser skips it too).
+        if rest.starts_with("<!--") {
+            i += match rest[4..].find("-->") {
+                Some(end) => 4 + end + 3,
+                // Unterminated (e.g. inside a script string): skip the marker only.
+                None => 4,
+            };
+            continue;
+        }
         let Some(end_rel) = rest.find('>') else {
             break;
         };
@@ -313,6 +322,16 @@ pub fn classify_invoker(
             spawn: piece.kind == PageKind::Spawnable,
         };
     }
+    // `widget-<id>:<n>`: the copy of a `data-monitor="all"` bar on display n
+    // acts as the same piece.
+    if let Some((base, _)) = split_monitor_copy(id) {
+        if let Some(piece) = cat.spawnable(base).filter(|p| crate::docks::on_every_monitor(p)) {
+            return Invoker::Piece {
+                id: piece.id.clone(),
+                spawn: true,
+            };
+        }
+    }
     match folder_hooks(id) {
         Some(hooks) => Invoker::Folder {
             id: id.to_string(),
@@ -320,6 +339,23 @@ pub fn classify_invoker(
         },
         None => Invoker::Host,
     }
+}
+
+/// `taskbar:2` → `("taskbar", 2)`: the part of a window label after `widget-`
+/// for a bar's copy on display 2. `None` without a `:<number>` suffix.
+pub fn split_monitor_copy(rest: &str) -> Option<(&str, u32)> {
+    let (base, n) = rest.rsplit_once(':')?;
+    if base.is_empty() || n.is_empty() || !n.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some((base, n.parse().ok().filter(|n| *n > 0)?))
+}
+
+/// Piece id a `widget-…` window label belongs to: `widget-<id>` or a
+/// monitor copy `widget-<id>:<n>`. Matches ids as written in the label.
+pub fn label_piece_id(label: &str) -> Option<&str> {
+    let rest = label.strip_prefix("widget-").filter(|s| !s.is_empty())?;
+    Some(split_monitor_copy(rest).map(|(base, _)| base).unwrap_or(rest))
 }
 
 /// Host enforcement. Returns the piece id the call acts as.
@@ -849,6 +885,54 @@ mod tests {
         assert!(authorize_hook(&cat, &watch, None, "media", HookClass::Plain).is_ok());
         assert!(authorize_hook(&cat, &watch, None, "media", HookClass::Exec).is_err());
         assert!(authorize_hook(&cat, &Invoker::Desktop, Some("now-playing"), "bogus", HookClass::Plain).is_err());
+    }
+
+    #[test]
+    fn commented_out_pieces_are_not_on_the_page() {
+        let cat = parse_page(
+            r#"
+<article class="widget" data-id="clock"></article>
+<!-- Example: remove the comment markers to try it.
+<template class="spawnable" data-id="topbar" data-anchor="top" data-hooks="battery"></template>
+-->
+<template class="spawnable" data-id="calc" data-anchor="tr"></template>
+<!-- unterminated <article class="widget" data-id="late"></article>
+"#,
+        );
+        assert!(cat.get("clock").is_some());
+        assert!(cat.get("topbar").is_none());
+        assert!(cat.get("calc").is_some());
+        // An unterminated comment does not swallow the rest of the page.
+        assert!(cat.get("late").is_some());
+    }
+
+    #[test]
+    fn monitor_copies_act_as_their_bar() {
+        let cat = parse_page(
+            r#"
+<template class="spawnable" data-id="taskbar" data-anchor="bottom" data-monitor="all" data-hooks="battery"></template>
+<template class="spawnable" data-id="topbar" data-anchor="top" data-hooks="battery"></template>
+<template class="spawnable" data-id="calc" data-anchor="tr"></template>
+"#,
+        );
+        assert_eq!(split_monitor_copy("taskbar:2"), Some(("taskbar", 2)));
+        assert_eq!(split_monitor_copy("taskbar"), None);
+        assert_eq!(split_monitor_copy("taskbar:x"), None);
+        assert_eq!(split_monitor_copy("taskbar:0"), None);
+        assert_eq!(split_monitor_copy(":2"), None);
+        assert_eq!(label_piece_id("widget-taskbar:3"), Some("taskbar"));
+        assert_eq!(label_piece_id("widget-taskbar"), Some("taskbar"));
+        assert_eq!(label_piece_id("desktop"), None);
+        assert_eq!(
+            classify_invoker("widget-taskbar:2", &cat, folder_none),
+            Invoker::Piece { id: "taskbar".into(), spawn: true }
+        );
+        let copy = classify_invoker("widget-taskbar:2", &cat, folder_none);
+        assert_eq!(authorize_hook(&cat, &copy, None, "battery", HookClass::Plain).unwrap(), "taskbar");
+        assert!(authorize_hook(&cat, &copy, None, "power", HookClass::Plain).is_err());
+        // Only bars on every monitor have copies.
+        assert_eq!(classify_invoker("widget-topbar:2", &cat, folder_none), Invoker::Host);
+        assert_eq!(classify_invoker("widget-calc:2", &cat, folder_none), Invoker::Host);
     }
 
     #[test]

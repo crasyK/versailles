@@ -26,12 +26,8 @@ pub fn hook_window_labels(app: &AppHandle, cat: &PageCatalog, hook: &str) -> Vec
         }
         match piece.kind {
             PageKind::Widget => desktop = true,
-            PageKind::Spawnable => {
-                let label = crate::window_manager::widget_label(&piece.id);
-                if app.get_webview_window(&label).is_some() {
-                    labels.push(label);
-                }
-            }
+            // `widget-<id>` plus any monitor copies (`widget-<id>:<n>`).
+            PageKind::Spawnable => labels.extend(crate::window_manager::piece_window_labels(app, &piece.id)),
         }
     }
     if desktop {

@@ -62,7 +62,8 @@
         global.__TAURI_INTERNALS__?.metadata?.currentWindow?.label ||
         global.__TAURI__?.window?.getCurrentWindow?.()?.label;
       if (typeof label === "string" && label.startsWith("widget-")) {
-        return label.slice("widget-".length);
+        // `widget-<id>:<n>` is a bar's copy on display n: still piece <id>.
+        return label.slice("widget-".length).replace(/:\d+$/, "");
       }
     } catch {
       /* ignore */
@@ -556,7 +557,11 @@
     return (report && report.monitors) || [];
   }
 
-  /** The monitor this window is on (`null` outside the host). */
+  /**
+   * The monitor this window is on (`null` outside the host). A wallpaper and
+   * a docked bar (each copy of a `data-monitor="all"` bar) load with
+   * `monitor=<n>`, so this is their own monitor even while they move.
+   */
   async function monitor() {
     if (!tauri()?.core?.invoke) return null;
     const report = await invoke("monitor_info");

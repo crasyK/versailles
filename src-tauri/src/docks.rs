@@ -8,9 +8,14 @@
 //! - `float`: always on top inside the work area, no space reserved.
 //! - `auto-hide`: a `data-peek` px strip (default 4) at the edge; the bar
 //!   slides out while the cursor is at that edge or on the bar.
+//!
+//! `data-monitor="all"` opens one window per monitor: `widget-<id>` on the
+//! primary, `widget-<id>:<n>` on display n. Every copy acts as piece `<id>`
+//! and loads with `monitor=<n>`; monitor changes add and remove copies.
 
 use crate::error::AppResult;
 use crate::layout::Rect;
+use crate::monitors::MonitorInfo;
 use crate::page::PagePiece;
 use crate::state::AppState;
 use std::collections::HashMap;
@@ -116,8 +121,14 @@ fn contains(r: Rect, x: i32, y: i32) -> bool {
 /// Live state of one docked window.
 #[derive(Debug, Clone)]
 struct DockState {
+    /// Piece id; several windows share it for a bar on every monitor.
     id: String,
+    /// Window label: `widget-<id>`, or `widget-<id>:<n>` for a monitor copy.
+    label: String,
     dock: Dock,
+    /// Display number and primary flag the window was opened for.
+    number: u32,
+    primary: bool,
     /// Monitor rect (physical) and its work area.
     monitor: Rect,
     work: Rect,
@@ -131,6 +142,7 @@ struct DockState {
     appbar: bool,
 }
 
+/// Docked windows by label.
 fn states() -> &'static Mutex<HashMap<String, DockState>> {
     static MAP: OnceLock<Mutex<HashMap<String, DockState>>> = OnceLock::new();
     MAP.get_or_init(|| Mutex::new(HashMap::new()))
@@ -141,20 +153,37 @@ fn app_slot() -> &'static OnceLock<AppHandle> {
     &APP
 }
 
-fn label(id: &str) -> String {
-    crate::window_manager::widget_label(id)
+/// `data-monitor="all"` on a docked bar: one window per monitor.
+pub fn on_every_monitor(piece: &PagePiece) -> bool {
+    piece_dock(piece).is_some()
+        && crate::monitors::parse_sel(piece.monitor.as_deref()) == Some(crate::monitors::MonitorSel::All)
 }
 
-/// Monitor a dock sits on: its `data-monitor` (primary or a number), else
-/// the primary. Docks do not follow the cursor.
-fn dock_monitor(app: &AppHandle, piece: &PagePiece) -> Option<crate::monitors::MonitorInfo> {
-    let monitors = crate::monitors::list(app);
+/// Window label of bar `id` on monitor `m`: the primary's copy keeps
+/// `widget-<id>` (so a single-monitor setup looks like any other bar).
+pub fn instance_label(id: &str, m: &MonitorInfo) -> String {
+    if m.primary {
+        crate::window_manager::widget_label(id)
+    } else {
+        crate::window_manager::monitor_copy_label(id, m.number)
+    }
+}
+
+/// Windows a docked piece wants: `(label, monitor)`. Every monitor for
+/// `data-monitor="all"`; otherwise its `data-monitor` (primary or a number),
+/// else the primary. Docks do not follow the cursor.
+pub fn instances(piece: &PagePiece, monitors: &[MonitorInfo]) -> Vec<(String, MonitorInfo)> {
+    use crate::monitors::{select, MonitorSel};
+    if on_every_monitor(piece) {
+        return monitors.iter().map(|m| (instance_label(&piece.id, m), m.clone())).collect();
+    }
     let sel = crate::monitors::parse_sel(piece.monitor.as_deref())
-        .filter(|s| matches!(s, crate::monitors::MonitorSel::Number(_)))
-        .unwrap_or(crate::monitors::MonitorSel::Primary);
-    crate::monitors::select(&monitors, sel)
-        .or_else(|| crate::monitors::select(&monitors, crate::monitors::MonitorSel::Primary))
-        .cloned()
+        .filter(|s| matches!(s, MonitorSel::Number(_)))
+        .unwrap_or(MonitorSel::Primary);
+    select(monitors, sel)
+        .or_else(|| select(monitors, MonitorSel::Primary))
+        .map(|m| vec![(crate::window_manager::widget_label(&piece.id), m.clone())])
+        .unwrap_or_default()
 }
 
 fn set_rect(window: &WebviewWindow, r: Rect) {
@@ -191,38 +220,40 @@ fn place(window: &WebviewWindow, st: &mut DockState) {
     }
 }
 
-/// Open, place or close dock windows to match the page. Call on the main
-/// thread (AppBar registration and window subclassing need the UI thread).
+/// Open, place or close dock windows to match the page and the monitors.
+/// Call on the main thread (AppBar registration and window subclassing need
+/// the UI thread).
 pub fn reconcile(app: &AppHandle) {
     let _ = app_slot().set(app.clone());
     let state = app.state::<AppState>();
     let cat = crate::desktop::page_catalog(&state);
-    let wanted: Vec<&PagePiece> = cat.pieces.iter().filter(|p| piece_dock(p).is_some()).collect();
+    let monitors = crate::monitors::list(app);
+    let hidden = user_hidden().lock().unwrap().clone();
+    let wanted: Vec<(&PagePiece, String, MonitorInfo)> = cat
+        .pieces
+        .iter()
+        .filter(|p| piece_dock(p).is_some())
+        // Docks the user toggled off stay off until toggled on again.
+        .filter(|p| !hidden.contains(&p.id.to_ascii_lowercase()))
+        .flat_map(|p| instances(p, &monitors).into_iter().map(move |(label, m)| (p, label, m)))
+        .collect();
 
-    // Close docks the page no longer declares (or that stopped being docks).
+    // Close windows the page no longer declares, and copies for monitors
+    // that are gone.
     let stale: Vec<String> = states()
         .lock()
         .unwrap()
         .keys()
-        .filter(|id| !wanted.iter().any(|p| p.id.eq_ignore_ascii_case(id)))
+        .filter(|label| !wanted.iter().any(|(_, l, _)| l == *label))
         .cloned()
         .collect();
-    for id in stale {
-        close(app, &id);
+    for label in stale {
+        close(app, &label);
     }
 
-    for piece in wanted {
-        let hidden_by_user = states()
-            .lock()
-            .unwrap()
-            .get(&piece.id)
-            .is_none()
-            && user_hidden().lock().unwrap().contains(&piece.id.to_ascii_lowercase());
-        if hidden_by_user {
-            continue;
-        }
-        if let Err(err) = open(app, piece) {
-            tracing::warn!("dock '{}' failed to open: {err}", piece.id);
+    for (piece, label, mon) in wanted {
+        if let Err(err) = open(app, piece, &label, &mon) {
+            tracing::warn!("dock '{label}' failed to open: {err}");
         }
     }
     start_autohide_watcher(app);
@@ -234,15 +265,16 @@ fn user_hidden() -> &'static Mutex<std::collections::HashSet<String>> {
     SET.get_or_init(|| Mutex::new(std::collections::HashSet::new()))
 }
 
-fn open(app: &AppHandle, piece: &PagePiece) -> AppResult<()> {
+/// Open (or re-place) window `label` of dock `piece` on monitor `mon`.
+fn open(app: &AppHandle, piece: &PagePiece, label: &str, mon: &MonitorInfo) -> AppResult<()> {
     let dock = piece_dock(piece).expect("caller checked");
-    let Some(mon) = dock_monitor(app, piece) else {
-        return Ok(());
-    };
     let thick = ((thickness(piece, dock.edge) as f64) * mon.scale).round() as i32;
-    let mut st = states().lock().unwrap().remove(&piece.id).unwrap_or(DockState {
+    let mut st = states().lock().unwrap().remove(label).unwrap_or(DockState {
         id: piece.id.clone(),
+        label: label.to_string(),
         dock,
+        number: mon.number,
+        primary: mon.primary,
         monitor: mon.rect,
         work: mon.work,
         scale: mon.scale,
@@ -252,33 +284,44 @@ fn open(app: &AppHandle, piece: &PagePiece) -> AppResult<()> {
         #[cfg(windows)]
         appbar: false,
     });
-    // Mode or edge changed: drop a reservation made for the old one.
+    // Mode, edge or monitor changed: drop a reservation made for the old one.
     #[cfg(windows)]
-    if st.appbar && (st.dock != dock || dock.mode != DockMode::Reserve) {
-        if let Some(w) = app.get_webview_window(&label(&piece.id)) {
+    if st.appbar && (st.dock != dock || dock.mode != DockMode::Reserve || st.monitor != mon.rect) {
+        if let Some(w) = app.get_webview_window(label) {
             appbar::remove(&w);
         }
         st.appbar = false;
     }
+    let moved = (st.number, st.primary) != (mon.number, mon.primary);
     st.dock = dock;
+    st.number = mon.number;
+    st.primary = mon.primary;
     st.monitor = mon.rect;
     st.work = mon.work;
     st.scale = mon.scale;
     st.thick = thick;
 
-    let win_label = label(&piece.id);
-    if app.get_webview_window(&win_label).is_none() {
-        crate::window_manager::mark_quiet(&win_label);
+    if app.get_webview_window(label).is_none() {
+        crate::window_manager::mark_quiet(label);
         let first = strip(dock.edge, mon.work, thick);
-        crate::window_manager::open_widget_window(
+        crate::window_manager::open_dock_window(
             app,
-            &app.state::<AppState>().window_manager,
             &piece.id,
-            Some(crate::config::Position { x: first.x, y: first.y }),
-            Some(true),
+            crate::window_manager::DockInstance {
+                label: label.to_string(),
+                monitor: mon.number,
+                primary: mon.primary,
+            },
+            crate::config::Position { x: first.x, y: first.y },
         )?;
+    } else if moved {
+        // Same window, other monitor (e.g. the primary changed): the page
+        // reloads with its new `monitor` parameter.
+        if let Some(window) = app.get_webview_window(label) {
+            crate::window_manager::retarget_dock_window(&window, mon.number, mon.primary);
+        }
     }
-    if let Some(window) = app.get_webview_window(&win_label) {
+    if let Some(window) = app.get_webview_window(label) {
         #[cfg(windows)]
         appbar::watch(&window);
         // Placed while still hidden; the deferred raise shows it in place
@@ -286,26 +329,26 @@ fn open(app: &AppHandle, piece: &PagePiece) -> AppResult<()> {
         place(&window, &mut st);
         let _ = window.set_always_on_top(true);
     }
-    states().lock().unwrap().insert(piece.id.clone(), st);
+    states().lock().unwrap().insert(label.to_string(), st);
     // Safety net: place once more after the window is up.
     let app2 = app.clone();
-    let id = piece.id.clone();
+    let label2 = label.to_string();
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(150));
         let handle = app2.clone();
-        let _ = app2.run_on_main_thread(move || replace(&handle, &id));
+        let _ = app2.run_on_main_thread(move || replace(&handle, &label2));
     });
     start_fullscreen_watcher(app);
     Ok(())
 }
 
-/// Re-apply a dock's placement (keeps its AppBar reservation).
-fn replace(app: &AppHandle, id: &str) {
-    let Some(window) = app.get_webview_window(&label(id)) else {
+/// Re-apply a dock window's placement (keeps its AppBar reservation).
+fn replace(app: &AppHandle, label: &str) {
+    let Some(window) = app.get_webview_window(label) else {
         return;
     };
     let mut map = states().lock().unwrap();
-    if let Some(st) = map.get_mut(id) {
+    if let Some(st) = map.get_mut(label) {
         place(&window, st);
     }
 }
@@ -333,14 +376,14 @@ fn start_fullscreen_watcher(app: &AppHandle) {
             behind = now;
             let handle = app.clone();
             let _ = app.run_on_main_thread(move || {
-                let ids: Vec<(String, Rect)> = states()
+                let labels: Vec<(String, Rect)> = states()
                     .lock()
                     .unwrap()
                     .values()
-                    .map(|s| (s.id.clone(), s.monitor))
+                    .map(|s| (s.label.clone(), s.monitor))
                     .collect();
-                for (id, monitor) in ids {
-                    let Some(window) = handle.get_webview_window(&label(&id)) else {
+                for (label, monitor) in labels {
+                    let Some(window) = handle.get_webview_window(&label) else {
                         continue;
                     };
                     match now {
@@ -441,9 +484,9 @@ mod fullscreen {
     pub fn back_on_top(_window: &WebviewWindow) {}
 }
 
-fn close(app: &AppHandle, id: &str) {
-    states().lock().unwrap().remove(id);
-    if let Some(window) = app.get_webview_window(&label(id)) {
+fn close(app: &AppHandle, label: &str) {
+    states().lock().unwrap().remove(label);
+    if let Some(window) = app.get_webview_window(label) {
         #[cfg(windows)]
         appbar::remove(&window);
         let _ = window.close();
@@ -457,8 +500,8 @@ pub fn is_dock(app: &AppHandle, id: &str) -> bool {
         .is_some_and(|p| piece_dock(p).is_some())
 }
 
-/// Hotkey / `spawn()`: hide a showing dock (releasing its space) or bring a
-/// hidden one back. Returns whether it is now shown.
+/// Hotkey / `spawn()`: hide a showing dock (every monitor's window, releasing
+/// their space) or bring a hidden one back. Returns whether it is now shown.
 pub fn toggle(app: &AppHandle, id: &str) -> AppResult<bool> {
     let state = app.state::<AppState>();
     let cat = crate::desktop::page_catalog(&state);
@@ -466,23 +509,34 @@ pub fn toggle(app: &AppHandle, id: &str) -> AppResult<bool> {
         return Ok(false);
     };
     let key = piece.id.to_ascii_lowercase();
-    if states().lock().unwrap().contains_key(&piece.id) {
+    let open_labels: Vec<String> = states()
+        .lock()
+        .unwrap()
+        .values()
+        .filter(|s| s.id.eq_ignore_ascii_case(&piece.id))
+        .map(|s| s.label.clone())
+        .collect();
+    if !open_labels.is_empty() {
         user_hidden().lock().unwrap().insert(key);
         crate::push::to_piece(app, &piece.id, "hiding", &serde_json::Value::Null);
-        close(app, &piece.id);
+        for label in open_labels {
+            close(app, &label);
+        }
         return Ok(false);
     }
     user_hidden().lock().unwrap().remove(&key);
-    open(app, piece)?;
+    for (label, mon) in instances(piece, &crate::monitors::list(app)) {
+        open(app, piece, &label, &mon)?;
+    }
     crate::push::to_piece(app, &piece.id, "shown", &serde_json::Value::Null);
     Ok(true)
 }
 
 /// Release every AppBar reservation (on quit, and before a crash restart).
 pub fn release_all(app: &AppHandle) {
-    let ids: Vec<String> = states().lock().unwrap().keys().cloned().collect();
-    for id in ids {
-        if let Some(window) = app.get_webview_window(&label(&id)) {
+    let labels: Vec<String> = states().lock().unwrap().keys().cloned().collect();
+    for label in labels {
+        if let Some(window) = app.get_webview_window(&label) {
             #[cfg(windows)]
             appbar::remove(&window);
         }
@@ -492,13 +546,13 @@ pub fn release_all(app: &AppHandle) {
 /// The taskbar or another AppBar moved: re-place reserved docks.
 #[cfg(windows)]
 fn reposition_reserved(app: &AppHandle) {
-    let ids: Vec<String> = states().lock().unwrap().keys().cloned().collect();
-    for id in ids {
-        let Some(window) = app.get_webview_window(&label(&id)) else {
+    let labels: Vec<String> = states().lock().unwrap().keys().cloned().collect();
+    for label in labels {
+        let Some(window) = app.get_webview_window(&label) else {
             continue;
         };
         let mut map = states().lock().unwrap();
-        if let Some(st) = map.get_mut(&id) {
+        if let Some(st) = map.get_mut(&label) {
             if st.dock.mode == DockMode::Reserve {
                 place(&window, st);
             }
@@ -527,7 +581,7 @@ fn start_autohide_watcher(app: &AppHandle) {
         let Ok((cx, cy)) = crate::media::get_mouse_position() else {
             continue;
         };
-        let mut changes: Vec<(String, bool)> = Vec::new();
+        let mut changes: Vec<(String, String, bool)> = Vec::new();
         {
             let mut map = states().lock().unwrap();
             for st in map.values_mut().filter(|s| s.dock.mode == DockMode::AutoHide) {
@@ -547,26 +601,27 @@ fn start_autohide_watcher(app: &AppHandle) {
                 if want != st.expanded {
                     st.expanded = want;
                     st.left_at = None;
-                    changes.push((st.id.clone(), want));
+                    changes.push((st.label.clone(), st.id.clone(), want));
                 }
             }
         }
-        for (id, expanded) in changes {
+        for (label, id, expanded) in changes {
             let handle = app.clone();
+            // Each monitor's copy slides on its own: tell that window only.
             if !expanded {
-                crate::push::to_piece(&handle, &id, "hiding", &serde_json::Value::Null);
+                crate::push::to_window(&handle, &label, &id, "hiding", &serde_json::Value::Null);
             }
             let _ = app.run_on_main_thread(move || {
-                let Some(window) = handle.get_webview_window(&label(&id)) else {
+                let Some(window) = handle.get_webview_window(&label) else {
                     return;
                 };
                 let mut map = states().lock().unwrap();
-                if let Some(st) = map.get_mut(&id) {
+                if let Some(st) = map.get_mut(&label) {
                     place(&window, st);
                 }
                 drop(map);
                 let name = if expanded { "shown" } else { "hidden" };
-                crate::push::to_piece(&handle, &id, name, &serde_json::Value::Null);
+                crate::push::to_window(&handle, &label, &id, name, &serde_json::Value::Null);
             });
         }
     });
@@ -759,6 +814,60 @@ mod tests {
         assert_eq!(strip(Edge::Right, WORK, 60), Rect { x: 1860, y: 72, width: 60, height: 1128 });
         // Never deeper than the area.
         assert_eq!(strip(Edge::Top, WORK, 5000).height, 1128);
+    }
+
+    fn mon(number: u32, primary: bool, x: i32) -> MonitorInfo {
+        let rect = Rect { x, y: 0, width: 1920, height: 1080 };
+        MonitorInfo {
+            number,
+            primary,
+            name: format!(r"\\.\DISPLAY{number}"),
+            scale: 1.0,
+            rect,
+            work: rect,
+        }
+    }
+
+    fn piece(html: &str) -> PagePiece {
+        crate::page::parse_page(html).pieces.remove(0)
+    }
+
+    #[test]
+    fn one_window_per_monitor_for_all() {
+        let monitors = [mon(1, false, -1920), mon(2, true, 0), mon(3, false, 1920)];
+        let all = piece(r#"<template class="spawnable" data-id="taskbar" data-anchor="bottom" data-monitor="all"></template>"#);
+        assert!(on_every_monitor(&all));
+        let labels: Vec<(String, u32)> = instances(&all, &monitors).into_iter().map(|(l, m)| (l, m.number)).collect();
+        assert_eq!(
+            labels,
+            vec![
+                ("widget-taskbar:1".to_string(), 1),
+                ("widget-taskbar".to_string(), 2),
+                ("widget-taskbar:3".to_string(), 3),
+            ]
+        );
+        // A monitor going away drops its copy.
+        assert_eq!(instances(&all, &monitors[1..2]).len(), 1);
+    }
+
+    #[test]
+    fn single_monitor_bars_keep_one_window() {
+        let monitors = [mon(1, true, 0), mon(2, false, 1920)];
+        let on2 = piece(r#"<template class="spawnable" data-id="bar" data-anchor="top" data-monitor="2"></template>"#);
+        let plain = piece(r#"<template class="spawnable" data-id="bar" data-anchor="top"></template>"#);
+        let gone = piece(r#"<template class="spawnable" data-id="bar" data-anchor="top" data-monitor="7"></template>"#);
+        let cursor = piece(r#"<template class="spawnable" data-id="bar" data-anchor="top" data-monitor="cursor"></template>"#);
+        assert!(!on_every_monitor(&on2));
+        let one = |p: &PagePiece| -> Vec<(String, u32)> {
+            instances(p, &monitors).into_iter().map(|(l, m)| (l, m.number)).collect()
+        };
+        assert_eq!(one(&on2), vec![("widget-bar".to_string(), 2)]);
+        assert_eq!(one(&plain), vec![("widget-bar".to_string(), 1)]);
+        assert_eq!(one(&gone), vec![("widget-bar".to_string(), 1)]);
+        assert_eq!(one(&cursor), vec![("widget-bar".to_string(), 1)]);
+        // Not a dock: never "every monitor".
+        let overlay = piece(r#"<template class="spawnable" data-id="x" data-anchor="c" data-monitor="all"></template>"#);
+        assert!(!on_every_monitor(&overlay));
     }
 
     #[test]

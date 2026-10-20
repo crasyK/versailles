@@ -91,6 +91,23 @@ pub fn widget_label(id: &str) -> String {
     format!("widget-{id}")
 }
 
+/// Label of a `data-monitor="all"` bar's copy on display `n` (the copy on the
+/// primary keeps `widget-<id>`). `page::classify_invoker` maps it back to `<id>`.
+pub fn monitor_copy_label(id: &str, n: u32) -> String {
+    format!("widget-{id}:{n}")
+}
+
+/// Open windows of page piece `id`: `widget-<id>` and its monitor copies.
+pub fn piece_window_labels(app: &AppHandle, id: &str) -> Vec<String> {
+    let mut labels: Vec<String> = app
+        .webview_windows()
+        .into_keys()
+        .filter(|l| crate::page::label_piece_id(l).is_some_and(|p| p.eq_ignore_ascii_case(id)))
+        .collect();
+    labels.sort();
+    labels
+}
+
 fn prewarm_window_slot() -> &'static Mutex<Option<WebviewWindow>> {
     static SLOT: OnceLock<Mutex<Option<WebviewWindow>>> = OnceLock::new();
     SLOT.get_or_init(|| Mutex::new(None))
@@ -203,8 +220,8 @@ fn widget_menu_handler_labels() -> &'static Mutex<HashSet<String>> {
     SET.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
-fn ensure_widget_menu_handler(app: &AppHandle, window: &WebviewWindow, id: &str) {
-    let label = widget_label(id);
+fn ensure_widget_menu_handler(app: &AppHandle, window: &WebviewWindow) {
+    let label = window.label().to_string();
     {
         let mut registered = widget_menu_handler_labels().lock().unwrap();
         if !registered.insert(label) {
@@ -626,16 +643,101 @@ pub fn open_widget_window(
     position: Option<Position>,
     always_on_top: Option<bool>,
 ) -> AppResult<OpenWidgetState> {
+    open_widget_window_as(app, manager, id, position, always_on_top, None)
+}
+
+/// One window of a docked bar: its label (`widget-<id>`, or a monitor copy
+/// `widget-<id>:<n>`) and the monitor it sits on. The page URL gets
+/// `monitor=<n>&primary=0|1`, like a wallpaper's.
+pub struct DockInstance {
+    pub label: String,
+    pub monitor: u32,
+    pub primary: bool,
+}
+
+impl DockInstance {
+    fn is_copy(&self, id: &str) -> bool {
+        self.label != widget_label(id)
+    }
+}
+
+/// `monitor=<n>&primary=0|1` on `url`, replacing earlier values.
+pub fn with_monitor_params(url: &url::Url, monitor: u32, primary: bool) -> url::Url {
+    let mut next = url.clone();
+    let kept: Vec<(String, String)> = url
+        .query_pairs()
+        .filter(|(k, _)| k != "monitor" && k != "primary")
+        .map(|(k, v)| (k.into_owned(), v.into_owned()))
+        .collect();
+    next.query_pairs_mut()
+        .clear()
+        .extend_pairs(kept)
+        .append_pair("monitor", &monitor.to_string())
+        .append_pair("primary", if primary { "1" } else { "0" });
+    next
+}
+
+/// Open (or raise) one window of docked bar `id`. A monitor copy is not
+/// tracked by the window manager (no session, no snapping); it lives and dies
+/// with `docks`.
+pub fn open_dock_window(app: &AppHandle, id: &str, instance: DockInstance, position: Position) -> AppResult<()> {
+    let state = app.state::<AppState>();
+    open_widget_window_as(app, &state.window_manager, id, Some(position), Some(true), Some(instance)).map(|_| ())
+}
+
+/// A docked bar's window moved to another monitor (or the primary changed):
+/// reload its page with the new `monitor` / `primary` parameters.
+pub fn retarget_dock_window(window: &WebviewWindow, monitor: u32, primary: bool) {
+    if let Ok(url) = window.url() {
+        let next = with_monitor_params(&url, monitor, primary);
+        if next != url {
+            let _ = window.navigate(next);
+        }
+    }
+}
+
+fn open_widget_window_as(
+    app: &AppHandle,
+    manager: &Mutex<WindowManager>,
+    id: &str,
+    position: Option<Position>,
+    always_on_top: Option<bool>,
+    instance: Option<DockInstance>,
+) -> AppResult<OpenWidgetState> {
     static FIRST_OPEN_WIDGET_WINDOW: AtomicBool = AtomicBool::new(true);
     let is_first_open = FIRST_OPEN_WIDGET_WINDOW.swap(false, Ordering::Relaxed);
 
     // Cancel any pending deferred close for this id (close/reopen race).
     let _ = bump_close_generation(id);
 
-    let spec = resolve_open_spec(app, id, always_on_top)?;
+    let mut spec = resolve_open_spec(app, id, always_on_top)?;
+    if let Some(inst) = instance.as_ref() {
+        spec.url = with_monitor_params(&spec.url, inst.monitor, inst.primary);
+    }
     let id = spec.id.as_str();
+    // Monitor copies stay out of the window manager (session, snapping, menus).
+    let copy = instance.as_ref().is_some_and(|i| i.is_copy(id));
 
-    let label = widget_label(id);
+    let label = instance
+        .as_ref()
+        .map(|i| i.label.clone())
+        .unwrap_or_else(|| widget_label(id));
+    if copy {
+        if let Some(existing) = app.get_webview_window(&label) {
+            defer_raise_widget(existing.clone(), position.clone());
+            let (width, height) = physical_size(&existing, spec.width, spec.height);
+            let pos = position.unwrap_or(Position { x: 0, y: 0 });
+            return Ok(OpenWidgetState {
+                id: id.to_string(),
+                label,
+                x: pos.x,
+                y: pos.y,
+                width,
+                height,
+                always_on_top: true,
+            });
+        }
+    }
     if let Some(existing) = app.get_webview_window(&label) {
         let (width, height) = physical_size(&existing, spec.width, spec.height);
         // Prefer an explicit restore position over wherever the window currently sits.
@@ -762,11 +864,12 @@ pub fn open_widget_window(
     // Docked bars are placed by the host: never snap them after a move.
     let no_snap = overlay || crate::docks::is_dock(app, id);
     let sync_id = id.to_string();
+    let sync_label = label.clone();
     let sync_app = app.clone();
     window.on_window_event(move |event| {
         match event {
             tauri::WindowEvent::Moved(moved) => {
-                {
+                if !copy {
                     let state = sync_app.state::<AppState>();
                     let mut mgr = state.window_manager.lock().unwrap();
                     if let Some(entry) = mgr.open.get_mut(&sync_id) {
@@ -782,7 +885,7 @@ pub fn open_widget_window(
             }
             tauri::WindowEvent::Resized(_) => {
                 if overlay {
-                    if let Some(w) = sync_app.get_webview_window(&widget_label(&sync_id)) {
+                    if let Some(w) = sync_app.get_webview_window(&sync_label) {
                         clip_round_window(&w);
                     }
                 }
@@ -807,13 +910,13 @@ pub fn open_widget_window(
                 }
             }
             tauri::WindowEvent::Destroyed => {
-                hit_regions().lock().unwrap().remove(&widget_label(&sync_id));
+                hit_regions().lock().unwrap().remove(&sync_label);
+                widget_menu_handler_labels().lock().unwrap().remove(&sync_label);
+                if copy {
+                    return;
+                }
                 let state = sync_app.state::<AppState>();
                 let removed = state.window_manager.lock().unwrap().open.remove(&sync_id);
-                widget_menu_handler_labels()
-                    .lock()
-                    .unwrap()
-                    .remove(&widget_label(&sync_id));
                 if removed.is_some() {
                     let _ = sync_app.emit("widget://closed", &sync_id);
                     persist_session(&sync_app);
@@ -835,7 +938,7 @@ pub fn open_widget_window(
         });
     }
 
-    ensure_widget_menu_handler(app, &window, id);
+    ensure_widget_menu_handler(app, &window);
 
     defer_raise_widget(window.clone(), Some(pos.clone()));
     force_borderless(&window);
@@ -851,8 +954,10 @@ pub fn open_widget_window(
         always_on_top: on_top,
     };
 
-    manager.lock().unwrap().open.insert(id.to_string(), state.clone());
-    let _ = app.emit("widget://opened", &state);
+    if !copy {
+        manager.lock().unwrap().open.insert(id.to_string(), state.clone());
+        let _ = app.emit("widget://opened", &state);
+    }
     Ok(state)
 }
 
@@ -1457,9 +1562,9 @@ where
     Option::<T>::deserialize(de).map(Some)
 }
 
-/// Apply a `layout` hook patch to piece `id`'s own window.
-pub fn apply_layout_patch(app: &AppHandle, id: &str, patch: LayoutPatch) -> AppResult<()> {
-    let label = widget_label(id);
+/// Apply a `layout` hook patch to piece `id`'s own window `label`
+/// (`widget-<id>`, or the calling monitor copy of a bar).
+pub fn apply_layout_patch(app: &AppHandle, id: &str, label: &str, patch: LayoutPatch) -> AppResult<()> {
     let window = app
         .get_webview_window(&label)
         .ok_or_else(|| AppError::msg(format!("layout: '{id}' has no window of its own")))?;
@@ -2273,6 +2378,20 @@ pub fn set_guides_visible(app: &AppHandle, visible: bool, guides: &[SnapGuide]) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dock_windows_carry_their_monitor() {
+        let url = url::Url::parse("http://127.0.0.1:47831/files/desktop/index.html?m=spawn&id=taskbar").unwrap();
+        let on2 = with_monitor_params(&url, 2, false);
+        assert_eq!(on2.query(), Some("m=spawn&id=taskbar&monitor=2&primary=0"));
+        // Re-targeting replaces the old values instead of adding more.
+        let on1 = with_monitor_params(&on2, 1, true);
+        assert_eq!(on1.query(), Some("m=spawn&id=taskbar&monitor=1&primary=1"));
+        // Tauri labels allow `a-zA-Z-/:_` (no `@`), so copies use `:`.
+        let copy = monitor_copy_label("taskbar", 3);
+        assert_eq!(copy, "widget-taskbar:3");
+        assert!(copy.chars().all(|c| c.is_alphanumeric() || "-/:_".contains(c)));
+    }
 
     #[test]
     fn layout_patch_tells_null_from_absent() {

@@ -48,6 +48,7 @@ Identity comes from the **calling window**, never from an IPC argument:
 | Window | Acts as |
 | ------ | ------- |
 | Spawn window (`widget-<id>`, opened from a `template.spawnable`) | Its own piece `<id>`. `caller` is ignored, so `bar.js` may call `pty_open` / `cli_open` without one. |
+| Monitor copy of a bar (`widget-<id>:<n>`, from `data-monitor="all"` on a docked bar) | The same piece `<id>`, like `widget-<id>`. |
 | Desktop wallpaper (`desktop`, all `article.widget` pieces in one document) | The piece named by `caller` (`versailles.for(id)` sets it). A missing or unknown `caller` is rejected. |
 | Floating folder widget (`widget-<id>` from a `widget.json` folder) | Its `widget.json` `permissions`. |
 | Host windows (`launcher-dim`, `guides`) | Nothing — they never call hooks. |
@@ -58,7 +59,7 @@ That piece must list the hook in `data-hooks`. A piece that omitted `data-hooks=
 
 `cli_open` refuses network (UNC) paths and dangerous URL handlers (`ms-msdt:`, `search-ms:`, `search:`, `ms-officecmd:`, Office `ms-word:` / `ms-excel:` / … and their `ofe|u|` forms, `file://host/…`). `http(s)`, `ms-settings:`, `shell:`, local paths and installed app names keep working.
 
-`layout` only ever touches the piece's own window (a wallpaper widget has none, so it is refused).
+`layout` only ever touches the piece's own window (a wallpaper widget has none, so it is refused). From a bar's monitor copy it changes that copy's window.
 
 ## Layout
 

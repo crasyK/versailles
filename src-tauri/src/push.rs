@@ -50,12 +50,18 @@ pub fn to_piece(app: &AppHandle, id: &str, name: &str, data: &Value) {
     let Some(piece) = cat.get(id) else {
         return;
     };
-    // A wallpaper widget may be on several monitors' wallpapers.
+    // A wallpaper widget may be on several monitors' wallpapers, and a bar
+    // on every monitor has a window per monitor.
     let labels = match piece.kind {
-        PageKind::Spawnable => vec![crate::window_manager::widget_label(&piece.id)],
+        PageKind::Spawnable => crate::window_manager::piece_window_labels(app, &piece.id),
         PageKind::Widget => crate::window_manager::desktop_window_labels(app),
     };
     deliver(app, &labels, &Push { name, data, id: Some(&piece.id) });
+}
+
+/// An event for one window of piece `id` (e.g. one monitor copy of a bar).
+pub fn to_window(app: &AppHandle, label: &str, id: &str, name: &str, data: &Value) {
+    deliver(app, &[label.to_string()], &Push { name, data, id: Some(id) });
 }
 
 /// An event for every page window: the wallpaper and each open spawn window.
@@ -67,7 +73,7 @@ pub fn to_all(app: &AppHandle, name: &str, data: &Value) {
         cat.pieces
             .iter()
             .filter(|p| p.kind == PageKind::Spawnable)
-            .map(|p| crate::window_manager::widget_label(&p.id)),
+            .flat_map(|p| crate::window_manager::piece_window_labels(app, &p.id)),
     );
     deliver(app, &labels, &Push { name, data, id: None });
 }

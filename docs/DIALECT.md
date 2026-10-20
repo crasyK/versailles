@@ -24,14 +24,14 @@ The host is a small windowing + hooks layer. Pieces on the page are the product.
 | `data-anchor` | no | Placement. Overlays (cover apps): a point of the grid `tl tc · / ml c mr / bl bc br`, or `cursor`. `center` / `overlay` alias `c`. `tc` (action bar) rests 120 px (logical) from the top. `tr`, no anchor, or an unknown value = docked top-right slide-out. `top` / `bottom` / `left` / `right` = a docked bar (see [Docked bars](#docked-bars)). See [Overlay placement](#overlay-placement). |
 | `data-offset` | no | Overlays only. `x,y` in logical px from the anchor, inward: from the left/top edge for `l`/`t` anchors, from the right/bottom edge for `r`/`b` anchors, a plain right/down shift on a centre axis, added to the cursor for `cursor`. Default `0,0` (`tc`: `0,120`). |
 | `data-dim` | no | Overlays only. `host` (default) = the host's dim window behind the overlay. `page` = the overlay window covers the monitor and the page draws its own backdrop. `none` = no backdrop. Wins over `spawnables.<id>.overlay.dim`. |
-| `data-monitor` | no | Which monitor. Widgets: `primary` (default), a display number (`2`, as in Windows display settings) or `all`; each monitor named gets its own wallpaper. Spawnables: `primary` or a number pins where they open; default (or `cursor`) is the monitor under the mouse. See [Multiple monitors](#multiple-monitors). |
+| `data-monitor` | no | Which monitor. Widgets: `primary` (default), a display number (`2`, as in Windows display settings) or `all`; each monitor named gets its own wallpaper. Spawnables: `primary` or a number pins where they open; default (or `cursor`) is the monitor under the mouse. Docked bars also take `all`: one copy per monitor. See [Multiple monitors](#multiple-monitors). |
 | `data-dock` | no | Docked bars only. `reserve` (default): reserves its strip like the taskbar, so maximized apps stop at its edge. `float`: always on top, no space reserved. `auto-hide`: tucked at the edge, slides out when the mouse touches it. |
 | `data-peek` | no | `auto-hide` bars: logical px left showing while tucked away. Default 4. |
 | `data-hotkey` | no | Global accelerator for this spawnable when `data-hooks` includes `hotkey`. Format: Tauri accelerators (`Alt+Space`, `Ctrl+Shift+D`, `CommandOrControl+K`). Duplicate combos: first piece on the page wins. A hook piece with no `data-hotkey` uses `#versailles` `launcher.hotkey` (once). |
 | `data-hooks` | no | Comma-separated allowlist. See [`HOOKS.md`](HOOKS.md). |
 | `data-dismiss-on-blur` | no | Overlays only. `true` / `false`: hide the overlay when its window loses focus. Wins over `#versailles` `spawnables.<id>.overlay.dismissOnBlur`. Default `true`, except pieces with the `pty` hook default to `false` (a terminal survives focus flicker). |
 
-Duplicate `data-id` values are ignored after the first.
+Duplicate `data-id` values are ignored after the first. A piece inside an HTML comment (`<!-- … -->`) is not on the page.
 
 ## Overlay vs slide-out
 
@@ -152,6 +152,12 @@ A spawnable with `data-anchor="top"`, `"bottom"`, `"left"` or `"right"` is a doc
 
 A bar is on the primary monitor unless `data-monitor` names a display number; it does not follow the mouse. With `hotkey` in `data-hooks`, its `data-hotkey` hides and shows it (hiding gives reserved space back); `spawn(id)` does the same. Everything inside the bar is the page's own HTML and CSS.
 
+**On every monitor.** `data-monitor="all"` opens one window per monitor, each reserving, floating or auto-hiding on its own monitor's edge. Every copy is the same piece: same `data-hooks`, same storage, the same pushes and bus messages. Each loads with `monitor=<n>&primary=0|1` in its URL, so `versailles.monitor()` is its own monitor (a taskbar shows that monitor's windows). The copy on the primary monitor is the window `widget-<id>`; the others are `widget-<id>:<n>`. When a monitor is added or removed, its copy opens or closes; if the primary changes, the affected copies reload with their new `monitor`. The hotkey and `spawn(id)` hide and show all copies together; an auto-hide copy slides out on its own (only that window gets `shown` / `hiding` / `hidden`).
+
+```html
+<template class="spawnable" data-id="taskbar" data-anchor="bottom" data-h="44" data-monitor="all" data-hooks="windows,windows-control"></template>
+```
+
 ## Multiple monitors
 
 The wallpaper is one window per monitor that has something on it. The primary monitor always has one (`desktop`); another monitor gets one (`desktop-<n>`) only when a widget names it with `data-monitor`. A page without `data-monitor` looks exactly as on a single monitor, and the other screens keep the normal Windows wallpaper.
@@ -176,7 +182,7 @@ Page content that is not a widget (a notes layer, a HUD, a "new note" button) is
 html[data-monitor-primary="0"] #heat-scene { opacity: 0.6; } /* quieter background on side screens */
 ```
 
-A spawnable with `data-monitor="primary"` or a number opens on that monitor (anchor, dim and slide-out dock included); otherwise it opens on the monitor under the mouse. A display that is not connected falls back to the monitor under the mouse.
+A spawnable with `data-monitor="primary"` or a number opens on that monitor (anchor, dim and slide-out dock included); otherwise it opens on the monitor under the mouse. A display that is not connected falls back to the monitor under the mouse. Only docked bars take `all` (see [Docked bars](#docked-bars)); an overlay with `all` opens under the mouse.
 
 When monitors are added, removed, resized or rescaled, the host re-places the wallpapers (creating or closing them as needed), moves windows that ended up off-screen back on, and sends the `monitor-changed` piece event. `versailles.monitors()` lists every monitor and `versailles.monitor()` returns the one the page is on.
 

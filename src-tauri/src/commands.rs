@@ -398,8 +398,16 @@ pub async fn layout_update(
     caller: Option<String>,
 ) -> AppResult<()> {
     let acting = require_hook(&state, &webview, caller.as_deref(), "layout", HookClass::Plain)?;
+    // A bar's monitor copy changes its own window, not the primary one.
+    let own = crate::page::label_piece_id(webview.label())
+        .is_some_and(|p| crate::page::same_piece(&crate::desktop::page_catalog(&state), &acting, p));
+    let label = if own {
+        webview.label().to_string()
+    } else {
+        crate::window_manager::widget_label(&acting)
+    };
     on_main_thread(&app, move |app| {
-        crate::window_manager::apply_layout_patch(app, &acting, patch)
+        crate::window_manager::apply_layout_patch(app, &acting, &label, patch)
     })
     .await?
 }

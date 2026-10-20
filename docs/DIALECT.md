@@ -105,11 +105,11 @@ The widget/spawnable parser ignores this. The JSON must not contain the literal 
 }
 ```
 
-`overlay.*` is read by the host. `overlay.dim` takes `"host"` / `"page"` / `"none"` (or `true` = host, `false` = none). `opts` is handed to the piece's page JS (the example bar reads it via `get_spawnable_engine_context`); the host does not interpret it. Attributes on the tag (`data-dismiss-on-blur`, `data-dim`) beat `overlay.*`.
+`overlay.*` is read by the host. `overlay.dim` takes `"host"` / `"page"` / `"none"` (or `true` = host, `false` = none). `opts` is handed to the piece's page JS (the example bar reads it via `get_spawnable_engine_context`); the host interprets only `coverMonitor` (see [Overlay placement](#overlay-placement)). Attributes on the tag (`data-dismiss-on-blur`, `data-dim`) beat `overlay.*`.
 
 ## Overlay placement
 
-**First open.** The host opens an overlay on the monitor under the cursor at `data-w` × `data-h`, placed at its `data-anchor` with `data-offset` (both logical px). `tc` with no offset rests centered, 120 px from the top.
+**First open.** The host opens an overlay on the monitor under the cursor at `data-w` × `data-h`, placed at its `data-anchor` with `data-offset` (both logical px). `tc` with no offset rests centered, 120 px from the top. An overlay that covers its monitor (`data-dim="page"`, or the example bar's `coverMonitor`) is built hidden at the monitor's size and position instead, so its first frame is already full-size.
 
 **Later reveals.**
 
@@ -135,6 +135,8 @@ These are values only; the host adds no styles.
 ```
 
 **Example bar.** `"coverMonitor": true` in `spawnables.<id>.opts` (or `data-dim="page"`) makes the bar's window cover the monitor. It sets `html[data-stage]` and `--stage-x` / `--stage-y` / `--stage-w` / `--stage-h` (logical px) and pins its surface (`#cli-root`'s parent, marked `data-stage-box`) to that box: 120 px from the top for `tc` in action mode, centered otherwise. A press outside the surface dismisses, except on elements marked `data-stage-keep`. Without it, the bar sizes its window to its box and only knows `tc` and `c` placement.
+
+The host reads `coverMonitor` too (only on a `tc` piece): it builds the window monitor-sized and keeps it hidden on first open until the page sets `html[data-stage]`, at most 1.5 s, so the bar never shows stretched over the monitor before its chrome box is placed. Later reveals are not delayed.
 
 ## Docked bars
 

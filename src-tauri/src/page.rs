@@ -510,6 +510,23 @@ pub fn piece_dim(piece: &PagePiece, user: &UserConfig) -> DimMode {
     }
 }
 
+/// `spawnables.<id>.opts.coverMonitor` on a `tc` overlay: the page (the
+/// example bar) makes its window cover the monitor and lays its chrome out
+/// inside, marking `html[data-stage]` when it has.
+pub fn piece_cover_monitor(piece: &PagePiece, user: &UserConfig) -> bool {
+    piece_anchor(piece) == Some(Anchor::Grid(Align::Center, Align::Start))
+        && spawnable_config(user, &piece.id)
+            .and_then(|cfg| cfg.opts.as_ref())
+            .and_then(|opts| opts.cover_monitor)
+            .unwrap_or(false)
+}
+
+/// Whether an overlay's window covers its monitor: `page` dim, or
+/// [`piece_cover_monitor`].
+pub fn piece_covers_monitor(piece: &PagePiece, user: &UserConfig) -> bool {
+    piece_dim(piece, user) == DimMode::Page || piece_cover_monitor(piece, user)
+}
+
 /// Whether the spawn window background may start a native drag.
 pub fn piece_draggable(piece: &PagePiece, user: &UserConfig) -> bool {
     if let Some(cfg) = spawnable_config(user, &piece.id) {
@@ -689,6 +706,35 @@ mod tests {
         assert_eq!(piece_dim(cat.spawnable("c").unwrap(), &user), DimMode::Host);
         // Slide-outs never dim.
         assert_eq!(piece_dim(cat.spawnable("d").unwrap(), &user), DimMode::None);
+    }
+
+    #[test]
+    fn cover_monitor_is_a_tc_opt_or_page_dim() {
+        let html = r#"
+<template class="spawnable action-bar" data-id="action-bar" data-anchor="tc"></template>
+<template class="spawnable" data-id="draw" data-anchor="c"></template>
+<template class="spawnable" data-id="plain" data-anchor="tc"></template>
+<template class="spawnable" data-id="spot" data-anchor="c" data-dim="page"></template>
+"#;
+        let cat = parse_page(html);
+        let user: UserConfig = serde_json::from_str(
+            r#"{ "spawnables": {
+                "action-bar": { "opts": { "coverMonitor": true } },
+                "draw": { "opts": { "coverMonitor": true } },
+                "plain": { "opts": { "coverMonitor": false } }
+            } }"#,
+        )
+        .unwrap();
+        let piece = |id| cat.spawnable(id).unwrap();
+        assert!(piece_cover_monitor(piece("action-bar"), &user));
+        // The opt only means something on a `tc` piece.
+        assert!(!piece_cover_monitor(piece("draw"), &user));
+        assert!(!piece_cover_monitor(piece("plain"), &user));
+        assert!(!piece_cover_monitor(piece("spot"), &user));
+        assert!(piece_covers_monitor(piece("action-bar"), &user));
+        assert!(piece_covers_monitor(piece("spot"), &user));
+        assert!(!piece_covers_monitor(piece("draw"), &user));
+        assert!(!piece_covers_monitor(piece("action-bar"), &UserConfig::default()));
     }
 
     #[test]

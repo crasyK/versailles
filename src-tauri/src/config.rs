@@ -93,7 +93,9 @@ pub struct SpawnableEngineOpts {
     pub time_aware_defaults: Option<bool>,
     #[serde(default)]
     pub auto_dismiss_launch: Option<bool>,
-    /// `tc` pieces: the window covers the monitor and the page lays out the chrome.
+    /// `tc` pieces: the window covers the monitor and the page lays out the
+    /// chrome. The host builds such a window monitor-sized and keeps it hidden
+    /// on first open until the page marks `html[data-stage]`.
     #[serde(default)]
     pub cover_monitor: Option<bool>,
 }

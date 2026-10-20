@@ -11,8 +11,8 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tauri::{
     menu::{Menu, MenuItem},
-    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow,
-    WebviewWindowBuilder,
+    AppHandle, Emitter, Listener, Manager, PhysicalPosition, PhysicalSize, WebviewUrl,
+    WebviewWindow, WebviewWindowBuilder,
 };
 
 /// Position and size are both physical pixels (snap math runs against physical
@@ -639,6 +639,17 @@ fn page_surface_chrome_script(id: &str, opaque: bool, allow_drag: bool) -> Strin
     )
 }
 
+/// How a newly built window shows its first frame.
+#[derive(Debug, Clone, Copy, Default)]
+struct FirstFrame {
+    /// Physical rect (and its monitor's scale) to build the window at, before
+    /// it is ever shown. Otherwise the spec size at the open position.
+    rect: Option<(Rect, f64)>,
+    /// Stay hidden until the page marks `html[data-stage]`, at most
+    /// [`STAGE_WAIT_MS`].
+    wait_for_stage: bool,
+}
+
 pub fn open_widget_window(
     app: &AppHandle,
     manager: &Mutex<WindowManager>,
@@ -646,7 +657,7 @@ pub fn open_widget_window(
     position: Option<Position>,
     always_on_top: Option<bool>,
 ) -> AppResult<OpenWidgetState> {
-    open_widget_window_as(app, manager, id, position, always_on_top, None)
+    open_widget_window_as(app, manager, id, position, always_on_top, None, FirstFrame::default())
 }
 
 /// One window of a docked bar: its label (`widget-<id>`, or a monitor copy
@@ -685,7 +696,16 @@ pub fn with_monitor_params(url: &url::Url, monitor: u32, primary: bool) -> url::
 /// with `docks`.
 pub fn open_dock_window(app: &AppHandle, id: &str, instance: DockInstance, position: Position) -> AppResult<()> {
     let state = app.state::<AppState>();
-    open_widget_window_as(app, &state.window_manager, id, Some(position), Some(true), Some(instance)).map(|_| ())
+    open_widget_window_as(
+        app,
+        &state.window_manager,
+        id,
+        Some(position),
+        Some(true),
+        Some(instance),
+        FirstFrame::default(),
+    )
+    .map(|_| ())
 }
 
 /// A docked bar's window moved to another monitor (or the primary changed):
@@ -706,6 +726,7 @@ fn open_widget_window_as(
     position: Option<Position>,
     always_on_top: Option<bool>,
     instance: Option<DockInstance>,
+    first: FirstFrame,
 ) -> AppResult<OpenWidgetState> {
     static FIRST_OPEN_WIDGET_WINDOW: AtomicBool = AtomicBool::new(true);
     let is_first_open = FIRST_OPEN_WIDGET_WINDOW.swap(false, Ordering::Relaxed);
@@ -790,7 +811,18 @@ fn open_widget_window_as(
     let raw_pos = position
         .or(spec.default_position.clone())
         .unwrap_or(Position { x: 40, y: 40 });
-    let pos = clamp_position_to_monitors(app, raw_pos.x, raw_pos.y, spec.width, spec.height);
+    let pos = match first.rect {
+        Some((rect, _)) => Position { x: rect.x, y: rect.y },
+        None => clamp_position_to_monitors(app, raw_pos.x, raw_pos.y, spec.width, spec.height),
+    };
+    // Logical build size; a first-frame rect is applied in physical px below.
+    let (build_w, build_h) = match first.rect {
+        Some((rect, scale)) => {
+            let s = if scale > 0.0 { scale } else { 1.0 };
+            (rect.width as f64 / s, rect.height as f64 / s)
+        }
+        None => (spec.width as f64, spec.height as f64),
+    };
     let on_top = spec.always_on_top;
     let url = spec.url.clone();
     let opacity = spec.opacity.clamp(0.05, 1.0);
@@ -824,7 +856,7 @@ fn open_widget_window_as(
     // is logical — set physical after build so restore matches the saved layout.
     let window = match WebviewWindowBuilder::new(app, &label, WebviewUrl::External(url))
         .title("")
-        .inner_size(spec.width as f64, spec.height as f64)
+        .inner_size(build_w, build_h)
         .decorations(false)
         .transparent(spec.transparent)
         .always_on_top(on_top)
@@ -848,10 +880,16 @@ fn open_widget_window_as(
     }
 
     suppress_snap_for(id, 1200);
-    let _ = window.set_position(tauri::Position::Physical(PhysicalPosition {
-        x: pos.x,
-        y: pos.y,
-    }));
+    match first.rect {
+        // Exact physical rect while still hidden: the first frame is final.
+        Some((rect, _)) => apply_rect(&window, rect, true),
+        None => {
+            let _ = window.set_position(tauri::Position::Physical(PhysicalPosition {
+                x: pos.x,
+                y: pos.y,
+            }));
+        }
+    }
     let _ = window.set_decorations(false);
     let _ = window.set_shadow(false);
     let _ = window.set_skip_taskbar(true);
@@ -945,7 +983,11 @@ fn open_widget_window_as(
 
     ensure_widget_menu_handler(app, &window);
 
-    defer_raise_widget(window.clone(), Some(pos.clone()));
+    if first.wait_for_stage {
+        show_when_staged(window.clone(), id, pos.clone());
+    } else {
+        defer_raise_widget(window.clone(), Some(pos.clone()));
+    }
     force_borderless(&window);
 
     let (width, height) = physical_size(&window, spec.width, spec.height);
@@ -1227,16 +1269,18 @@ fn piece_anchor_rect(
 
 /// Where an overlay goes on `mon` (the cursor monitor). On first open, or for
 /// `c` / `center` / `overlay`, that is the piece's anchor at catalog size. A
-/// `page` dim covers the monitor. Every other anchor keeps the page's layout
-/// from the existing window (`cursor` keeps its size and follows the cursor).
+/// window that `covers` its monitor (`page` dim, `opts.coverMonitor`) is the
+/// monitor, from the first open on. Every other anchor keeps the page's
+/// layout from the existing window (`cursor` keeps its size and follows the
+/// cursor).
 fn overlay_rect(
     window: Option<&WebviewWindow>,
     piece: &crate::page::PagePiece,
-    dim: DimMode,
+    covers: bool,
     mon: Rect,
     scale: f64,
 ) -> Rect {
-    if dim == DimMode::Page {
+    if covers {
         return mon;
     }
     let current = window.and_then(|w| window_rect(w).map(|r| (w, r)));
@@ -1307,6 +1351,73 @@ fn stage_script(stage: Option<StageRect>) -> String {
 
 fn publish_stage(window: &WebviewWindow, stage: Option<StageRect>) {
     let _ = window.eval(&stage_script(stage));
+}
+
+/// Longest a cover-monitor overlay stays hidden on first open while its page
+/// lays out its chrome. Older pages that never mark `html[data-stage]` show
+/// after this.
+const STAGE_WAIT_MS: u64 = 1500;
+
+/// Emitted by [`stage_wait_script`] once the page marked `html[data-stage]`.
+const STAGED_EVENT: &str = "overlay://staged";
+
+/// Initialization script for a window held by [`show_when_staged`]: emits
+/// [`STAGED_EVENT`] with `{ id }` once `<html>` carries `data-stage` (the
+/// example bar sets it when its chrome box is in place). Adds no styles.
+fn stage_wait_script(id: &str) -> String {
+    let id_js = serde_json::to_string(id).unwrap_or_else(|_| "null".into());
+    format!(
+        r#"(function(id){{try{{if(window.__VERSAILLES_STAGE_WAIT__)return;window.__VERSAILLES_STAGE_WAIT__=true;function staged(){{var d=document.documentElement;if(!d||!d.hasAttribute('data-stage'))return false;var t=window.__TAURI_INTERNALS__;if(t&&typeof t.invoke==='function')Promise.resolve(t.invoke('plugin:event|emit',{{event:'{STAGED_EVENT}',payload:{{id:id}}}})).catch(function(){{}});return true;}}function watch(){{var d=document.documentElement;if(!d)return false;if(staged())return true;var mo=new MutationObserver(function(){{if(staged())mo.disconnect();}});mo.observe(d,{{attributes:true,attributeFilter:['data-stage']}});return true;}}if(!watch()){{var w=new MutationObserver(function(){{if(watch())w.disconnect();}});w.observe(document,{{childList:true}});}}}}catch(e){{}}}})({id_js});"#
+    )
+}
+
+/// Whether a [`STAGED_EVENT`] payload names piece `id`.
+fn staged_payload_is_for(payload: &str, id: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(payload)
+        .ok()
+        .and_then(|v| v.get("id").and_then(|s| s.as_str()).map(str::to_string))
+        .is_some_and(|got| got.eq_ignore_ascii_case(id))
+}
+
+/// Show a freshly built cover-monitor overlay once its page has laid out its
+/// chrome, or after [`STAGE_WAIT_MS`]. A reveal / conceal in between (a newer
+/// overlay generation) takes over, so a dismissed overlay does not pop up.
+fn show_when_staged(window: WebviewWindow, id: &str, pos: Position) {
+    use std::sync::Arc;
+    let app = window.app_handle().clone();
+    let gen = overlay_generation(id);
+    let done = Arc::new(AtomicBool::new(false));
+    let show = {
+        let id = id.to_string();
+        let done = done.clone();
+        Arc::new(move |window: WebviewWindow| {
+            if done.swap(true, Ordering::SeqCst) || overlay_generation(&id) != gen {
+                return;
+            }
+            defer_raise_widget(window, Some(pos.clone()));
+        })
+    };
+    let listener = {
+        let show = show.clone();
+        let window = window.clone();
+        let id = id.to_string();
+        app.listen_any(STAGED_EVENT, move |event| {
+            if staged_payload_is_for(event.payload(), &id) {
+                show(window.clone());
+            }
+        })
+    };
+    std::thread::spawn(move || {
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_millis(STAGE_WAIT_MS) {
+            if done.load(Ordering::SeqCst) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        show(window);
+        app.unlisten(listener);
+    });
 }
 
 /// Scripts for a window about to be created, added by `open_widget_window`
@@ -1458,13 +1569,14 @@ pub fn reveal_overlay(
         .load_user_config()
         .unwrap_or_default();
     let dim = crate::page::piece_dim(piece, &user);
+    let covers = crate::page::piece_covers_monitor(piece, &user);
     let Some((mon, scale)) = piece_monitor(app, piece) else {
         return Err(AppError::msg("no monitor to show the overlay on"));
     };
     let stage = (dim == DimMode::Page).then(|| piece_stage(piece, mon, scale));
 
     let existing = app.get_webview_window(&label);
-    let next = overlay_rect(existing.as_ref(), piece, dim, mon, scale);
+    let next = overlay_rect(existing.as_ref(), piece, covers, mon, scale);
     let pos = Position {
         x: next.x,
         y: next.y,
@@ -1473,8 +1585,8 @@ pub fn reveal_overlay(
     if let Some(window) = existing {
         suppress_snap_for(id, 1200);
         // Kept layouts keep their size (Windows rescales across DPI); a
-        // monitor-covering result, a page dim, or a centered overlay is sized.
-        let resize = dim == DimMode::Page
+        // monitor-covering result or a centered overlay is sized.
+        let resize = covers
             || !(crate::page::piece_keeps_layout(piece) || page_owns_layout(id))
             || next == mon;
         let resize = resize
@@ -1495,13 +1607,21 @@ pub fn reveal_overlay(
     if let Some(stage) = stage {
         queue_init_script(&piece.id, stage_script(Some(stage)));
     }
-    let opened = open_widget_window(app, manager, id, Some(pos), Some(true));
+    // First open: a monitor-covering window is built at the monitor's rect
+    // while hidden, so its first frame is already right. A `coverMonitor`
+    // page also lays out its chrome before the window shows.
+    let wait_for_stage = crate::page::piece_cover_monitor(piece, &user);
+    if wait_for_stage {
+        queue_init_script(&piece.id, stage_wait_script(&piece.id));
+    }
+    let first = FirstFrame {
+        rect: covers.then_some((next, scale)),
+        wait_for_stage,
+    };
+    let opened = open_widget_window_as(app, manager, id, Some(pos), Some(true), None, first);
     clear_init_scripts(&piece.id);
     opened?;
     if let Some(window) = app.get_webview_window(&label) {
-        if dim == DimMode::Page {
-            apply_rect(&window, next, true);
-        }
         sync_overlay_dim(app, mon, dim);
         clip_round_window(&window);
     }
@@ -2442,5 +2562,34 @@ mod tests {
         assert!(!cursor_hits(&regions, win, 2.0, 1019, 520));
         assert!(!cursor_hits(&regions, win, 2.0, 1220, 520));
         assert!(!cursor_hits(&[], win, 1.0, 1100, 550));
+    }
+
+    #[test]
+    fn staged_event_names_its_piece() {
+        assert!(staged_payload_is_for(r#"{"id":"action-bar"}"#, "action-bar"));
+        assert!(staged_payload_is_for(r#"{"id":"Action-Bar"}"#, "action-bar"));
+        assert!(!staged_payload_is_for(r#"{"id":"draw"}"#, "action-bar"));
+        assert!(!staged_payload_is_for(r#"{}"#, "action-bar"));
+        assert!(!staged_payload_is_for("null", "action-bar"));
+        assert!(!staged_payload_is_for("not json", "action-bar"));
+    }
+
+    #[test]
+    fn stage_wait_script_emits_the_staged_event_for_its_piece() {
+        let js = stage_wait_script("action-bar");
+        assert!(js.contains("'overlay://staged'"));
+        assert!(js.contains(r#"("action-bar")"#));
+        assert!(js.contains("data-stage"));
+        // Values only: the host adds no styles to the page.
+        assert!(!js.contains("style"));
+        // An id cannot break out of the string literal.
+        let js = stage_wait_script("x\");alert(1);//");
+        assert!(js.contains(r#"("x\");alert(1);//")"#));
+    }
+
+    #[test]
+    fn chrome_script_binds_once_across_the_re_eval() {
+        let js = page_surface_chrome_script("draw", false, true);
+        assert!(js.contains("__VERSAILLES_CHROME_BINDING__"));
     }
 }

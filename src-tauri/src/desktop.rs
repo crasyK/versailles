@@ -19,6 +19,11 @@ use tauri::{AppHandle, Emitter, Manager, State};
 #[serde(rename_all = "camelCase")]
 pub struct DesktopLayout {
     pub page_url: Option<String>,
+    /// Display number of the monitor this wallpaper is on (per-window reply only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub monitor: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub primary: Option<bool>,
 }
 
 pub fn page_path(state: &AppState) -> Option<std::path::PathBuf> {
@@ -137,6 +142,8 @@ fn close_page_embedded_windows(app: &AppHandle) {
 fn layout_from(state: &AppState) -> DesktopLayout {
     DesktopLayout {
         page_url: page_url(state),
+        monitor: None,
+        primary: None,
     }
 }
 
@@ -155,9 +162,36 @@ fn emit_layout(app: &AppHandle) {
     crate::boot::mark_layout_emitted();
 }
 
+/// The wallpaper shell's page URL. A wallpaper window (`desktop`,
+/// `desktop-<n>`) gets `monitor=<n>&primary=0|1` added, so the page knows
+/// which monitor it is on (the SDK applies `data-monitor` from it).
 #[tauri::command]
-pub fn get_desktop_layout(state: State<'_, AppState>) -> AppResult<DesktopLayout> {
-    Ok(layout_from(&state))
+pub fn get_desktop_layout(
+    app: AppHandle,
+    webview: tauri::Webview,
+    state: State<'_, AppState>,
+) -> AppResult<DesktopLayout> {
+    let mut layout = layout_from(&state);
+    let label = webview.label();
+    if !crate::page::is_desktop_label(label) {
+        return Ok(layout);
+    }
+    let monitors = crate::monitors::list(&app);
+    let monitor = match label.strip_prefix("desktop-") {
+        Some(n) => n.parse().ok().and_then(|n: u32| monitors.iter().find(|m| m.number == n)),
+        None => monitors.iter().find(|m| m.primary).or(monitors.first()),
+    };
+    if let (Some(m), Some(url)) = (monitor, layout.page_url.as_deref()) {
+        if let Ok(mut u) = url::Url::parse(url) {
+            u.query_pairs_mut()
+                .append_pair("monitor", &m.number.to_string())
+                .append_pair("primary", if m.primary { "1" } else { "0" });
+            layout.page_url = Some(u.to_string());
+            layout.monitor = Some(m.number);
+            layout.primary = Some(m.primary);
+        }
+    }
+    Ok(layout)
 }
 
 #[tauri::command]
@@ -167,7 +201,7 @@ pub fn get_desktop_html(state: State<'_, AppState>) -> AppResult<String> {
 
 #[tauri::command]
 pub fn toggle_desktop_surface(app: AppHandle, state: State<'_, AppState>) -> AppResult<bool> {
-    let enable = app.get_webview_window("desktop").is_none();
+    let enable = crate::window_manager::desktop_window_labels(&app).is_empty();
     persist_desktop_enabled(&state, enable)?;
     let app2 = app.clone();
     std::thread::spawn(move || {

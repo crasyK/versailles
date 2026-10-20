@@ -1204,14 +1204,27 @@ pub fn clear_init_scripts(id: &str) {
     pending_init_scripts().lock().unwrap().remove(&id.to_ascii_lowercase());
 }
 
-fn show_overlay_dim(app: &AppHandle, anchor: &WebviewWindow) {
-    let (left, top, width, height, _scale) = launcher_monitor_bounds(anchor);
+/// Dim the monitor `mon` (physical rect) behind an overlay.
+fn show_overlay_dim(app: &AppHandle, mon: Rect) {
     let _ = ensure_launcher_dim(app);
     if let Some(dim) = app.get_webview_window(LAUNCHER_DIM_LABEL) {
-        let _ = dim.set_position(tauri::Position::Physical(PhysicalPosition { x: left, y: top }));
-        let _ = dim.set_size(tauri::Size::Physical(PhysicalSize { width, height }));
+        let _ = dim.set_position(tauri::Position::Physical(PhysicalPosition { x: mon.x, y: mon.y }));
+        let _ = dim.set_size(tauri::Size::Physical(PhysicalSize {
+            width: mon.width.max(1) as u32,
+            height: mon.height.max(1) as u32,
+        }));
         let _ = dim.show();
     }
+}
+
+/// Monitor (physical rect + scale) a piece opens on: its `data-monitor`
+/// (`primary` or a display number) when connected, else the cursor's.
+fn piece_monitor(app: &AppHandle, piece: &crate::page::PagePiece) -> Option<(Rect, f64)> {
+    let pinned = crate::monitors::parse_sel(piece.monitor.as_deref()).and_then(|sel| {
+        let monitors = crate::monitors::list(app);
+        crate::monitors::select(&monitors, sel).map(|m| (m.rect, m.scale))
+    });
+    pinned.or_else(|| cursor_monitor(app))
 }
 
 fn hide_overlay_dim(app: &AppHandle) {
@@ -1287,7 +1300,7 @@ pub fn reveal_overlay(
 
     if !overlay {
         // Hotkey slide-out: plain docked open / raise.
-        let pos = dock_slideout_position(app, piece.width, piece.height);
+        let pos = dock_piece_slideout(app, piece);
         if let Some(window) = app.get_webview_window(&label) {
             suppress_snap_for(id, 1200);
             let _ = window.set_position(tauri::Position::Physical(PhysicalPosition {
@@ -1310,7 +1323,7 @@ pub fn reveal_overlay(
         .load_user_config()
         .unwrap_or_default();
     let dim = crate::page::piece_dim(piece, &user);
-    let Some((mon, scale)) = cursor_monitor(app) else {
+    let Some((mon, scale)) = piece_monitor(app, piece) else {
         return Err(AppError::msg("no monitor to show the overlay on"));
     };
     let stage = (dim == DimMode::Page).then(|| piece_stage(piece, mon, scale));
@@ -1333,7 +1346,7 @@ pub fn reveal_overlay(
             && window_rect(&window)
                 .map_or(true, |r| r.width != next.width || r.height != next.height);
         apply_rect(&window, next, resize);
-        sync_overlay_dim(app, &window, dim);
+        sync_overlay_dim(app, mon, dim);
         clip_round_window(&window);
         let _ = window.set_always_on_top(true);
         force_borderless(&window);
@@ -1354,7 +1367,7 @@ pub fn reveal_overlay(
         if dim == DimMode::Page {
             apply_rect(&window, next, true);
         }
-        sync_overlay_dim(app, &window, dim);
+        sync_overlay_dim(app, mon, dim);
         clip_round_window(&window);
     }
     emit_overlay_shown(app, id, stage);
@@ -1550,9 +1563,9 @@ fn set_hit_regions(window: &WebviewWindow, regions: Option<Vec<HitRect>>) {
 }
 
 /// Show the host dim only for `host` mode; `page` / `none` draw no backdrop.
-fn sync_overlay_dim(app: &AppHandle, window: &WebviewWindow, dim: DimMode) {
+fn sync_overlay_dim(app: &AppHandle, mon: Rect, dim: DimMode) {
     if dim == DimMode::Host {
-        show_overlay_dim(app, window);
+        show_overlay_dim(app, mon);
     } else {
         hide_overlay_dim(app);
     }
@@ -1846,6 +1859,25 @@ fn pin_desktop_above_shell(window: &WebviewWindow) {
 #[cfg(not(windows))]
 fn pin_desktop_above_shell(_window: &WebviewWindow) {}
 
+/// Labels of the wallpaper windows that exist (`desktop`, `desktop-<n>`).
+pub fn desktop_window_labels(app: &AppHandle) -> Vec<String> {
+    let mut labels: Vec<String> = app
+        .webview_windows()
+        .into_keys()
+        .filter(|l| crate::page::is_desktop_label(l))
+        .collect();
+    labels.sort();
+    labels
+}
+
+fn pin_all_desktops(app: &AppHandle) {
+    for label in desktop_window_labels(app) {
+        if let Some(window) = app.get_webview_window(&label) {
+            pin_desktop_above_shell(&window);
+        }
+    }
+}
+
 fn start_desktop_zorder_keeper(app: &AppHandle) {
     static RUNNING: AtomicBool = AtomicBool::new(false);
     if RUNNING
@@ -1856,55 +1888,46 @@ fn start_desktop_zorder_keeper(app: &AppHandle) {
     }
     let app = app.clone();
     std::thread::spawn(move || {
-        for delay_ms in [80u64, 250, 800, 2000, 5000] {
+        let delays = [80u64, 250, 800, 2000, 5000].into_iter().chain(std::iter::repeat(4000));
+        for delay_ms in delays {
             std::thread::sleep(Duration::from_millis(delay_ms));
-            if app.get_webview_window("desktop").is_none() {
+            if desktop_window_labels(&app).is_empty() {
                 RUNNING.store(false, Ordering::SeqCst);
                 return;
             }
             let handle = app.clone();
-            let _ = app.run_on_main_thread(move || {
-                if let Some(window) = handle.get_webview_window("desktop") {
-                    pin_desktop_above_shell(&window);
-                }
-            });
-        }
-        loop {
-            std::thread::sleep(Duration::from_secs(4));
-            if app.get_webview_window("desktop").is_none() {
-                RUNNING.store(false, Ordering::SeqCst);
-                return;
-            }
-            let handle = app.clone();
-            let _ = app.run_on_main_thread(move || {
-                if let Some(window) = handle.get_webview_window("desktop") {
-                    pin_desktop_above_shell(&window);
-                }
-            });
+            let _ = app.run_on_main_thread(move || pin_all_desktops(&handle));
         }
     });
 }
 
-fn place_desktop_window(window: &WebviewWindow) {
-    // Work area only — never cover the native taskbar. No exclusive fullscreen
-    // (hides the bar / can hang WebView2). No Tauri always_on_bottom (vanishes
-    // behind the wallpaper).
-    let (left, top, width, height) = desktop_work_area(window);
+/// Fill `work` (a monitor's work area, physical) — never cover the native
+/// taskbar. No exclusive fullscreen (hides the bar / can hang WebView2). No
+/// Tauri always_on_bottom (vanishes behind the wallpaper).
+fn place_desktop_window(window: &WebviewWindow, work: Rect) {
     let _ = window.set_always_on_bottom(false);
-    let _ = window.set_position(tauri::Position::Physical(PhysicalPosition { x: left, y: top }));
-    let _ = window.set_size(tauri::Size::Physical(PhysicalSize { width, height }));
+    let _ = window.set_position(tauri::Position::Physical(PhysicalPosition { x: work.x, y: work.y }));
+    let _ = window.set_size(tauri::Size::Physical(PhysicalSize {
+        width: work.width.max(1) as u32,
+        height: work.height.max(1) as u32,
+    }));
     pin_desktop_above_shell(window);
 }
 
-pub fn ensure_desktop_window(app: &AppHandle) -> AppResult<()> {
-    if let Some(window) = app.get_webview_window("desktop") {
-        place_desktop_window(&window);
+fn ensure_desktop_window_on(app: &AppHandle, label: &str, work: Option<Rect>) -> AppResult<()> {
+    if let Some(window) = app.get_webview_window(label) {
+        match work {
+            Some(work) => place_desktop_window(&window, work),
+            None => {
+                let (x, y, w, h) = desktop_work_area(&window);
+                place_desktop_window(&window, Rect { x, y, width: w as i32, height: h as i32 });
+            }
+        }
         let _ = window.show();
         pin_desktop_above_shell(&window);
-        start_desktop_zorder_keeper(app);
         return Ok(());
     }
-    let window = WebviewWindowBuilder::new(app, "desktop", WebviewUrl::App("desktop.html".into()))
+    let window = WebviewWindowBuilder::new(app, label, WebviewUrl::App("desktop.html".into()))
         .title("Versailles Desktop")
         .inner_size(1280.0, 720.0)
         .decorations(false)
@@ -1920,19 +1943,88 @@ pub fn ensure_desktop_window(app: &AppHandle) -> AppResult<()> {
             pin_desktop_above_shell(&pin_win);
         }
     });
-    place_desktop_window(&window);
+    match work {
+        Some(work) => place_desktop_window(&window, work),
+        None => {
+            let (x, y, w, h) = desktop_work_area(&window);
+            place_desktop_window(&window, Rect { x, y, width: w as i32, height: h as i32 });
+        }
+    }
     window.show()?;
     pin_desktop_above_shell(&window);
+    Ok(())
+}
+
+/// One wallpaper window per monitor that should have one: the primary
+/// (`desktop`) plus every monitor a widget selects with `data-monitor`
+/// (`desktop-<n>`). Windows for monitors no longer wanted are closed.
+pub fn ensure_desktop_window(app: &AppHandle) -> AppResult<()> {
+    let monitors = crate::monitors::list(app);
+    if monitors.is_empty() {
+        // Monitors unknown this early: the single wallpaper on its nearest monitor.
+        ensure_desktop_window_on(app, crate::page::DESKTOP_LABEL, None)?;
+    } else {
+        let cat = {
+            let state = app.state::<AppState>();
+            crate::desktop::page_catalog(&state)
+        };
+        let wanted = crate::monitors::wallpaper_numbers(
+            &monitors,
+            &crate::monitors::widget_selections(&cat),
+        );
+        let mut keep = Vec::new();
+        for m in monitors.iter().filter(|m| wanted.contains(&m.number)) {
+            let label = crate::monitors::wallpaper_label(m);
+            ensure_desktop_window_on(app, &label, Some(m.work))?;
+            keep.push(label);
+        }
+        for label in desktop_window_labels(app) {
+            if !keep.contains(&label) {
+                if let Some(window) = app.get_webview_window(&label) {
+                    let _ = window.close();
+                }
+            }
+        }
+    }
     start_desktop_zorder_keeper(app);
     crate::boot::mark_desktop_window();
     Ok(())
 }
 
 pub fn close_desktop_window(app: &AppHandle) -> AppResult<()> {
-    if let Some(window) = app.get_webview_window("desktop") {
-        window.close()?;
+    for label in desktop_window_labels(app) {
+        if let Some(window) = app.get_webview_window(&label) {
+            window.close()?;
+        }
     }
     Ok(())
+}
+
+/// Monitors were added, removed, resized or rescaled: re-place the
+/// wallpapers and bring any window that ended up off-screen back on.
+pub fn on_monitors_changed(app: &AppHandle) {
+    if !desktop_window_labels(app).is_empty() {
+        if let Err(err) = ensure_desktop_window(app) {
+            tracing::warn!("wallpapers not re-placed: {err}");
+        }
+    }
+    let monitors = collect_monitor_rects(app);
+    for (label, window) in app.webview_windows() {
+        if !label.starts_with("widget-") || !window.is_visible().unwrap_or(false) {
+            continue;
+        }
+        let Some(r) = window_rect(&window) else {
+            continue;
+        };
+        let on_screen = monitors.iter().any(|m| {
+            r.x + r.width > m.x && r.x < m.x + m.width && r.y + r.height > m.y && r.y < m.y + m.height
+        });
+        if !on_screen {
+            let next = clamp_position_to_monitors(app, r.x, r.y, r.width as u32, r.height as u32);
+            let _ = window.set_position(tauri::Position::Physical(PhysicalPosition { x: next.x, y: next.y }));
+        }
+    }
+    let _ = app.emit("desktop://layout", true);
 }
 
 fn launcher_seed_slot() -> &'static Mutex<Option<String>> {
@@ -1954,11 +2046,22 @@ fn take_launcher_seed() -> Option<String> {
 }
 
 pub fn dock_slideout_position(app: &AppHandle, width: u32, height: u32) -> Position {
-    let window = app.webview_windows().into_values().next();
-    let Some(window) = window else {
-        return Position { x: 40, y: 80 };
-    };
-    let (left, top, mon_w, mon_h, scale) = launcher_monitor_bounds(&window);
+    match cursor_monitor(app) {
+        Some((mon, scale)) => dock_slideout_on(mon, scale, width, height),
+        None => Position { x: 40, y: 80 },
+    }
+}
+
+/// Docked slide-out spot for a piece: on its `data-monitor`, else the cursor's.
+fn dock_piece_slideout(app: &AppHandle, piece: &crate::page::PagePiece) -> Position {
+    match piece_monitor(app, piece) {
+        Some((mon, scale)) => dock_slideout_on(mon, scale, piece.width, piece.height),
+        None => Position { x: 40, y: 80 },
+    }
+}
+
+fn dock_slideout_on(mon: Rect, scale: f64, width: u32, height: u32) -> Position {
+    let (left, top, mon_w, mon_h) = (mon.x, mon.y, mon.width as u32, mon.height as u32);
     // Monitor bounds are physical; piece width/height are logical (CSS px).
     let width = (width as f64 * scale).round() as i32;
     let height = (height as f64 * scale).round() as i32;
@@ -2008,17 +2111,16 @@ pub fn toggle_slideout_widget(
         close_widget_window(app, manager, &resolved)?;
         return Ok(false);
     }
-    let (width, height) = if let Some(piece) = cat.spawnable(&resolved) {
-        (piece.width, piece.height)
+    let pos = if let Some(piece) = cat.spawnable(&resolved) {
+        dock_piece_slideout(app, piece)
     } else {
         let state = app.state::<AppState>();
         let registry = state.registry.lock().unwrap();
         let widget = registry
             .get(&resolved)
             .ok_or_else(|| crate::page::unknown_spawn(&resolved))?;
-        (widget.manifest.width, widget.manifest.height)
+        dock_slideout_position(app, widget.manifest.width, widget.manifest.height)
     };
-    let pos = dock_slideout_position(app, width, height);
     open_widget_window(app, manager, &resolved, Some(pos), Some(true))?;
     Ok(true)
 }
@@ -2057,12 +2159,12 @@ pub fn collect_monitor_rects(app: &AppHandle) -> Vec<Rect> {
 }
 
 pub fn monitor_fingerprints(app: &AppHandle) -> Vec<MonitorFingerprint> {
-    collect_monitor_rects(app)
+    crate::monitors::list(app)
         .into_iter()
-        .map(|r| MonitorFingerprint {
-            width: r.width.max(0) as u32,
-            height: r.height.max(0) as u32,
-            scale_factor: 1.0,
+        .map(|m| MonitorFingerprint {
+            width: m.rect.width.max(0) as u32,
+            height: m.rect.height.max(0) as u32,
+            scale_factor: m.scale,
         })
         .collect()
 }

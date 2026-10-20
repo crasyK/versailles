@@ -17,6 +17,7 @@ mod push;
 mod hotkeys;
 mod layout;
 mod media;
+mod monitors;
 mod protocol;
 mod quote;
 mod sensors;
@@ -91,7 +92,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         .tooltip("Versailles")
         .on_menu_event(|app, event| match event.id.as_ref() {
             "desktop" => {
-                let enable = app.get_webview_window("desktop").is_none();
+                let enable = window_manager::desktop_window_labels(app).is_empty();
                 if enable {
                     if let Err(err) = desktop::reveal_desktop_window(app) {
                         tracing::error!("desktop page failed to open: {err}");
@@ -287,6 +288,7 @@ pub fn run() {
             crash::start_hang_watchdog(app.handle());
             clipboard::start_change_watcher(app.handle().clone());
             sensors::start_watcher(app.handle().clone());
+            monitors::start_watcher(app.handle().clone());
 
             // Session restore off the setup path; bounded to 2 concurrent WebView2
             // creations to avoid the documented deadlock risk. Desktop wallpaper
@@ -390,6 +392,7 @@ pub fn run() {
             commands::power_action,
             commands::bus_publish,
             commands::sense_now,
+            commands::monitor_info,
             commands::set_widget_always_on_top,
             commands::set_widget_opacity,
             commands::get_mouse_position_cmd,

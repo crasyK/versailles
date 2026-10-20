@@ -6,7 +6,7 @@
 //! folder widgets) that never declared `bus`.
 
 use crate::error::{AppError, AppResult};
-use crate::page::{PageCatalog, PageKind, DESKTOP_LABEL};
+use crate::page::{PageCatalog, PageKind};
 use serde::Serialize;
 use serde_json::Value;
 use tauri::{AppHandle, Manager};
@@ -34,8 +34,8 @@ pub fn hook_window_labels(app: &AppHandle, cat: &PageCatalog, hook: &str) -> Vec
             }
         }
     }
-    if desktop && app.get_webview_window(DESKTOP_LABEL).is_some() {
-        labels.push(DESKTOP_LABEL.to_string());
+    if desktop {
+        labels.extend(crate::window_manager::desktop_window_labels(app));
     }
     labels
 }

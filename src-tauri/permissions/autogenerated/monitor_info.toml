@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-monitor-info"
+description = "Enables the monitor_info command without any pre-configured scope."
+commands.allow = ["monitor_info"]
+
+[[permission]]
+identifier = "deny-monitor-info"
+description = "Denies the monitor_info command without any pre-configured scope."
+commands.deny = ["monitor_info"]

@@ -24,6 +24,7 @@ The host is a small windowing + hooks layer. Pieces on the page are the product.
 | `data-anchor` | no | Placement. Overlays (cover apps): a point of the grid `tl tc · / ml c mr / bl bc br`, or `cursor`. `center` / `overlay` alias `c`. `tc` (action bar) rests 120 px (logical) from the top. `tr`, no anchor, or an unknown value = docked top-right slide-out. See [Overlay placement](#overlay-placement). |
 | `data-offset` | no | Overlays only. `x,y` in logical px from the anchor, inward: from the left/top edge for `l`/`t` anchors, from the right/bottom edge for `r`/`b` anchors, a plain right/down shift on a centre axis, added to the cursor for `cursor`. Default `0,0` (`tc`: `0,120`). |
 | `data-dim` | no | Overlays only. `host` (default) = the host's dim window behind the overlay. `page` = the overlay window covers the monitor and the page draws its own backdrop. `none` = no backdrop. Wins over `spawnables.<id>.overlay.dim`. |
+| `data-monitor` | no | Which monitor. Widgets: `primary` (default), a display number (`2`, as in Windows display settings) or `all`; each monitor named gets its own wallpaper. Spawnables: `primary` or a number pins where they open; default (or `cursor`) is the monitor under the mouse. See [Multiple monitors](#multiple-monitors). |
 | `data-hotkey` | no | Global accelerator for this spawnable when `data-hooks` includes `hotkey`. Format: Tauri accelerators (`Alt+Space`, `Ctrl+Shift+D`, `CommandOrControl+K`). Duplicate combos: first piece on the page wins. A hook piece with no `data-hotkey` uses `#versailles` `launcher.hotkey` (once). |
 | `data-hooks` | no | Comma-separated allowlist. See [`HOOKS.md`](HOOKS.md). |
 | `data-dismiss-on-blur` | no | Overlays only. `true` / `false`: hide the overlay when its window loses focus. Wins over `#versailles` `spawnables.<id>.overlay.dismissOnBlur`. Default `true`, except pieces with the `pty` hook default to `false` (a terminal survives focus flicker). |
@@ -132,6 +133,28 @@ These are values only; the host adds no styles.
 ```
 
 **Example bar.** `"coverMonitor": true` in `spawnables.<id>.opts` (or `data-dim="page"`) makes the bar's window cover the monitor. It sets `html[data-stage]` and `--stage-x` / `--stage-y` / `--stage-w` / `--stage-h` (logical px) and pins its surface (`#cli-root`'s parent, marked `data-stage-box`) to that box: 120 px from the top for `tc` in action mode, centered otherwise. A press outside the surface dismisses, except on elements marked `data-stage-keep`. Without it, the bar sizes its window to its box and only knows `tc` and `c` placement.
+
+## Multiple monitors
+
+The wallpaper is one window per monitor that has something on it. The primary monitor always has one (`desktop`); another monitor gets one (`desktop-<n>`) only when a widget names it with `data-monitor`. A page without `data-monitor` looks exactly as on a single monitor, and the other screens keep the normal Windows wallpaper.
+
+Every wallpaper loads the same page with `monitor=<n>&primary=0|1` in the URL. The SDK hides each `.widget` that does not belong on that monitor:
+
+| `data-monitor` | Shown on |
+| -------------- | -------- |
+| (none), `primary` | the primary monitor |
+| `2` | display 2 (the number Windows shows in Settings → System → Display) |
+| `all` | every monitor |
+
+```html
+<article class="widget" data-id="clock" data-monitor="all">…</article>
+<article class="widget" data-id="stats" data-monitor="2">…</article>
+<template class="spawnable" data-id="notes" data-anchor="br" data-monitor="2"></template>
+```
+
+A spawnable with `data-monitor="primary"` or a number opens on that monitor (anchor, dim and slide-out dock included); otherwise it opens on the monitor under the mouse. A display that is not connected falls back to the monitor under the mouse.
+
+When monitors are added, removed, resized or rescaled, the host re-places the wallpapers (creating or closing them as needed), moves windows that ended up off-screen back on, and sends the `monitor-changed` piece event. `versailles.monitors()` lists every monitor and `versailles.monitor()` returns the one the page is on.
 
 ## Example command bar
 

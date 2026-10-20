@@ -360,6 +360,17 @@ pub async fn sense_now(
         .map_err(|e| crate::error::AppError::msg(e.to_string()))?
 }
 
+/// Every monitor (logical sizes, display numbers, primary flag) and the one
+/// the calling window is on. Read-only; no hook needed.
+#[tauri::command]
+pub fn monitor_info(app: AppHandle, webview: Webview) -> AppResult<crate::monitors::MonitorReport> {
+    let monitors = crate::monitors::list(&app);
+    Ok(crate::monitors::MonitorReport {
+        current: crate::monitors::of_window(&app, webview.label()),
+        monitors: monitors.iter().map(crate::monitors::page_json).collect(),
+    })
+}
+
 /// `bus` hook: relay a message to every open piece that declared `bus`.
 /// Returns how many windows it reached.
 #[tauri::command]

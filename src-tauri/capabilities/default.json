@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Default capabilities for Versailles widgets, launcher, desktop, and guides",
-  "windows": ["launcher-dim", "desktop", "guides", "widget-*"],
+  "windows": ["launcher-dim", "desktop", "desktop-*", "guides", "widget-*"],
   "remote": {
     "urls": [
       "http://127.0.0.1:47831/*",
@@ -80,6 +80,7 @@
     "allow-power-action",
     "allow-bus-publish",
     "allow-sense-now",
+    "allow-monitor-info",
     "allow-set-widget-always-on-top",
     "allow-set-widget-opacity",
     "allow-get-mouse-position-cmd",

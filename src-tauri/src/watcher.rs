@@ -157,7 +157,10 @@ fn handle_changes(app: &AppHandle, root: &Path, changed: &[String]) {
         });
     }
 
-    if let Some(window) = app.get_webview_window("desktop") {
+    for window in crate::window_manager::desktop_window_labels(app)
+        .iter()
+        .filter_map(|l| app.get_webview_window(l))
+    {
         // Cross-origin iframe (Vite shell vs :47831 page) — set src, do not touch contentWindow.
         let _ = window.eval(
             r#"var p=document.getElementById("page"); if(p&&p.src){var u=new URL(p.src); u.searchParams.set("_v", String(Date.now())); p.src=u.toString();}"#,

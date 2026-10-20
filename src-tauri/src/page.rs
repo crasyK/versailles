@@ -37,6 +37,9 @@ pub struct PagePiece {
     /// `data-dim="host|page|none"` — overlay backdrop.
     #[serde(default)]
     pub dim: Option<String>,
+    /// `data-monitor="primary|all|cursor|<n>"` — which monitor(s) the piece is on.
+    #[serde(default)]
+    pub monitor: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -222,6 +225,7 @@ pub fn parse_page(html: &str) -> PageCatalog {
         let anchor = attr(tag, "data-anchor");
         let offset = placement::parse_offset(attr(tag, "data-offset").as_deref());
         let dim = attr(tag, "data-dim").filter(|s| !s.trim().is_empty());
+        let monitor = attr(tag, "data-monitor").filter(|s| !s.trim().is_empty());
         let hotkey = attr(tag, "data-hotkey").filter(|s| !s.trim().is_empty());
         let dismiss_on_blur = attr(tag, "data-dismiss-on-blur").and_then(|v| match v.trim().to_ascii_lowercase().as_str() {
             "true" | "1" | "yes" => Some(true),
@@ -239,13 +243,23 @@ pub fn parse_page(html: &str) -> PageCatalog {
             dismiss_on_blur,
             offset,
             dim,
+            monitor,
         });
     }
     PageCatalog { pieces }
 }
 
-/// Label of the wallpaper window (one document hosting every piece on the page).
+/// Label of the primary monitor's wallpaper window (one document hosting every
+/// piece on the page). Other monitors' wallpapers are `desktop-<n>`.
 pub const DESKTOP_LABEL: &str = "desktop";
+
+/// Whether `label` is a wallpaper window (`desktop` or `desktop-<n>`).
+pub fn is_desktop_label(label: &str) -> bool {
+    label == DESKTOP_LABEL
+        || label
+            .strip_prefix("desktop-")
+            .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+}
 
 /// Who invoked a command, derived from the calling webview's label — never
 /// from a self-declared IPC argument.
@@ -277,7 +291,7 @@ pub fn classify_invoker(
     cat: &PageCatalog,
     folder_hooks: impl FnOnce(&str) -> Option<Vec<String>>,
 ) -> Invoker {
-    if label == DESKTOP_LABEL {
+    if is_desktop_label(label) {
         return Invoker::Desktop;
     }
     let Some(id) = label.strip_prefix("widget-").filter(|s| !s.is_empty()) else {
@@ -753,6 +767,8 @@ mod tests {
     fn classifies_windows_by_label() {
         let cat = live_like_page();
         assert_eq!(classify_invoker("desktop", &cat, folder_none), Invoker::Desktop);
+        assert_eq!(classify_invoker("desktop-2", &cat, folder_none), Invoker::Desktop);
+        assert_eq!(classify_invoker("desktop-x", &cat, folder_none), Invoker::Host);
         assert_eq!(classify_invoker("launcher-dim", &cat, folder_none), Invoker::Host);
         assert_eq!(classify_invoker("guides", &cat, folder_none), Invoker::Host);
         assert_eq!(classify_invoker("prewarm", &cat, folder_none), Invoker::Host);

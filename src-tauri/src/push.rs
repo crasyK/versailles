@@ -3,7 +3,7 @@
 //! the receiving windows only, so a piece never sees data for a hook it did
 //! not declare. The SDK dispatches `window.__VERSAILLES_PUSH__(push)`.
 
-use crate::page::{PageKind, DESKTOP_LABEL};
+use crate::page::PageKind;
 use crate::state::AppState;
 use serde::Serialize;
 use serde_json::Value;
@@ -50,18 +50,19 @@ pub fn to_piece(app: &AppHandle, id: &str, name: &str, data: &Value) {
     let Some(piece) = cat.get(id) else {
         return;
     };
-    let label = match piece.kind {
-        PageKind::Spawnable => crate::window_manager::widget_label(&piece.id),
-        PageKind::Widget => DESKTOP_LABEL.to_string(),
+    // A wallpaper widget may be on several monitors' wallpapers.
+    let labels = match piece.kind {
+        PageKind::Spawnable => vec![crate::window_manager::widget_label(&piece.id)],
+        PageKind::Widget => crate::window_manager::desktop_window_labels(app),
     };
-    deliver(app, &[label], &Push { name, data, id: Some(&piece.id) });
+    deliver(app, &labels, &Push { name, data, id: Some(&piece.id) });
 }
 
 /// An event for every page window: the wallpaper and each open spawn window.
 pub fn to_all(app: &AppHandle, name: &str, data: &Value) {
     let state = app.state::<AppState>();
     let cat = crate::desktop::page_catalog(&state);
-    let mut labels = vec![DESKTOP_LABEL.to_string()];
+    let mut labels = crate::window_manager::desktop_window_labels(app);
     labels.extend(
         cat.pieces
             .iter()

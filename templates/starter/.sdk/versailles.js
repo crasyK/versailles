@@ -518,7 +518,49 @@
     });
   }
   /** Piece events: for every piece, no hook needed. */
-  const PIECE_EVENTS = new Set(["shown", "hiding", "hidden", "idle", "active", "theme-changed"]);
+  const PIECE_EVENTS = new Set(["shown", "hiding", "hidden", "idle", "active", "theme-changed", "monitor-changed"]);
+
+  // Wallpaper: each monitor's wallpaper loads this page with `monitor=<n>`
+  // and `primary=0|1`. Show each `.widget` only where its `data-monitor`
+  // says: `all`, `primary` (default when absent) or a display number.
+  (function applyMonitorFilter() {
+    const doc = global.document;
+    if (!doc || !global.location) return;
+    const query = new URLSearchParams(global.location.search);
+    const here = query.get("monitor");
+    if (query.get("m") !== "desktop" || !here) return;
+    const onPrimary = query.get("primary") === "1";
+    function shownHere(raw) {
+      const sel = String(raw || "").trim().toLowerCase();
+      if (!sel || sel === "primary" || sel === "main" || sel === "cursor") return onPrimary;
+      if (sel === "all") return true;
+      return sel === here;
+    }
+    function apply() {
+      doc.querySelectorAll(".widget").forEach((el) => {
+        if (!shownHere(el.getAttribute("data-monitor"))) el.style.setProperty("display", "none", "important");
+      });
+    }
+    if (doc.readyState === "loading") doc.addEventListener("DOMContentLoaded", apply, { once: true });
+    else apply();
+  })();
+
+  /** Every monitor: `{ number, primary, name, scale, bounds, work }` (logical sizes). */
+  async function monitors() {
+    if (!tauri()?.core?.invoke) return [];
+    const report = await invoke("monitor_info");
+    return (report && report.monitors) || [];
+  }
+
+  /** The monitor this window is on (`null` outside the host). */
+  async function monitor() {
+    if (!tauri()?.core?.invoke) return null;
+    const report = await invoke("monitor_info");
+    const list = (report && report.monitors) || [];
+    const fromUrl = Number(new URLSearchParams(global.location ? global.location.search : "").get("monitor"));
+    const number = fromUrl || (report && report.current);
+    return list.find((m) => m.number === number) || null;
+  }
 
   const scoped = makeApi(null);
   const versailles = {
@@ -548,6 +590,8 @@
     focus: scoped.focus,
     audio: scoped.audio,
     /** Data the last `spawn(id, data)` handed this spawnable (or undefined). */
+    monitors,
+    monitor,
     spawnData() {
       return global.__VERSAILLES_SPAWN_DATA__;
     },

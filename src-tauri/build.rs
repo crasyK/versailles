@@ -15,6 +15,7 @@ fn main() {
                 "power_action",
                 "bus_publish",
                 "sense_now",
+                "monitor_info",
                 "set_widget_always_on_top",
                 "set_widget_opacity",
                 "get_mouse_position_cmd",

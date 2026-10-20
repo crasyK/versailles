@@ -154,9 +154,13 @@ void (async () => {
       .catch(() => {});
   }, 700);
 
-  await listen<DesktopLayout>("desktop://layout", (ev) =>
-    applyPage(ev.payload.pageUrl),
-  );
+  // The broadcast carries no monitor: ask for this window's own URL (it adds
+  // `monitor` / `primary` for this wallpaper), e.g. after monitors changed.
+  await listen("desktop://layout", () => {
+    void invoke<DesktopLayout>("get_desktop_layout")
+      .then((layout) => applyPage(layout.pageUrl))
+      .catch(() => {});
+  });
   await listen("desktop://reload", () => reloadPage());
   await listen("registry://changed", () => reloadPage());
 })();

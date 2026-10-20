@@ -178,6 +178,7 @@ No hook needed; every piece can listen.
 | `idle` | No keyboard / mouse input for 60 s | `{ idleMs }` |
 | `active` | Input again after `idle` | `null` |
 | `theme-changed` | Windows apps switched light / dark | `{ dark }` |
+| `monitor-changed` | A monitor was added, removed, resized or rescaled | `{ monitors }` (same shape as `versailles.monitors()`) |
 
 ```js
 const me = versailles.for("clock");
@@ -185,7 +186,12 @@ me.on("idle", () => document.body.classList.add("dim"));
 me.on("active", () => document.body.classList.remove("dim"));
 ```
 
-`shown` / `hiding` / `hidden` go to that piece only; `idle`, `active` and `theme-changed` go to every page window. The first `shown` of a newly created window can arrive before its page has loaded; the page is visible when its scripts run anyway.
+`shown` / `hiding` / `hidden` go to that piece only; `idle`, `active`, `theme-changed` and `monitor-changed` go to every page window.
+
+```js
+const list = await versailles.monitors(); // [{ number, primary, name, scale, bounds, work }] (logical sizes)
+const here = await versailles.monitor();  // the monitor this page / window is on
+``` The first `shown` of a newly created window can arrive before its page has loaded; the page is visible when its scripts run anyway.
 
 **Animating in.** Windows shows a hidden window's last frame again the moment it is shown, before the page draws anything new. A piece that animates in should paint its animation's start pose on `hiding` (the host waits about 60 ms before hiding), so that stale frame is the start of the animation rather than the piece at rest.
 

@@ -281,13 +281,13 @@ fn open(app: &AppHandle, piece: &PagePiece) -> AppResult<()> {
     if let Some(window) = app.get_webview_window(&win_label) {
         #[cfg(windows)]
         appbar::watch(&window);
+        // Placed while still hidden; the deferred raise shows it in place
+        // (it does not move quiet windows), so it never appears elsewhere.
         place(&window, &mut st);
         let _ = window.set_always_on_top(true);
-        let _ = window.show();
     }
     states().lock().unwrap().insert(piece.id.clone(), st);
-    // A newly opened window is moved back to its open position by the
-    // deferred raise (~20 ms later): place it again after that.
+    // Safety net: place once more after the window is up.
     let app2 = app.clone();
     let id = piece.id.clone();
     std::thread::spawn(move || {

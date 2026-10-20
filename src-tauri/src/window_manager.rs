@@ -376,13 +376,14 @@ fn force_borderless(_window: &WebviewWindow) {}
 
 /// Raise a widget off the calling thread. Sync show/focus on the UI/IPC thread
 /// can re-enter WebView2 and freeze the whole desktop.
-/// Windows shown without taking focus (docked bars).
+/// Windows the host places itself (docked bars): the deferred raise shows
+/// them without moving or focusing them.
 fn quiet_labels() -> &'static Mutex<HashSet<String>> {
     static SET: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
     SET.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
-/// Show `label` without focusing it when it is raised.
+/// Raise `label` without moving or focusing it.
 pub fn mark_quiet(label: &str) {
     quiet_labels().lock().unwrap().insert(label.to_string());
 }
@@ -392,7 +393,8 @@ fn defer_raise_widget(window: WebviewWindow, position: Option<Position>) {
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(20));
         let _ = app.run_on_main_thread(move || {
-            if let Some(pos) = position {
+            let quiet = quiet_labels().lock().unwrap().contains(window.label());
+            if let Some(pos) = position.filter(|_| !quiet) {
                 let _ = window.set_position(tauri::Position::Physical(PhysicalPosition {
                     x: pos.x,
                     y: pos.y,
@@ -400,7 +402,7 @@ fn defer_raise_widget(window: WebviewWindow, position: Option<Position>) {
             }
             let _ = window.unminimize();
             let _ = window.show();
-            if !quiet_labels().lock().unwrap().contains(window.label()) {
+            if !quiet {
                 let _ = window.set_focus();
             }
         });

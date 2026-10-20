@@ -82,12 +82,14 @@ panic = "abort"
 codegen-units = 1
 lto = true
 
-# Test installers (`npm run build:test`): thin LTO and parallel codegen build
-# and link much faster, with less memory, at a small runtime cost. Releases
-# keep [profile.release].
+# Test installers (`npm run build:test`): no LTO, parallel codegen and
+# incremental builds. A rebuild after a code change takes ~40 s and peaks at
+# ~1.4 GB (thin LTO took 9-17 min and peaked above 5 GB); the first build
+# after a clean checkout ~12 min. Slightly larger and slower binary; never
+# ship it. Releases keep [profile.release].
 [profile.release-test]
 inherits = "release"
-lto = "thin"
+lto = false
 codegen-units = 16
 incremental = true
 

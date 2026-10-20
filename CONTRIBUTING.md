@@ -17,7 +17,7 @@ npm install
 npm run tauri:dev
 ```
 
-`npm run build:test` builds a test installer with the `release-test` profile (thin LTO, faster to build; never ship it). `npm run e2e` runs the end-to-end self-test against that build (or the release build): it starts the app isolated (`VERSAILLES_BENCH=1`, a temporary `VERSAILLES_ROOT`, a port in 47832–47841, the range page IPC is allowed on), checks wallpaper, sensors, bus, overlays, a docked bar, a page edit and a restart, and cleans up. It never touches your desktop folder or your running Versailles. `-- --keep` leaves the app up when a check fails.
+`npm run build:test` builds a test installer with the `release-test` profile (no LTO, incremental: ~40 s after a code change instead of 20+ min, ~1.4 GB peak; never ship it). `npm run e2e` runs the end-to-end self-test against that build (or the release build): it starts the app isolated (`VERSAILLES_BENCH=1`, a temporary `VERSAILLES_ROOT`, a port in 47832–47841, the range page IPC is allowed on), checks wallpaper, sensors, bus, overlays, a docked bar, a page edit and a restart, and cleans up. It never touches your desktop folder or your running Versailles. `-- --keep` leaves the app up when a check fails.
 
 ## PR
 

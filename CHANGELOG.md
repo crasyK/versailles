@@ -2,6 +2,13 @@
 
 What changed in each release of Versailles, newest first. Full notes and installers: [GitHub releases](https://github.com/crasyK/versailles/releases). Each release commit updates this file.
 
+## 0.8.0 — 2026-10-20
+
+- **The host uses 31 MB instead of 388 MB.** The page IPC capability listed 22 URLs, and Tauri compiled a URL matcher per URL for every command; now it is one pattern for the same origins. A wallpaper-only desktop drops from ~610 MB to ~255 MB in total. `npm run measure:memory` prints the split. (#27)
+- **End-to-end self-test:** `npm run e2e` starts the app isolated and checks the wallpaper, sensors, bus, overlays, a docked bar, a page edit and a restart. (#26)
+- **Faster test builds:** `npm run build:test` (no LTO, incremental), ~40 s rebuilds at ~1.4 GB instead of 20+ min. (#28)
+- **Docs:** this changelog, release steps in CONTRIBUTING, and DIALECT.md / HOOKS.md grouped with contents lists. (#29)
+
 ## 0.7.0 — 2026-10-20
 
 - **`notify` hook:** read Windows notifications (`notify.now()`, `onToast(fn)`), read-only, without packaging. (#5)

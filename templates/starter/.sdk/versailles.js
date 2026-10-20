@@ -521,8 +521,10 @@
   const PIECE_EVENTS = new Set(["shown", "hiding", "hidden", "idle", "active", "theme-changed", "monitor-changed"]);
 
   // Wallpaper: each monitor's wallpaper loads this page with `monitor=<n>`
-  // and `primary=0|1`. Show each `.widget` only where its `data-monitor`
-  // says: `all`, `primary` (default when absent) or a display number.
+  // and `primary=0|1`. Mark <html> with them (`data-monitor`,
+  // `data-monitor-primary`) for page CSS, and show each `.widget` or other
+  // `[data-monitor]` element only where its `data-monitor` says: `all`,
+  // `primary` (the default for a widget without one) or a display number.
   (function applyMonitorFilter() {
     const doc = global.document;
     if (!doc || !global.location) return;
@@ -530,6 +532,8 @@
     const here = query.get("monitor");
     if (query.get("m") !== "desktop" || !here) return;
     const onPrimary = query.get("primary") === "1";
+    doc.documentElement.setAttribute("data-monitor", here);
+    doc.documentElement.setAttribute("data-monitor-primary", onPrimary ? "1" : "0");
     function shownHere(raw) {
       const sel = String(raw || "").trim().toLowerCase();
       if (!sel || sel === "primary" || sel === "main" || sel === "cursor") return onPrimary;
@@ -537,7 +541,7 @@
       return sel === here;
     }
     function apply() {
-      doc.querySelectorAll(".widget").forEach((el) => {
+      doc.querySelectorAll(".widget, body [data-monitor]").forEach((el) => {
         if (!shownHere(el.getAttribute("data-monitor"))) el.style.setProperty("display", "none", "important");
       });
     }

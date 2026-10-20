@@ -138,7 +138,7 @@ These are values only; the host adds no styles.
 
 The wallpaper is one window per monitor that has something on it. The primary monitor always has one (`desktop`); another monitor gets one (`desktop-<n>`) only when a widget names it with `data-monitor`. A page without `data-monitor` looks exactly as on a single monitor, and the other screens keep the normal Windows wallpaper.
 
-Every wallpaper loads the same page with `monitor=<n>&primary=0|1` in the URL. The SDK hides each `.widget` that does not belong on that monitor:
+Every wallpaper loads the same page with `monitor=<n>&primary=0|1` in the URL. The SDK hides each `.widget`, and any other element with a `data-monitor` attribute, that does not belong on that monitor:
 
 | `data-monitor` | Shown on |
 | -------------- | -------- |
@@ -150,6 +150,12 @@ Every wallpaper loads the same page with `monitor=<n>&primary=0|1` in the URL. T
 <article class="widget" data-id="clock" data-monitor="all">…</article>
 <article class="widget" data-id="stats" data-monitor="2">…</article>
 <template class="spawnable" data-id="notes" data-anchor="br" data-monitor="2"></template>
+```
+
+Page content that is not a widget (a notes layer, a HUD, a "new note" button) is on every wallpaper unless it carries `data-monitor` too, so mark it: `<div class="notes-layer" data-monitor="primary">`. Every wallpaper shares the page's `localStorage`, so state kept there should live on one monitor. For per-monitor styling the SDK also sets `<html data-monitor="2" data-monitor-primary="0">`:
+
+```css
+html[data-monitor-primary="0"] #heat-scene { opacity: 0.6; } /* quieter background on side screens */
 ```
 
 A spawnable with `data-monitor="primary"` or a number opens on that monitor (anchor, dim and slide-out dock included); otherwise it opens on the monitor under the mouse. A display that is not connected falls back to the monitor under the mouse.

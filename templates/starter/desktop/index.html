@@ -1205,17 +1205,6 @@
         const desktop = document.getElementById('desktop');
         const preview = document.getElementById('preview-root');
 
-        function runScripts(root) {
-          root.querySelectorAll('script').forEach(function (old) {
-            const s = document.createElement('script');
-            Array.prototype.slice.call(old.attributes || []).forEach(function (a) {
-              s.setAttribute(a.name, a.value);
-            });
-            s.textContent = old.textContent;
-            old.replaceWith(s);
-          });
-        }
-
         function materialize(tpl, solo) {
           const wrap = document.createElement('section');
           wrap.className = 'spawn-surface' + (solo ? ' solo' : '');
@@ -1226,10 +1215,12 @@
           return wrap;
         }
 
+        // Scripts cloned out of a <template> run on their own when the clone
+        // enters the document, once each. Do not re-create them afterwards:
+        // that runs every template script a second time.
         function mountSpawn(tpl, solo, parent) {
           const wrap = materialize(tpl, solo);
           parent.appendChild(wrap);
-          runScripts(wrap);
           return wrap;
         }
 

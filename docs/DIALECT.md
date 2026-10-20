@@ -196,4 +196,17 @@ The bar sizes itself from its tag (`data-w` / `data-h` / `data-anchor`) when it 
 
 ## Scripts inside templates
 
-`<script>` inside `<template>` does not run until the host (or the preview boot) clones the template into a `.spawn-surface[data-id="…"]`. Query that surface, not `document`, from overlay scripts. The boot copies `src` attributes so external scripts (xterm, `bar.js`) load.
+`<script>` inside `<template>` does not run until the host (or the preview boot) clones the template into a `.spawn-surface[data-id="…"]`. Query that surface, not `document`, from overlay scripts. The browser runs each cloned script once, inline or `src` (xterm, `bar.js`), when the clone enters the document, so a piece needs no guard against running twice.
+
+**Pages copied before 0.7.0** re-create every template script after mounting it (`runScripts(wrap)` in the boot's `mountSpawn`), so each one ran twice: two subscribers, two bus messages per publish. Delete that call:
+
+```diff
+         function mountSpawn(tpl, solo, parent) {
+           const wrap = materialize(tpl, solo);
+           parent.appendChild(wrap);
+-          runScripts(wrap);
+           return wrap;
+         }
+```
+
+The `runScripts` function is then unused; delete it too.

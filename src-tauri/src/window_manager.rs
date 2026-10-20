@@ -611,6 +611,9 @@ fn page_surface_chrome_script(id: &str, opaque: bool, allow_drag: bool) -> Strin
   function versaillesBindPageChrome() {{
     try {{
       if (window.__VERSAILLES_NATIVE_CHROME__ || window.__DECK_NATIVE_CHROME__) return;
+      // The host re-runs this script once after show: bind (or wait) once.
+      if (window.__VERSAILLES_CHROME_BINDING__) return;
+      window.__VERSAILLES_CHROME_BINDING__ = true;
       var root = document.querySelector('.spawn-surface') || document.body;
       if (window.versailles && typeof window.versailles.enableNativeChrome === 'function') {{
         window.versailles.enableNativeChrome(root);
@@ -792,7 +795,7 @@ fn open_widget_window_as(
     let url = spec.url.clone();
     let opacity = spec.opacity.clamp(0.05, 1.0);
     let radius = spec.border_radius;
-    let inject = if spec.page_surface {
+    let chrome = if spec.page_surface {
         let allow_drag = {
             let state = app.state::<AppState>();
             let cat = crate::desktop::page_catalog(&state);
@@ -813,8 +816,8 @@ fn open_widget_window_as(
     // Queued scripts (a `page`-dim stage, spawn data) run before any page
     // script, so the first frame already has them.
     let inject = match pending_init_scripts().lock().unwrap().remove(&id.to_ascii_lowercase()) {
-        Some(scripts) => format!("{inject}\n{}", scripts.join("\n")),
-        None => inject,
+        Some(scripts) => format!("{chrome}\n{}", scripts.join("\n")),
+        None => chrome.clone(),
     };
 
     // Session coords are physical (from Moved / outer_position). Builder.position
@@ -926,10 +929,12 @@ fn open_widget_window_as(
         }
     });
 
-    // Belt-and-suspenders: re-apply after show in case the first paint raced init.
+    // Belt-and-suspenders: re-apply the chrome after show in case the first
+    // paint raced init. Only the chrome (it is idempotent): queued scripts
+    // fire `versailles:spawn` / `versailles:stage`, which must arrive once.
     {
         let delayed = window.clone();
-        let reinject = inject.clone();
+        let reinject = chrome;
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(250));
             if let Err(err) = delayed.eval(&reinject) {

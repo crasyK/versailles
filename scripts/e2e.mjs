@@ -40,7 +40,7 @@ function resolveExe() {
 
 /**
  * A free port the app's capabilities allow for page IPC: they list
- * 127.0.0.1:47831-47841 (the host's own fallback range). 47831 is normally
+ * 127.0.0.1 or localhost on 47831-47841 (the host's own fallback range). 47831 is normally
  * the user's running Versailles, so start one above it.
  */
 function canBind(port) {
@@ -80,6 +80,8 @@ function launch(exe, dest, port) {
       VERSAILLES_NO_SUPERVISOR: "1",
       VERSAILLES_ROOT: dest,
       VERSAILLES_API_PORT: String(port),
+      // Own WebView2 browser process, never shared with a running Versailles.
+      WEBVIEW2_USER_DATA_FOLDER: join(dest, "webview2"),
     },
     stdio: "ignore",
     windowsHide: false,

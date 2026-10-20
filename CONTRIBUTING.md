@@ -19,6 +19,8 @@ npm run tauri:dev
 
 `npm run build:test` builds a test installer with the `release-test` profile (no LTO, incremental: ~40 s after a code change instead of 20+ min, ~1.4 GB peak; never ship it). `npm run e2e` runs the end-to-end self-test against that build (or the release build): it starts the app isolated (`VERSAILLES_BENCH=1`, a temporary `VERSAILLES_ROOT`, a port in 47832–47841, the range page IPC is allowed on), checks wallpaper, sensors, bus, overlays, a docked bar, a page edit and a restart, and cleans up. It never touches your desktop folder or your running Versailles. `-- --keep` leaves the app up when a check fails.
 
+`npm run measure:memory` starts the same isolated app three times (wallpaper only, plus a docked bar, plus an open overlay) and prints the private memory of the host and of each WebView2 process type. Keep `remote.urls` in `capabilities/default.json` to one pattern: Tauri compiles one URL matcher (~76 KB) per remote URL for every allowed command at startup, so 22 URLs cost the host ~360 MB.
+
 ## PR
 
 Branch from `main`, open a pull request against `main`. Title the work after the change, not after the product name.

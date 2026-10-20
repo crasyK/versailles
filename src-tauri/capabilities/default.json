@@ -4,30 +4,7 @@
   "description": "Default capabilities for Versailles widgets, launcher, desktop, and guides",
   "windows": ["launcher-dim", "desktop", "desktop-*", "guides", "widget-*"],
   "remote": {
-    "urls": [
-      "http://127.0.0.1:47831/*",
-      "http://127.0.0.1:47832/*",
-      "http://127.0.0.1:47833/*",
-      "http://127.0.0.1:47834/*",
-      "http://127.0.0.1:47835/*",
-      "http://127.0.0.1:47836/*",
-      "http://127.0.0.1:47837/*",
-      "http://127.0.0.1:47838/*",
-      "http://127.0.0.1:47839/*",
-      "http://127.0.0.1:47840/*",
-      "http://127.0.0.1:47841/*",
-      "http://localhost:47831/*",
-      "http://localhost:47832/*",
-      "http://localhost:47833/*",
-      "http://localhost:47834/*",
-      "http://localhost:47835/*",
-      "http://localhost:47836/*",
-      "http://localhost:47837/*",
-      "http://localhost:47838/*",
-      "http://localhost:47839/*",
-      "http://localhost:47840/*",
-      "http://localhost:47841/*"
-    ]
+    "urls": ["http://(127\\.0\\.0\\.1|localhost):478(3[1-9]|4[01])/*"]
   },
   "permissions": [
     "core:default",

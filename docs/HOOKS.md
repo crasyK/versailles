@@ -171,6 +171,7 @@ No hook needed; every piece can listen.
 | Event | When | Data |
 | ----- | ---- | ---- |
 | `shown` | The piece's overlay was shown | `null` |
+| `hiding` | The piece's overlay is about to hide (about 60 ms ahead) | `null` |
 | `hidden` | The piece's overlay was hidden | `null` |
 | `idle` | No keyboard / mouse input for 60 s | `{ idleMs }` |
 | `active` | Input again after `idle` | `null` |
@@ -182,7 +183,9 @@ me.on("idle", () => document.body.classList.add("dim"));
 me.on("active", () => document.body.classList.remove("dim"));
 ```
 
-`shown` / `hidden` go to that piece only; `idle`, `active` and `theme-changed` go to every page window. The first `shown` of a newly created window can arrive before its page has loaded; the page is visible when its scripts run anyway.
+`shown` / `hiding` / `hidden` go to that piece only; `idle`, `active` and `theme-changed` go to every page window. The first `shown` of a newly created window can arrive before its page has loaded; the page is visible when its scripts run anyway.
+
+**Animating in.** Windows shows a hidden window's last frame again the moment it is shown, before the page draws anything new. A piece that animates in should paint its animation's start pose on `hiding` (the host waits about 60 ms before hiding), so that stale frame is the start of the animation rather than the piece at rest.
 
 ## Events
 
@@ -192,6 +195,7 @@ me.on("active", () => document.body.classList.remove("dim"));
 | `pty://exit` | `{ "session": <u64> }` |
 | `overlay://shown` | `{ "id": "<piece id>", "seed": "<string>" }` |
 | `clipboard://changed` | `null` — to windows of pieces that declare `clipboard` |
+| `overlay://hiding` | `{ "id": "<piece id>" }` — about 60 ms before the overlay hides |
 | `overlay://hidden` | `{ "id": "<piece id>" }` (`null` when only the backdrop hid) |
 | `launcher://shown` / `launcher://hidden` | Legacy: bare seed string / `true` |
 

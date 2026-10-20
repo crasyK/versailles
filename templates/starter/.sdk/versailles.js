@@ -518,7 +518,7 @@
     });
   }
   /** Piece events: for every piece, no hook needed. */
-  const PIECE_EVENTS = new Set(["shown", "hidden", "idle", "active", "theme-changed"]);
+  const PIECE_EVENTS = new Set(["shown", "hiding", "hidden", "idle", "active", "theme-changed"]);
 
   const scoped = makeApi(null);
   const versailles = {

@@ -1282,6 +1282,8 @@ pub fn reveal_overlay(
     let overlay = crate::page::piece_is_overlay(piece);
     let label = widget_label(id);
     arm_overlay_focus_guard();
+    // Cancels a hide still waiting out its grace period.
+    bump_overlay_generation(&piece.id);
 
     if !overlay {
         // Hotkey slide-out: plain docked open / raise.
@@ -1556,13 +1558,57 @@ fn sync_overlay_dim(app: &AppHandle, window: &WebviewWindow, dim: DimMode) {
     }
 }
 
+/// How long a page gets to paint its closed state before its overlay hides.
+/// Windows shows a hidden window's last frame again on the next show, so a
+/// page that animates in should paint the animation's start pose first.
+const HIDE_GRACE_MS: u64 = 60;
+
+/// Bumped on every reveal / conceal of an overlay, so a delayed hide that a
+/// newer reveal overtook does nothing.
+fn overlay_generations() -> &'static Mutex<HashMap<String, u64>> {
+    static MAP: OnceLock<Mutex<HashMap<String, u64>>> = OnceLock::new();
+    MAP.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn bump_overlay_generation(id: &str) -> u64 {
+    let mut map = overlay_generations().lock().unwrap();
+    let gen = map.entry(id.to_ascii_lowercase()).or_insert(0);
+    *gen += 1;
+    *gen
+}
+
+fn overlay_generation(id: &str) -> u64 {
+    overlay_generations()
+        .lock()
+        .unwrap()
+        .get(&id.to_ascii_lowercase())
+        .copied()
+        .unwrap_or(0)
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct OverlayHiding {
+    id: String,
+}
+
 fn conceal_overlay(app: &AppHandle, id: &str) -> AppResult<()> {
     let app = app.clone();
     let id = id.to_string();
+    let gen = bump_overlay_generation(&id);
+    // `overlay://hiding` + the `hiding` piece event, then a short grace so the
+    // page can paint its closed state (see HIDE_GRACE_MS).
+    let _ = app.emit("overlay://hiding", &OverlayHiding { id: id.clone() });
+    crate::push::to_piece(&app, &id, "hiding", &serde_json::Value::Null);
     std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(10));
+        std::thread::sleep(Duration::from_millis(HIDE_GRACE_MS));
+        if overlay_generation(&id) != gen {
+            return; // Shown again meanwhile.
+        }
         let handle = app.clone();
         let _ = app.run_on_main_thread(move || {
+            if overlay_generation(&id) != gen {
+                return;
+            }
             hide_overlay_dim(&handle);
             if let Some(window) = handle.get_webview_window(&widget_label(&id)) {
                 let _ = window.hide();
@@ -2105,6 +2151,17 @@ mod tests {
         )
         .unwrap();
         assert_eq!(p.hit_regions.unwrap().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn overlay_generation_lets_a_newer_reveal_cancel_a_pending_hide() {
+        let id = "gen-test-piece";
+        let hide = bump_overlay_generation(id);
+        assert_eq!(overlay_generation(id), hide);
+        // A reveal before the grace period ends bumps it again…
+        bump_overlay_generation("GEN-TEST-PIECE");
+        // …so the pending hide sees a newer generation and skips.
+        assert_ne!(overlay_generation(id), hide);
     }
 
     #[test]

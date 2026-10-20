@@ -5,20 +5,24 @@
 //! fails on Win+ combos the shell already owns. Anything with Win goes through
 //! a low-level keyboard hook instead, the way PowerToys and AutoHotkey do it:
 //!
-//! - a matched key's down and up are swallowed; the shell never sees them;
-//! - a Win key-up that ends a swallowed combo (or a bound Win tap) is held
-//!   back and sent again after an unassigned key (`vkE8`), both tagged, so
-//!   the shell sees Win+vkE8 instead of a lone Win and Start does not open.
-//!   They are sent from a separate thread: `SendInput` inside the hook
-//!   callback stalls the callback past Windows' timeout, the keys then
-//!   arrive out of order, and Windows silently removes the hook.
+//! - Win's down is held back, so the shell only sees a Win press it needs:
+//!   a bound tap or combo is swallowed whole (Start has nothing to open); an
+//!   unbound tap is replayed whole (Start opens as usual); any other key
+//!   pressed with Win replays the Win down and then that key, so Windows'
+//!   own Win+E, Win+D... keep working;
+//! - mask keys sent before the Win key-up (AutoHotkey's `vkE8`, ChefKeys'
+//!   Left Alt) did not keep Start closed on Windows 11 25H2, hence the above;
+//! - replayed keys are tagged and go out from a small sender thread;
 //! - the Copilot key sends LShift+LWin+F23, so `"Copilot"` is Win+Shift+F23.
 //!
 //! The hook runs on its own thread with its own message loop and does no I/O;
 //! the action is posted to the main thread. Windows silently drops a hook
-//! whose thread answered late once (a UI Automation client reading our
-//! windows is enough), so it is installed again after every second without
-//! key traffic. It exists only while
+//! whose thread answered late once, so it is installed again after 30 s
+//! without key traffic.
+//!
+//! Known problem (#37): on Windows 11 25H2 the hook sometimes misses a press
+//! (often the first after a pause), and a Win tap then opens Start. Win
+//! combos and `suppress` are unaffected so far. It exists only while
 //! a Win binding or a suppress entry exists, and dies with the process, so
 //! the keyboard is never left changed. Win+L and Ctrl+Alt+Del cannot be
 //! intercepted, and keys typed into an elevated window are not seen (UIPI).
@@ -211,25 +215,22 @@ mod hook {
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::System::Threading::GetCurrentThreadId;
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP,
-        VIRTUAL_KEY,
+        GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, VIRTUAL_KEY,
         VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         CallNextHookEx, DispatchMessageW, MsgWaitForMultipleObjects, PeekMessageW, PostThreadMessageW,
         SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, HC_ACTION, HHOOK, KBDLLHOOKSTRUCT,
-        LLKHF_INJECTED, MSG, PM_REMOVE, QS_ALLINPUT, WH_KEYBOARD_LL, WM_KEYDOWN, WM_QUIT, WM_SYSKEYDOWN,
+        LLKHF_EXTENDED, LLKHF_INJECTED, MSG, PM_REMOVE, QS_ALLINPUT, WH_KEYBOARD_LL, WM_KEYDOWN, WM_QUIT, WM_SYSKEYDOWN,
     };
 
     /// `dwExtraInfo` of the keys we send ourselves ("VRSL").
     const TAG: usize = 0x5652_534C;
-    /// Unassigned virtual key (AutoHotkey's suggestion for a menu mask).
-    const MASK_VK: u16 = 0xE8;
-    /// Re-install after this long without a key reaching the hook. Windows
-    /// silently drops a hook whose thread answered late once (UI Automation
-    /// clients reading our windows can stall it briefly), so a drop costs at
-    /// most this long of missed keys.
-    const REINSTALL_MS: u32 = 1_000;
+    /// Re-install after this long without a key reaching the hook: Windows
+    /// silently drops a hook whose thread once answered late (a UI Automation
+    /// client reading our windows is enough). A 1 s interval did not help
+    /// with missed presses (#37).
+    const REINSTALL_MS: u32 = 30_000;
 
     struct Running {
         thread_id: u32,
@@ -324,12 +325,15 @@ mod hook {
     }
 
     struct State {
-        /// Win is down (set on its first down, not on auto-repeat).
+        /// Win is physically down (set on its first down, not on auto-repeat).
         win_held: Cell<bool>,
+        /// Which Win key (LWin / RWin) is down.
+        win_vk: Cell<u16>,
+        /// We replayed the Win key-down to the shell for this press (an
+        /// unbound Win combo such as Win+E): the rest of it passes through.
+        win_sent: Cell<bool>,
         /// Another key went down while Win was held: not a tap.
         win_combo: Cell<bool>,
-        /// A swallowed Win combo: mask the Win key-up.
-        mask: Cell<bool>,
         /// Keys whose down we swallowed; their up (and repeats) go too.
         swallowed: RefCell<[bool; 256]>,
         /// Shift / Ctrl / Alt as seen by this hook (bits 1 / 2 / 4). The
@@ -340,8 +344,9 @@ mod hook {
     thread_local! {
         static STATE: State = State {
             win_held: Cell::new(false),
+            win_vk: Cell::new(VK_LWIN.0),
+            win_sent: Cell::new(false),
             win_combo: Cell::new(false),
-            mask: Cell::new(false),
             swallowed: RefCell::new([false; 256]),
             mods: Cell::new(0),
         };
@@ -350,7 +355,9 @@ mod hook {
     /// A dropped hook may have missed a key-up; forget keys no longer down.
     fn reset_if_released() {
         STATE.with(|s| {
-            if s.win_held.get() && !held(VK_LWIN) && !held(VK_RWIN) {
+            // While we hold Win back, its async state reads "up"; only a
+            // replayed Win can be checked that way.
+            if s.win_held.get() && s.win_sent.get() && !held(VK_LWIN) && !held(VK_RWIN) {
                 s.win_held.set(false);
             }
             let mut swallowed = s.swallowed.borrow_mut();
@@ -379,16 +386,19 @@ mod hook {
         }
     }
 
-    /// Queue the mask key and the held-back Win key-up for the sender thread.
-    fn mask_then_release(win_vk: u16) {
-        static SENDER: std::sync::OnceLock<Option<Mutex<mpsc::Sender<u16>>>> = std::sync::OnceLock::new();
+    /// One key event to replay: virtual key, scan code, `KEYEVENTF_*` flags.
+    type Replay = (u16, u16, u32);
+
+    /// Replay keys from a small sender thread, in order, tagged as ours.
+    fn replay(keys: Vec<Replay>) {
+        static SENDER: std::sync::OnceLock<Option<Mutex<mpsc::Sender<Vec<Replay>>>>> = std::sync::OnceLock::new();
         let sender = SENDER.get_or_init(|| {
-            let (tx, rx) = mpsc::channel::<u16>();
+            let (tx, rx) = mpsc::channel::<Vec<Replay>>();
             std::thread::Builder::new()
                 .name("versailles-keys-send".into())
                 .spawn(move || {
-                    while let Ok(vk) = rx.recv() {
-                        send_mask_then_release(vk);
+                    while let Ok(keys) = rx.recv() {
+                        send(&keys);
                     }
                 })
                 .ok()
@@ -396,33 +406,45 @@ mod hook {
         });
         match sender {
             Some(tx) => {
-                let _ = tx.lock().unwrap().send(win_vk);
+                let _ = tx.lock().unwrap().send(keys);
             }
-            // No sender thread: better a late mask than a stuck Win key.
-            None => send_mask_then_release(win_vk),
+            None => send(&keys),
         }
     }
 
-    /// The mask key down and up, then the held-back Win key-up.
-    fn send_mask_then_release(win_vk: u16) {
-        let key = |vk: u16, flags| INPUT {
-            r#type: INPUT_KEYBOARD,
-            Anonymous: INPUT_0 {
-                ki: KEYBDINPUT { wVk: VIRTUAL_KEY(vk), dwFlags: flags, dwExtraInfo: TAG, ..Default::default() },
-            },
-        };
-        let inputs = [
-            key(MASK_VK, Default::default()),
-            key(MASK_VK, KEYEVENTF_KEYUP),
-            key(win_vk, KEYEVENTF_KEYUP | KEYEVENTF_EXTENDEDKEY),
-        ];
+    fn send(keys: &[Replay]) {
+        let inputs: Vec<INPUT> = keys
+            .iter()
+            .map(|&(vk, scan, flags)| INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT {
+                        wVk: VIRTUAL_KEY(vk),
+                        wScan: scan,
+                        dwFlags: KEYBD_EVENT_FLAGS(flags),
+                        dwExtraInfo: TAG,
+                        ..Default::default()
+                    },
+                },
+            })
+            .collect();
         unsafe {
             SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
         }
     }
 
-    /// `true`: swallow this event.
-    fn handle(vk: u16, down: bool) -> bool {
+    const EXTENDED: u32 = 0x1; // KEYEVENTF_EXTENDEDKEY
+    const KEYUP: u32 = 0x2; // KEYEVENTF_KEYUP
+
+    /// `true`: swallow this event. `scan` / `extended` describe it for a replay.
+    ///
+    /// The shell never sees a Win press unless it needs it: Win's down is held
+    /// back. A tap runs its binding (nothing reached the shell, so Start has
+    /// nothing to open) or, unbound, is replayed whole so Start opens as
+    /// usual. A bound combo is swallowed with Win. Any other key pressed with
+    /// Win replays the Win down first, then that key, so Windows' own Win+E,
+    /// Win+D... keep working. Shift / Ctrl / Alt pass through untouched.
+    fn handle(vk: u16, down: bool, scan: u16, extended: bool) -> bool {
         STATE.with(|s| {
             let bit = modifier_bit(vk);
             if bit != 0 {
@@ -437,34 +459,31 @@ mod hook {
                 if down {
                     if !s.win_held.get() {
                         s.win_held.set(true);
+                        s.win_vk.set(vk);
+                        s.win_sent.set(false);
                         s.win_combo.set(false);
-                        s.mask.set(false);
                     }
-                    return false;
+                    // Hold it back (auto-repeat too) until we know what it is.
+                    return !s.win_sent.get();
+                }
+                if !s.win_held.get() {
+                    return false; // pressed before the hook saw it
                 }
                 s.win_held.set(false);
-                let mut mask = s.mask.get();
+                if s.win_sent.get() {
+                    return false; // the shell has its Win down: let it go up
+                }
                 if !s.win_combo.get() {
-                    let tap = Combo {
-                        ctrl,
-                        alt,
-                        shift,
-                        win: true,
-                        key: Key::WinTap,
-                    };
-                    if let Some(entry) = table().read().unwrap().lookup(&tap) {
-                        if let Some(piece) = &entry.piece {
-                            fire(piece);
-                        }
-                        mask = true;
+                    let tap = Combo { ctrl, alt, shift, win: true, key: Key::WinTap };
+                    let piece = table().read().unwrap().lookup(&tap).map(|e| e.piece.clone());
+                    match piece {
+                        Some(Some(piece)) => fire(&piece),
+                        Some(None) => {} // suppressed
+                        // Unbound tap: give the shell its Win press (Start).
+                        None => replay(vec![(vk, 0, EXTENDED), (vk, 0, EXTENDED | KEYUP)]),
                     }
                 }
-                if mask {
-                    // Swallow this key-up; the copy sent after the mask key releases Win.
-                    mask_then_release(vk);
-                    return true;
-                }
-                return false;
+                return true;
             }
             let i = vk as usize & 0xFF;
             if !down {
@@ -473,28 +492,27 @@ mod hook {
             if s.swallowed.borrow()[i] {
                 return true; // auto-repeat of a swallowed key
             }
-            if s.win_held.get() {
+            let win = s.win_held.get();
+            if win {
                 s.win_combo.set(true);
             }
-            let combo = Combo {
-                ctrl,
-                alt,
-                shift,
-                win: s.win_held.get() || held(VK_LWIN) || held(VK_RWIN),
-                key: Key::Vk(vk),
-            };
+            let combo = Combo { ctrl, alt, shift, win, key: Key::Vk(vk) };
             let t = table().read().unwrap();
-            let Some(entry) = t.lookup(&combo) else {
-                return false;
-            };
-            s.swallowed.borrow_mut()[i] = true;
-            if combo.win {
-                s.mask.set(true);
+            if let Some(entry) = t.lookup(&combo) {
+                s.swallowed.borrow_mut()[i] = true;
+                if let Some(piece) = &entry.piece {
+                    fire(piece);
+                }
+                return true;
             }
-            if let Some(piece) = &entry.piece {
-                fire(piece);
+            if win && !s.win_sent.get() {
+                // An unbound Win combo: replay Win down, then this key.
+                s.win_sent.set(true);
+                let flags = if extended { EXTENDED } else { 0 };
+                replay(vec![(s.win_vk.get(), 0, EXTENDED), (vk, scan, flags)]);
+                return true;
             }
-            true
+            false
         })
     }
 
@@ -513,11 +531,12 @@ mod hook {
             let ours = k.flags.0 & LLKHF_INJECTED.0 != 0 && k.dwExtraInfo == TAG;
             let msg = wparam.0 as u32;
             let down = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
-            let swallow = !ours && handle(k.vkCode as u16, down);
+            let extended = k.flags.0 & LLKHF_EXTENDED.0 != 0;
+            let swallow = !ours && handle(k.vkCode as u16, down, k.scanCode as u16, extended);
             if debug() {
                 crate::crash::append_log("keys.log", &format!(
-                    "pid {} key {:#04x} {} flags {:#x}{}{} in {} us",
-                    std::process::id(),
+                    "{} key {:#04x} {} flags {:#x}{}{} in {} us",
+                    chrono::Local::now().format("%H:%M:%S%.3f"),
                     k.vkCode,
                     if down { "down" } else { "up" },
                     k.flags.0,

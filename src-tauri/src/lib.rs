@@ -13,11 +13,13 @@ mod error;
 mod page;
 mod placement;
 mod power;
+mod push;
 mod hotkeys;
 mod layout;
 mod media;
 mod protocol;
 mod quote;
+mod sensors;
 mod pty;
 mod registry;
 mod single_instance_fixup;
@@ -284,6 +286,7 @@ pub fn run() {
             watcher::start_widget_watcher(app.handle().clone());
             crash::start_hang_watchdog(app.handle());
             clipboard::start_change_watcher(app.handle().clone());
+            sensors::start_watcher(app.handle().clone());
 
             // Session restore off the setup path; bounded to 2 concurrent WebView2
             // creations to avoid the documented deadlock risk. Desktop wallpaper
@@ -386,6 +389,7 @@ pub fn run() {
             commands::clipboard_write,
             commands::power_action,
             commands::bus_publish,
+            commands::sense_now,
             commands::set_widget_always_on_top,
             commands::set_widget_opacity,
             commands::get_mouse_position_cmd,

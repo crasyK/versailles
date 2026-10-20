@@ -58,11 +58,22 @@ fn check_size(data: &Value, what: &str) -> AppResult<String> {
     Ok(json)
 }
 
-/// Script that hands one message to the SDK's dispatcher in that window.
-fn deliver_script(message_json: &str) -> String {
+/// Script that hands `payload_json` to the SDK dispatcher
+/// `window.__VERSAILLES_<KIND>__` in a window. The wallpaper window is a host
+/// shell (`desktop.html`) whose page runs in a cross-origin `iframe#page`, so
+/// when the dispatcher is missing the script forwards the payload there with
+/// `postMessage`, addressed to the iframe's origin. The SDK only accepts
+/// those messages from `window.parent`.
+pub fn frame_script(kind: &str, payload_json: &str) -> String {
+    let fn_name = format!("__VERSAILLES_{}__", kind.to_ascii_uppercase());
     format!(
-        "(function(m){{try{{if(typeof window.__VERSAILLES_BUS__==='function')window.__VERSAILLES_BUS__(m);}}catch(e){{}}}})({message_json});"
+        "(function(m){{try{{var f=window.{fn_name};if(typeof f==='function'){{f(m);return;}}var p=document.getElementById('page');if(p&&p.contentWindow&&p.src)p.contentWindow.postMessage({{__versailles:{{kind:'{kind}',payload:m}}}},new URL(p.src).origin);}}catch(e){{}}}})({payload_json});"
     )
+}
+
+/// Script that hands one message to the SDK's bus dispatcher in that window.
+fn deliver_script(message_json: &str) -> String {
+    frame_script("bus", message_json)
 }
 
 /// Relay `data` on `topic` from piece `from` to every open window of a piece
@@ -121,6 +132,17 @@ mod tests {
         assert!(js.ends_with(");"));
         let js = spawn_data_script(&json!({"q": 1})).unwrap();
         assert!(js.contains(r#"({"q":1})"#));
+    }
+
+    #[test]
+    fn frame_script_calls_the_dispatcher_or_forwards_to_the_page_iframe() {
+        let js = frame_script("push", r#"{"name":"battery"}"#);
+        assert!(js.contains("window.__VERSAILLES_PUSH__"));
+        assert!(js.contains("getElementById('page')"));
+        assert!(js.contains("kind:'push'"));
+        assert!(js.contains("new URL(p.src).origin"));
+        assert!(js.ends_with(r#"({"name":"battery"});"#));
+        assert!(deliver_script("{}").contains("window.__VERSAILLES_BUS__"));
     }
 
     #[test]

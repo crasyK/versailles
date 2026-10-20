@@ -216,7 +216,56 @@
       return hostInvoke("power", "power_action", { action });
     }
 
+    function sensor(hook) {
+      return {
+        async now() {
+          return hostInvoke(hook, "sense_now", { hook });
+        },
+        /** `fn(value)` now and on every change. Returns an unsubscribe function. */
+        async onChange(fn) {
+          return on(hook, fn);
+        },
+      };
+    }
+
+    /**
+     * `fn(data)` on each push of `name`: a hook (`media`, `battery`,
+     * `network`, `focus`, `audio`; must be declared) or a piece event
+     * (`shown`, `hidden`, `idle`, `active`, `theme-changed`). Sensor hooks
+     * also call `fn` with the current value right away. Returns a function
+     * that unsubscribes.
+     */
+    async function on(name, fn) {
+      name = String(name);
+      if (PUSH_HOOKS.has(name)) {
+        const own = await gate(name);
+        const off = pushSubscribe(own, name, fn);
+        let live = true;
+        if (SENSOR_HOOKS.has(name) && tauri()?.core?.invoke) {
+          hostInvoke(name, "sense_now", { hook: name }).then(
+            (value) => {
+              if (live) fn(value, { name, data: value, initial: true });
+            },
+            () => {}
+          );
+        }
+        return () => {
+          live = false;
+          off();
+        };
+      }
+      if (PIECE_EVENTS.has(name)) {
+        return pushSubscribe(fixedId || widgetIdFromLabel(), name, fn);
+      }
+      throw new Error("unknown push '" + name + "'");
+    }
+
     return {
+      on,
+      battery: sensor("battery"),
+      network: sensor("network"),
+      focus: sensor("focus"),
+      audio: sensor("audio"),
       media: {
         async now() {
           return hostInvoke("media", "media_now");
@@ -373,9 +422,7 @@
         },
         /** `fn()` whenever the system clipboard changes (read it if you need it). */
         async onChange(fn) {
-          await gate("clipboard");
-          if (!tauri()?.event?.listen) return () => {};
-          return listen("clipboard://changed", () => fn());
+          return on("clipboard", () => fn());
         },
       },
       /**
@@ -437,6 +484,42 @@
     return () => busSubscribers.delete(sub);
   }
 
+  // The host pushes hook data and piece events by calling this in each
+  // receiving window: { name, data, id? }. `id` = meant for that piece only.
+  const pushSubscribers = new Set();
+  global.__VERSAILLES_PUSH__ = function (push) {
+    if (!push || typeof push.name !== "string") return;
+    pushSubscribers.forEach((sub) => {
+      if (sub.name !== push.name) return;
+      if (push.id && sub.own && push.id.toLowerCase() !== sub.own.toLowerCase()) return;
+      try {
+        sub.fn(push.data, push);
+      } catch (err) {
+        console.error(err);
+      }
+    });
+  };
+  function pushSubscribe(own, name, fn) {
+    const sub = { own, name, fn };
+    pushSubscribers.add(sub);
+    return () => pushSubscribers.delete(sub);
+  }
+  /** Hooks whose changes the host pushes; `on()` needs them declared. */
+  const PUSH_HOOKS = new Set(["media", "battery", "network", "focus", "audio", "clipboard"]);
+  const SENSOR_HOOKS = new Set(["battery", "network", "focus", "audio"]);
+  // On the wallpaper this page runs in an iframe of the host shell, which
+  // forwards bus messages and pushes here. Only the parent may send them.
+  if (global.parent && global.parent !== global && typeof global.addEventListener === "function") {
+    global.addEventListener("message", (e) => {
+      const msg = e.source === global.parent && e.data && e.data.__versailles;
+      if (!msg) return;
+      if (msg.kind === "push") global.__VERSAILLES_PUSH__(msg.payload);
+      else if (msg.kind === "bus") global.__VERSAILLES_BUS__(msg.payload);
+    });
+  }
+  /** Piece events: for every piece, no hook needed. */
+  const PIECE_EVENTS = new Set(["shown", "hidden", "idle", "active", "theme-changed"]);
+
   const scoped = makeApi(null);
   const versailles = {
     invoke,
@@ -459,6 +542,11 @@
     clipboard: scoped.clipboard,
     power: scoped.power,
     bus: scoped.bus,
+    on: scoped.on,
+    battery: scoped.battery,
+    network: scoped.network,
+    focus: scoped.focus,
+    audio: scoped.audio,
     /** Data the last `spawn(id, data)` handed this spawnable (or undefined). */
     spawnData() {
       return global.__VERSAILLES_SPAWN_DATA__;

@@ -79,6 +79,7 @@
     "allow-clipboard-write",
     "allow-power-action",
     "allow-bus-publish",
+    "allow-sense-now",
     "allow-set-widget-always-on-top",
     "allow-set-widget-opacity",
     "allow-get-mouse-position-cmd",

@@ -1338,6 +1338,7 @@ pub fn reveal_overlay(
         defer_raise_widget(window.clone(), Some(pos));
         publish_stage(&window, stage);
         emit_overlay_shown(app, id, stage);
+        crate::push::to_piece(app, &piece.id, "shown", &serde_json::Value::Null);
         return Ok(());
     }
 
@@ -1355,6 +1356,7 @@ pub fn reveal_overlay(
         clip_round_window(&window);
     }
     emit_overlay_shown(app, id, stage);
+    crate::push::to_piece(app, &piece.id, "shown", &serde_json::Value::Null);
     Ok(())
 }
 
@@ -1566,6 +1568,7 @@ fn conceal_overlay(app: &AppHandle, id: &str) -> AppResult<()> {
                 let _ = window.hide();
             }
             emit_overlay_hidden(&handle, Some(&id));
+            crate::push::to_piece(&handle, &id, "hidden", &serde_json::Value::Null);
         });
     });
     Ok(())

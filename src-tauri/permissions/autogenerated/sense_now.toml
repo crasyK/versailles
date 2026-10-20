@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-sense-now"
+description = "Enables the sense_now command without any pre-configured scope."
+commands.allow = ["sense_now"]
+
+[[permission]]
+identifier = "deny-sense-now"
+description = "Denies the sense_now command without any pre-configured scope."
+commands.deny = ["sense_now"]

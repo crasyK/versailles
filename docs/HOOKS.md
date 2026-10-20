@@ -21,6 +21,10 @@ The host never grants more than that list. The catalog is fixed in [`src-tauri/s
 | `clipboard` | Read / write plain text, change notice (`clipboard_read`, `clipboard_write`, `clipboard://changed`) |
 | `power` | Lock, sleep, sign out, restart, shut down (`power_action`) |
 | `bus` | Messages between pieces on the page (`bus_publish`) |
+| `battery` | Battery level, charging, plugged in, saver (`sense_now`, pushed on change) |
+| `network` | Online state, connectivity level, profile name, Wi-Fi and signal bars |
+| `focus` | The active window: title, app, exe path, pid |
+| `audio` | Default output device, volume (0–100), mute |
 
 Unknown hook names are rejected.
 
@@ -137,6 +141,48 @@ await versailles.for("launcher").spawn("notes", { open: "groceries" });
 versailles.onSpawn((data) => openNote(data.open));
 const first = versailles.spawnData();
 ```
+
+## Push
+
+The host pushes changes instead of pieces polling. `on(name, fn)` subscribes and returns a function that unsubscribes.
+
+```js
+const hud = versailles.for("hud");
+await hud.on("battery", (b) => render(b.percent, b.charging)); // called now, then on each change
+await hud.on("media", (info) => showTrack(info));
+const audio = await hud.audio.now();                            // one-off read
+await hud.focus.onChange((w) => (title.textContent = w.title));
+```
+
+| Hook | Read every | Payload |
+| ---- | ---------- | ------- |
+| `battery` | 15 s | `{ present, percent, plugged, charging, secondsLeft, saver }` (`present: false` on a desktop PC) |
+| `network` | 3 s | `{ online, level: "none"\|"local"\|"constrained"\|"internet", name, wifi, signalBars }` |
+| `focus` | 0.5 s | `{ title, app, exe, pid, self }` (`self`: a Versailles window) |
+| `audio` | 1 s | `{ device, volume, muted }` |
+| `media` | on change | same as `media.now()` |
+
+A sensor is only read while some piece on the page declares its hook, and a value is pushed only when it changed. Pushes go only to the windows of pieces that declare the hook, by a script run in those windows (not a broadcast event). Sensor subscriptions also get the current value right away.
+
+## Piece events
+
+No hook needed; every piece can listen.
+
+| Event | When | Data |
+| ----- | ---- | ---- |
+| `shown` | The piece's overlay was shown | `null` |
+| `hidden` | The piece's overlay was hidden | `null` |
+| `idle` | No keyboard / mouse input for 60 s | `{ idleMs }` |
+| `active` | Input again after `idle` | `null` |
+| `theme-changed` | Windows apps switched light / dark | `{ dark }` |
+
+```js
+const me = versailles.for("clock");
+me.on("idle", () => document.body.classList.add("dim"));
+me.on("active", () => document.body.classList.remove("dim"));
+```
+
+`shown` / `hidden` go to that piece only; `idle`, `active` and `theme-changed` go to every page window. The first `shown` of a newly created window can arrive before its page has loaded; the page is visible when its scripts run anyway.
 
 ## Events
 

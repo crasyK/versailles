@@ -14,6 +14,7 @@ fn main() {
                 "clipboard_write",
                 "power_action",
                 "bus_publish",
+                "sense_now",
                 "set_widget_always_on_top",
                 "set_widget_opacity",
                 "get_mouse_position_cmd",

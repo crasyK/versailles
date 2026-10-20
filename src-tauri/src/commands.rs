@@ -341,6 +341,25 @@ pub async fn power_action(
         .map_err(|e| crate::error::AppError::msg(e.to_string()))?
 }
 
+/// Read-only system hooks (`battery`, `network`, `focus`, `audio`): the
+/// current value. Changes are pushed (see `sensors::start_watcher`).
+#[tauri::command]
+pub async fn sense_now(
+    webview: Webview,
+    state: State<'_, AppState>,
+    hook: String,
+    caller: Option<String>,
+) -> AppResult<serde_json::Value> {
+    let hook = hook.trim().to_ascii_lowercase();
+    if !crate::sensors::is_sensor(&hook) {
+        return Err(crate::error::AppError::msg(format!("'{hook}' is not a sensor hook")));
+    }
+    require_hook(&state, &webview, caller.as_deref(), &hook, HookClass::Plain)?;
+    tokio::task::spawn_blocking(move || crate::sensors::read(&hook))
+        .await
+        .map_err(|e| crate::error::AppError::msg(e.to_string()))?
+}
+
 /// `bus` hook: relay a message to every open piece that declared `bus`.
 /// Returns how many windows it reached.
 #[tauri::command]

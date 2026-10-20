@@ -144,6 +144,9 @@ fn publish_media(app: &AppHandle, state: &MediaState, info: MediaInfo) {
         merged
     };
     let _ = app.emit("media://update", &to_emit);
+    if let Ok(data) = serde_json::to_value(&to_emit) {
+        crate::push::to_hook(&app, "media", &data);
+    }
 }
 
 #[cfg(windows)]

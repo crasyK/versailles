@@ -127,6 +127,9 @@ pub fn start_change_watcher(app: AppHandle) {
             for label in listener_labels(&app) {
                 let _ = app.emit_to(label.as_str(), "clipboard://changed", ());
             }
+            // Tauri events do not reach the wallpaper's page iframe; the push
+            // channel does (see `bus::frame_script`).
+            crate::push::to_hook(&app, "clipboard", &serde_json::Value::Null);
         }
     });
     #[cfg(not(windows))]

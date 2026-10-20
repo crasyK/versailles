@@ -4,6 +4,13 @@ Versailles parses one HTML file: `Documents\Widgets\desktop\index.html`. The par
 
 The host is a small windowing + hooks layer. Pieces on the page are the product. The host does not style them: the page's CSS decides how everything looks (the starter's Paper look is just an example). A command bar in the starter (or your page) is an example of what the dialect can do, like a clock tile. Delete that template and Versailles still runs (tray, HTML desktop, hooks, spawn).
 
+## Contents
+
+- **Basics:** [Classes](#classes) · [Attributes](#attributes) · [Scripts inside templates](#scripts-inside-templates)
+- **Surfaces:** [Overlay vs slide-out](#overlay-vs-slide-out) · [Overlay placement](#overlay-placement) · [Docked bars](#docked-bars) · [Multiple monitors](#multiple-monitors)
+- **Configuration:** [Config blob](#config-blob)
+- **Tools:** [Preview query](#preview-query) · [Example command bar](#example-command-bar)
+
 ## Classes
 
 | Class | Kind | Typical tag |
@@ -33,6 +40,22 @@ The host is a small windowing + hooks layer. Pieces on the page are the product.
 
 Duplicate `data-id` values are ignored after the first. A piece inside an HTML comment (`<!-- … -->`) is not on the page.
 
+## Scripts inside templates
+
+`<script>` inside `<template>` does not run until the host (or the preview boot) clones the template into a `.spawn-surface[data-id="…"]`. Query that surface, not `document`, from overlay scripts. The browser runs each cloned script once, inline or `src` (xterm, `bar.js`), when the clone enters the document, so a piece needs no guard against running twice.
+
+**Pages copied before 0.7.0** re-create every template script after mounting it (`runScripts(wrap)` in the boot's `mountSpawn`), so each one ran twice: two subscribers, two bus messages per publish. Delete that call:
+
+```diff
+         function mountSpawn(tpl, solo, parent) {
+           const wrap = materialize(tpl, solo);
+           parent.appendChild(wrap);
+-          runScripts(wrap);
+           return wrap;
+         }
+```
+
+The `runScripts` function is then unused; delete it too.
 ## Overlay vs slide-out
 
 A spawnable whose `data-anchor` is a grid point (`tl`, `tc`, `ml`, `c`, `mr`, `bl`, `bc`, `br`) or `cursor` is an overlay:
@@ -56,56 +79,6 @@ Every spawnable with `hotkey` in `data-hooks` can bind its own combo. Pressing t
 ```
 
 No `hotkey` piece → those shortcuts stay idle. Saving `desktop/index.html` rebinds them; otherwise restart Versailles.
-
-## Preview query
-
-Same file, different surfaces:
-
-| `?m=` | What you see |
-| ----- | ------------ |
-| `desktop` (default) | Wallpaper + widgets. Templates stay in `<template>`. |
-| `widgets` | Every `article.widget` on a blank paper canvas |
-| `spawn` | Each spawnable materialized as a card |
-| `spawn&id=draw` | One spawnable, sized to `data-w` / `data-h` |
-| `action_bar` | The example command-bar spawnable, window-sized |
-
-Unknown `id` → a placeholder. Best preview: `http://127.0.0.1:47831/files/desktop/index.html?m=…`. A small boot script in the page implements `?m=`. The host always loads `?m=spawn&id=…` into spawn windows.
-
-## Config blob
-
-Host knobs are not visual pieces. Put them in `<head>`:
-
-```html
-<script type="application/json" id="versailles">
-{ "autostart": true, "launcher": { "hotkey": "Alt+Space" }, "api": { "enabled": true, "port": 47831 }, "shortcuts": [] }
-</script>
-```
-
-The widget/spawnable parser ignores this. The JSON must not contain the literal `</script>`. Sidecar `versailles.json` is fallback only. The host never rewrites this file.
-
-### Per-spawnable settings
-
-`spawnables.<id>` (id lower-case) tunes one spawnable without touching its tag:
-
-```json
-"spawnables": {
-  "action-bar": {
-    "overlay": { "dismissOnBlur": false, "draggable": false, "dim": "host" },
-    "opts": {
-      "blurDismissMs": 280,
-      "suggestionLimit": 12,
-      "compact": false,
-      "launchTick": false,
-      "searchHf": "https://huggingface.co/models?search={q}",
-      "timeAwareDefaults": true,
-      "autoDismissLaunch": true,
-      "coverMonitor": false
-    }
-  }
-}
-```
-
-`overlay.*` is read by the host. `overlay.dim` takes `"host"` / `"page"` / `"none"` (or `true` = host, `false` = none). `opts` is handed to the piece's page JS (the example bar reads it via `get_spawnable_engine_context`); the host interprets only `coverMonitor` (see [Overlay placement](#overlay-placement)). Attributes on the tag (`data-dismiss-on-blur`, `data-dim`) beat `overlay.*`.
 
 ## Overlay placement
 
@@ -188,6 +161,56 @@ A spawnable with `data-monitor="primary"` or a number opens on that monitor (anc
 
 When monitors are added, removed, resized or rescaled, the host re-places the wallpapers (creating or closing them as needed), moves windows that ended up off-screen back on, and sends the `monitor-changed` piece event. `versailles.monitors()` lists every monitor and `versailles.monitor()` returns the one the page is on.
 
+## Config blob
+
+Host knobs are not visual pieces. Put them in `<head>`:
+
+```html
+<script type="application/json" id="versailles">
+{ "autostart": true, "launcher": { "hotkey": "Alt+Space" }, "api": { "enabled": true, "port": 47831 }, "shortcuts": [] }
+</script>
+```
+
+The widget/spawnable parser ignores this. The JSON must not contain the literal `</script>`. Sidecar `versailles.json` is fallback only. The host never rewrites this file.
+
+### Per-spawnable settings
+
+`spawnables.<id>` (id lower-case) tunes one spawnable without touching its tag:
+
+```json
+"spawnables": {
+  "action-bar": {
+    "overlay": { "dismissOnBlur": false, "draggable": false, "dim": "host" },
+    "opts": {
+      "blurDismissMs": 280,
+      "suggestionLimit": 12,
+      "compact": false,
+      "launchTick": false,
+      "searchHf": "https://huggingface.co/models?search={q}",
+      "timeAwareDefaults": true,
+      "autoDismissLaunch": true,
+      "coverMonitor": false
+    }
+  }
+}
+```
+
+`overlay.*` is read by the host. `overlay.dim` takes `"host"` / `"page"` / `"none"` (or `true` = host, `false` = none). `opts` is handed to the piece's page JS (the example bar reads it via `get_spawnable_engine_context`); the host interprets only `coverMonitor` (see [Overlay placement](#overlay-placement)). Attributes on the tag (`data-dismiss-on-blur`, `data-dim`) beat `overlay.*`.
+
+## Preview query
+
+Same file, different surfaces:
+
+| `?m=` | What you see |
+| ----- | ------------ |
+| `desktop` (default) | Wallpaper + widgets. Templates stay in `<template>`. |
+| `widgets` | Every `article.widget` on a blank paper canvas |
+| `spawn` | Each spawnable materialized as a card |
+| `spawn&id=draw` | One spawnable, sized to `data-w` / `data-h` |
+| `action_bar` | The example command-bar spawnable, window-sized |
+
+Unknown `id` → a placeholder. Best preview: `http://127.0.0.1:47831/files/desktop/index.html?m=…`. A small boot script in the page implements `?m=`. The host always loads `?m=spawn&id=…` into spawn windows.
+
 ## Example command bar
 
 The starter ships a command bar as page JS (`desktop/bar.js`), not a host feature. Its `#cli-*` ids are that example’s contract. Grammar lives in `bar.js`: `!` inline pwsh, `!!` detachable PTY, shortcuts from `#versailles` in the same HTML file.
@@ -196,19 +219,3 @@ The starter ships a command bar as page JS (`desktop/bar.js`), not a host featur
 
 The bar sizes itself from its tag (`data-w` / `data-h` / `data-anchor`) when it leaves terminal mode, shows its own `data-hotkey` in the footer, and honours `data-dismiss-on-blur`. The command line is a plain visible `<input id="cli-in">` after the `#cli-ps` prompt; `#cli-echo` / `.cli-caret` from older pages are optional and ignored.
 
-## Scripts inside templates
-
-`<script>` inside `<template>` does not run until the host (or the preview boot) clones the template into a `.spawn-surface[data-id="…"]`. Query that surface, not `document`, from overlay scripts. The browser runs each cloned script once, inline or `src` (xterm, `bar.js`), when the clone enters the document, so a piece needs no guard against running twice.
-
-**Pages copied before 0.7.0** re-create every template script after mounting it (`runScripts(wrap)` in the boot's `mountSpawn`), so each one ran twice: two subscribers, two bus messages per publish. Delete that call:
-
-```diff
-         function mountSpawn(tpl, solo, parent) {
-           const wrap = materialize(tpl, solo);
-           parent.appendChild(wrap);
--          runScripts(wrap);
-           return wrap;
-         }
-```
-
-The `runScripts` function is then unused; delete it too.

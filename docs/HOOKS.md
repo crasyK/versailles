@@ -31,6 +31,13 @@ The host never grants more than that list. The catalog is fixed in [`src-tauri/s
 
 Unknown hook names are rejected.
 
+## Contents
+
+- **Basics:** [SDK](#sdk) · [Enforcement](#enforcement) · [Events](#events)
+- **Reading the system:** [Push](#push) · [Notifications](#notifications) · [Windows](#windows)
+- **Acting:** [Layout](#layout) · [Power](#power) · [Clipboard](#clipboard)
+- **Between pieces:** [Storage](#storage) · [Bus](#bus) · [Piece events](#piece-events)
+
 ## SDK
 
 Load `Documents\Widgets\.sdk\versailles.js` (the starter copies it). Unscoped `versailles.media` infers the caller when exactly one piece declares that hook. Prefer `versailles.for("now-playing")` on a page with several pieces.
@@ -78,90 +85,19 @@ That piece must list the hook in `data-hooks`. A piece that omitted `data-hooks=
 
 `layout` only ever touches the piece's own window (a wallpaper widget has none, so it is refused). From a bar's monitor copy it changes that copy's window.
 
-## Layout
+## Events
 
-```js
-const layout = versailles.for("hud").layout;
-await layout.resize(480, 120);                 // logical px
-await layout.setAnchor("bc", [0, 24]);         // grid anchor + inset, on the window's monitor
-await layout.setAlwaysOnTop(true);
-await layout.update({ width: 480, anchor: "br", offset: [16, 16] }); // several at once
-```
+| Event | Payload |
+| ----- | ------- |
+| `pty://data` | `{ "session": <u64>, "data": "<base64>" }` |
+| `pty://exit` | `{ "session": <u64> }` |
+| `overlay://shown` | `{ "id": "<piece id>", "seed": "<string>" }` |
+| `clipboard://changed` | `null` — to windows of pieces that declare `clipboard` |
+| `overlay://hiding` | `{ "id": "<piece id>" }` — about 60 ms before the overlay hides |
+| `overlay://hidden` | `{ "id": "<piece id>" }` (`null` when only the backdrop hid) |
+| `launcher://shown` / `launcher://hidden` | Legacy: bare seed string / `true` |
 
-A size or anchor set this way survives later reveals, even for a `c` overlay (see [Overlay placement](DIALECT.md#overlay-placement)).
-
-**Click-through.** `setHitRegions(rects)` makes only those rects (`{ x, y, width, height }`, CSS px inside the window) take clicks. Everywhere else the window passes clicks to whatever is below: other apps, or the host dim. `null` turns it off. `trackHits()` keeps the regions in sync with elements marked `data-hit` (pass another selector to change that) and returns a function that stops tracking.
-
-```html
-<template class="spawnable" data-id="hud" data-anchor="c" data-dim="page"
-          data-hooks="layout" data-dismiss-on-blur="false" data-w="720" data-h="480">
-  <div class="ring" data-hit>…</div>
-  <script>versailles.for("hud").layout.trackHits();</script>
-</template>
-```
-
-Windows has no per-pixel hit testing for these windows, so the host follows the cursor (about 60 times a second while the window is visible) and switches the window between catching and passing clicks at region edges. A click that passes through focuses the app below, which blurs the overlay: set `data-dismiss-on-blur="false"` on click-through pieces that should stay up. Windows are never click-through unless the page asks.
-
-`sys_stats` is a host command, not a named hook. Example widgets call `versailles.invoke("sys_stats")` without a caller.
-
-## Storage
-
-```js
-const store = versailles.for("todo").storage;
-await store.set("items", [{ text: "milk", done: false }]);
-const items = (await store.get("items")) ?? [];
-await store.keys();   // ["items"]
-await store.delete("items");
-await store.clear();
-```
-
-Values are any JSON. Each piece has its own file (`.versailles/storage/<id>.json`, written atomically) and cannot read another piece's. The wallpaper and a spawn window of the same piece share it. Keys are 1–256 bytes; a store is capped at 1 MB.
-
-## Clipboard
-
-```js
-const clip = versailles.for("clips").clipboard;
-const text = await clip.readText();   // null when the clipboard holds no text
-await clip.writeText("hello");
-await clip.onChange(async () => console.log(await clip.readText()));
-```
-
-Plain text only. `onChange` fires on every clipboard change (the notice carries no content; read it if you need it). The host keeps no history: a clipboard manager keeps its own, e.g. in `storage`.
-
-## Power
-
-```js
-button.onclick = () => versailles.for("power-menu").power.lock();
-// also: sleep(), signOut(), restart(), shutdown()
-```
-
-The SDK only runs these inside a click or key press (`navigator.userActivation`), so a page cannot lock or shut down the machine on its own. `restart` and `shutdown` are immediate. The host logs every request.
-
-`sleep()` needs classic (S3) sleep. Many newer laptops only have Modern Standby (`powercfg /a` lists "S0 low power idle"), which Windows gives apps no supported way to start; there `sleep()` rejects with an error saying so. Catch it and hide or disable your sleep button.
-
-## Bus
-
-```js
-// Publisher
-await versailles.for("player").bus.publish("track", { title: "…" });
-
-// Subscriber (another piece; "*" receives every topic)
-const off = await versailles.for("ticker").bus.subscribe("track", (data, msg) => {
-  console.log(msg.from, data.title);
-});
-```
-
-The host relays each message to every open window of a piece that declares `bus`. It is delivered by a script run in those windows only, not as a broadcast event, so pieces without the hook never see it. A piece does not receive its own messages. Windows that are not open miss the message (keep state in `storage` if a late opener needs it). Topics are 1–128 bytes; data is any JSON up to 256 KB.
-
-**Spawn data.** `spawn(id, data)` opens a spawnable (or keeps it open) and hands it `data`; the spawnable reads it with `versailles.spawnData()` or `versailles.onSpawn(fn)`. On first open the data is there before the page's scripts run.
-
-```js
-await versailles.for("launcher").spawn("notes", { open: "groceries" });
-// inside notes:
-versailles.onSpawn((data) => openNote(data.open));
-const first = versailles.spawnData();
-```
-
+`pty_open` returns the new session id (counter starting at 1). Events from an older session keep their own id, so filter on the id `pty_open` returned. Overlay events go to every webview; filter on `id`.
 ## Push
 
 The host pushes changes instead of pieces polling. `on(name, fn)` subscribes and returns a function that unsubscribes.
@@ -185,6 +121,27 @@ await hud.focus.onChange((w) => (title.textContent = w.title));
 | `notify` | 2 s | one new toast (see [Notifications](#notifications)) |
 
 A sensor is only read while some piece on the page declares its hook, and a value is pushed only when it changed. Pushes go only to the windows of pieces that declare the hook, by a script run in those windows (not a broadcast event). Sensor subscriptions also get the current value right away.
+
+## Notifications
+
+```js
+const feed = versailles.for("inbox").notify;
+const { access, items } = await feed.now();   // newest first, up to 50
+await feed.onToast((t) => prepend(t));        // each new toast, once
+```
+
+A toast is `{ id, app, aumid, title, body, time }`: `app` is the sending app's display name (`null` when Windows does not know it), `aumid` its app user model id, `title` the first text line, `body` the other lines joined by `\n`, `time` ms since the Unix epoch. Read-only: a piece cannot dismiss, clear or raise toasts.
+
+`access` is Windows' answer for Versailles:
+
+| `access` | Meaning |
+| -------- | ------- |
+| `allowed` | `items` holds the toasts in Action Center |
+| `denied` | The user turned notification access off (Settings > Privacy & security > Notifications). `items` is empty |
+| `unspecified` | Not decided yet. `items` is empty; the host never shows Windows' consent prompt |
+| `unavailable` | No notification listener on this system (or not Windows) |
+
+Windows offers no change event to an unpackaged app, so the host checks for new toasts every 2 s while some piece declares `notify` and pushes each one it has not seen (oldest first). The first check only notes what is already there. `onToast` does not fire on subscribe: call `now()` for the current list. Toast text can be private: declare `notify` only on pieces that need it.
 
 ## Windows
 
@@ -226,26 +183,89 @@ Control (`windows-control`): `focus(id)` (restores a minimized window), `minimiz
 
 Listed are visible, titled top-level windows without a tool-window style or owner (or with `WS_EX_APPWINDOW`). Never listed: Versailles' own windows, the shell's desktop and taskbars, and cloaked windows (other virtual desktops, suspended store apps). Control calls only accept a listed window and refuse Versailles' own. Store apps show as `ApplicationFrameHost`. The list is only read while a piece on the page declares `windows`.
 
-## Notifications
+## Layout
 
 ```js
-const feed = versailles.for("inbox").notify;
-const { access, items } = await feed.now();   // newest first, up to 50
-await feed.onToast((t) => prepend(t));        // each new toast, once
+const layout = versailles.for("hud").layout;
+await layout.resize(480, 120);                 // logical px
+await layout.setAnchor("bc", [0, 24]);         // grid anchor + inset, on the window's monitor
+await layout.setAlwaysOnTop(true);
+await layout.update({ width: 480, anchor: "br", offset: [16, 16] }); // several at once
 ```
 
-A toast is `{ id, app, aumid, title, body, time }`: `app` is the sending app's display name (`null` when Windows does not know it), `aumid` its app user model id, `title` the first text line, `body` the other lines joined by `\n`, `time` ms since the Unix epoch. Read-only: a piece cannot dismiss, clear or raise toasts.
+A size or anchor set this way survives later reveals, even for a `c` overlay (see [Overlay placement](DIALECT.md#overlay-placement)).
 
-`access` is Windows' answer for Versailles:
+**Click-through.** `setHitRegions(rects)` makes only those rects (`{ x, y, width, height }`, CSS px inside the window) take clicks. Everywhere else the window passes clicks to whatever is below: other apps, or the host dim. `null` turns it off. `trackHits()` keeps the regions in sync with elements marked `data-hit` (pass another selector to change that) and returns a function that stops tracking.
 
-| `access` | Meaning |
-| -------- | ------- |
-| `allowed` | `items` holds the toasts in Action Center |
-| `denied` | The user turned notification access off (Settings > Privacy & security > Notifications). `items` is empty |
-| `unspecified` | Not decided yet. `items` is empty; the host never shows Windows' consent prompt |
-| `unavailable` | No notification listener on this system (or not Windows) |
+```html
+<template class="spawnable" data-id="hud" data-anchor="c" data-dim="page"
+          data-hooks="layout" data-dismiss-on-blur="false" data-w="720" data-h="480">
+  <div class="ring" data-hit>…</div>
+  <script>versailles.for("hud").layout.trackHits();</script>
+</template>
+```
 
-Windows offers no change event to an unpackaged app, so the host checks for new toasts every 2 s while some piece declares `notify` and pushes each one it has not seen (oldest first). The first check only notes what is already there. `onToast` does not fire on subscribe: call `now()` for the current list. Toast text can be private: declare `notify` only on pieces that need it.
+Windows has no per-pixel hit testing for these windows, so the host follows the cursor (about 60 times a second while the window is visible) and switches the window between catching and passing clicks at region edges. A click that passes through focuses the app below, which blurs the overlay: set `data-dismiss-on-blur="false"` on click-through pieces that should stay up. Windows are never click-through unless the page asks.
+
+`sys_stats` is a host command, not a named hook. Example widgets call `versailles.invoke("sys_stats")` without a caller.
+
+## Power
+
+```js
+button.onclick = () => versailles.for("power-menu").power.lock();
+// also: sleep(), signOut(), restart(), shutdown()
+```
+
+The SDK only runs these inside a click or key press (`navigator.userActivation`), so a page cannot lock or shut down the machine on its own. `restart` and `shutdown` are immediate. The host logs every request.
+
+`sleep()` needs classic (S3) sleep. Many newer laptops only have Modern Standby (`powercfg /a` lists "S0 low power idle"), which Windows gives apps no supported way to start; there `sleep()` rejects with an error saying so. Catch it and hide or disable your sleep button.
+
+## Clipboard
+
+```js
+const clip = versailles.for("clips").clipboard;
+const text = await clip.readText();   // null when the clipboard holds no text
+await clip.writeText("hello");
+await clip.onChange(async () => console.log(await clip.readText()));
+```
+
+Plain text only. `onChange` fires on every clipboard change (the notice carries no content; read it if you need it). The host keeps no history: a clipboard manager keeps its own, e.g. in `storage`.
+
+## Storage
+
+```js
+const store = versailles.for("todo").storage;
+await store.set("items", [{ text: "milk", done: false }]);
+const items = (await store.get("items")) ?? [];
+await store.keys();   // ["items"]
+await store.delete("items");
+await store.clear();
+```
+
+Values are any JSON. Each piece has its own file (`.versailles/storage/<id>.json`, written atomically) and cannot read another piece's. The wallpaper and a spawn window of the same piece share it. Keys are 1–256 bytes; a store is capped at 1 MB.
+
+## Bus
+
+```js
+// Publisher
+await versailles.for("player").bus.publish("track", { title: "…" });
+
+// Subscriber (another piece; "*" receives every topic)
+const off = await versailles.for("ticker").bus.subscribe("track", (data, msg) => {
+  console.log(msg.from, data.title);
+});
+```
+
+The host relays each message to every open window of a piece that declares `bus`. It is delivered by a script run in those windows only, not as a broadcast event, so pieces without the hook never see it. A piece does not receive its own messages. Windows that are not open miss the message (keep state in `storage` if a late opener needs it). Topics are 1–128 bytes; data is any JSON up to 256 KB.
+
+**Spawn data.** `spawn(id, data)` opens a spawnable (or keeps it open) and hands it `data`; the spawnable reads it with `versailles.spawnData()` or `versailles.onSpawn(fn)`. On first open the data is there before the page's scripts run.
+
+```js
+await versailles.for("launcher").spawn("notes", { open: "groceries" });
+// inside notes:
+versailles.onSpawn((data) => openNote(data.open));
+const first = versailles.spawnData();
+```
 
 ## Piece events
 
@@ -276,16 +296,3 @@ const here = await versailles.monitor();  // the monitor this page / window is o
 
 **Animating in.** Windows shows a hidden window's last frame again the moment it is shown, before the page draws anything new. A piece that animates in should paint its animation's start pose on `hiding` (the host waits about 60 ms before hiding), so that stale frame is the start of the animation rather than the piece at rest.
 
-## Events
-
-| Event | Payload |
-| ----- | ------- |
-| `pty://data` | `{ "session": <u64>, "data": "<base64>" }` |
-| `pty://exit` | `{ "session": <u64> }` |
-| `overlay://shown` | `{ "id": "<piece id>", "seed": "<string>" }` |
-| `clipboard://changed` | `null` — to windows of pieces that declare `clipboard` |
-| `overlay://hiding` | `{ "id": "<piece id>" }` — about 60 ms before the overlay hides |
-| `overlay://hidden` | `{ "id": "<piece id>" }` (`null` when only the backdrop hid) |
-| `launcher://shown` / `launcher://hidden` | Legacy: bare seed string / `true` |
-
-`pty_open` returns the new session id (counter starting at 1). Events from an older session keep their own id, so filter on the id `pty_open` returned. Overlay events go to every webview; filter on `id`.

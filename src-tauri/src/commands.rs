@@ -703,6 +703,10 @@ pub struct SpawnableEngineContext {
     pub id: String,
     pub dismiss_on_blur: bool,
     pub opts: crate::config::SpawnableEngineOpts,
+    /// Versailles version.
+    pub host_version: &'static str,
+    /// Bundled SDK version and what the start-up check found on the desktop.
+    pub sdk: crate::sdk::SdkStatus,
 }
 
 #[tauri::command]
@@ -726,6 +730,12 @@ pub fn get_spawnable_engine_context(
         id: piece.id.clone(),
         dismiss_on_blur: dismiss,
         opts,
+        host_version: env!("CARGO_PKG_VERSION"),
+        sdk: crate::sdk::status().unwrap_or_else(|| crate::sdk::SdkStatus {
+            bundled: crate::sdk::bundled_version().to_string(),
+            desktop: crate::sdk::Decision::Missing,
+            updated: false,
+        }),
     })
 }
 

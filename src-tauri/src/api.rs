@@ -279,6 +279,16 @@ async fn serve_files(State(state): State<ApiState>, Path(path): Path<String>) ->
             bytes,
         )
             .into_response(),
+        // No SDK on the desktop: serve the one this host ships.
+        Err(_) if path == crate::sdk::FILES_PATH => (
+            StatusCode::OK,
+            [
+                (header::CONTENT_TYPE, "text/javascript; charset=utf-8"),
+                (header::CACHE_CONTROL, "no-cache"),
+            ],
+            crate::sdk::BUNDLED,
+        )
+            .into_response(),
         Err(err) => {
             tracing::debug!("/files/{path}: {err}");
             (StatusCode::NOT_FOUND, "not found").into_response()

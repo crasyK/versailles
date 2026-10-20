@@ -18,7 +18,7 @@ Do not overwrite an existing `desktop/index.html` unless you mean to. The host d
 | ---- | ------- |
 | `desktop/index.html` | Widgets, spawnables, example command bar, `#versailles` config |
 | `desktop/bar.js` | Example command-bar engine |
-| `.sdk/versailles.js` | Named-hook SDK |
+| `.sdk/versailles.js` | Named-hook SDK. Versailles updates an unchanged older copy on start (keeping `versailles.js.bak`) and leaves an edited one alone. |
 | `.sdk/xterm.js` | Nested terminal for `!!` |
 
 Host knobs and shortcuts live in `<script type="application/json" id="versailles">` in the page. Then start Versailles and type `desk` in the overlay (Alt+Space). Add more tiles from [`../../examples/`](../../examples).

@@ -1,12 +1,20 @@
+/*! versailles-sdk 0.6.0 */
 /**
  * Versailles widget SDK — named hooks, native chrome, browser stubs.
  *
  * Hooks are declared on the piece (`data-hooks="media,spawn"`). The host never
  * grants more than that list. Unscoped `versailles.media` infers the caller;
  * use `versailles.for("now-playing")` when several pieces share the page.
+ *
+ * The host ships this file and updates an unchanged older copy in
+ * `Documents\Widgets\.sdk\` on start (keeping `versailles.js.bak`). Once you
+ * edit your copy, the host leaves it alone.
  */
 (function (global) {
   "use strict";
+
+  /** Keep in step with the marker on the first line. */
+  const SDK_VERSION = "0.6.0";
 
   function inIframe() {
     try {
@@ -681,6 +689,7 @@
 
   const scoped = makeApi(null);
   const versailles = {
+    version: SDK_VERSION,
     invoke,
     listen,
     waitForTauri,

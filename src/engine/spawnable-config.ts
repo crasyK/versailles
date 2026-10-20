@@ -18,6 +18,14 @@ export type SpawnableEngineContext = {
   id: string;
   dismissOnBlur: boolean;
   opts: SpawnableEngineOpts;
+  /** Versailles version (0.6.0+). */
+  hostVersion?: string;
+  /** Bundled SDK version and what the start-up check found in `.sdk/` (0.6.0+). */
+  sdk?: {
+    bundled: string;
+    desktop: { state: "missing" | "current" | "update" | "edited" | "newer"; version?: string };
+    updated: boolean;
+  };
 };
 
 const DEFAULT_OPTS: Required<SpawnableEngineOpts> = {

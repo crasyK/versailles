@@ -43,6 +43,18 @@ await versailles.for("launcher").spawn("calculator");
 
 Without Tauri (plain browser / `file:`), hook calls resolve `{ host: false }` instead of throwing.
 
+**Keeping it current.** The SDK ships inside Versailles; its first line carries its version (`/*! versailles-sdk 0.6.0 */`, also `versailles.version`). On start the host compares `.sdk\versailles.js` with the one it ships:
+
+| Desktop copy | What happens |
+| ------------ | ------------ |
+| Same as the shipped SDK | Nothing |
+| An unchanged older release (any line endings) | Replaced; the old file is kept as `.sdk\versailles.js.bak` |
+| Edited by hand | Left alone; the log says so once per start (new hooks may be missing: copy `templates/starter/.sdk/versailles.js` over it, or delete it) |
+| Marked newer than this Versailles | Left alone |
+| Missing | `/files/.sdk/versailles.js` serves the shipped SDK |
+
+To keep your own SDK, edit it (any change opts out of updates). The host writes nothing outside `.sdk\`. `get_spawnable_engine_context` reports `hostVersion` and `sdk: { bundled, desktop: { state, version }, updated }`.
+
 ## Enforcement
 
 Identity comes from the **calling window**, never from an IPC argument:

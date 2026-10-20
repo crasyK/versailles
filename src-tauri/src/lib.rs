@@ -22,6 +22,7 @@ mod media;
 mod monitors;
 mod protocol;
 mod quote;
+mod sdk;
 mod sensors;
 mod pty;
 mod registry;
@@ -188,6 +189,11 @@ pub fn run() {
                 tracing::error!("Widgets folder unavailable ({err}); using {}", fallback.display());
                 fallback
             });
+            // Bring an unchanged older `.sdk/versailles.js` up to this host's
+            // SDK before any page loads it (edited copies are left alone).
+            if let Ok(widgets) = widgets_root() {
+                sdk::sync(&widgets);
+            }
             let store = ConfigStore::new(&root);
             let config = load_config_or_defaults(&store);
             let mut registry = WidgetRegistry::new(root);

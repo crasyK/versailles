@@ -202,6 +202,9 @@ pub struct ShellConfig {
     /// Hide Explorer's taskbar (and its reserved strip) while Versailles runs.
     #[serde(default)]
     pub hide_taskbar: bool,
+    /// Win-key combos to swallow without binding them (`"Win"`, `"Win+X"`, `"Copilot"`).
+    #[serde(default)]
+    pub suppress: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

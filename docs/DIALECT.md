@@ -34,7 +34,7 @@ The host is a small windowing + hooks layer. Pieces on the page are the product.
 | `data-monitor` | no | Which monitor. Widgets: `primary` (default), a display number (`2`, as in Windows display settings) or `all`; each monitor named gets its own wallpaper. Spawnables: `primary` or a number pins where they open; default (or `cursor`) is the monitor under the mouse. Docked bars also take `all`: one copy per monitor. See [Multiple monitors](#multiple-monitors). |
 | `data-dock` | no | Docked bars only. `reserve` (default): reserves its strip like the taskbar, so maximized apps stop at its edge. `float`: always on top, no space reserved. `auto-hide`: tucked at the edge, slides out when the mouse touches it. |
 | `data-peek` | no | `auto-hide` bars: logical px left showing while tucked away. Default 4. |
-| `data-hotkey` | no | Global accelerator for this spawnable when `data-hooks` includes `hotkey`. Format: Tauri accelerators (`Alt+Space`, `Ctrl+Shift+D`, `CommandOrControl+K`). Duplicate combos: first piece on the page wins. A hook piece with no `data-hotkey` uses `#versailles` `launcher.hotkey` (once). |
+| `data-hotkey` | no | Global accelerator for this spawnable when `data-hooks` includes `hotkey`. Format: Tauri accelerators (`Alt+Space`, `Ctrl+Shift+D`, `CommandOrControl+K`), plus `Win`, `Copilot` and `Win+` combos (see [Overlay vs slide-out](#overlay-vs-slide-out)). Duplicate combos: first piece on the page wins. A hook piece with no `data-hotkey` uses `#versailles` `launcher.hotkey` (once). |
 | `data-hooks` | no | Comma-separated allowlist. See [`HOOKS.md`](HOOKS.md). |
 | `data-dismiss-on-blur` | no | Overlays only. `true` / `false`: hide the overlay when its window loses focus. Wins over `#versailles` `spawnables.<id>.overlay.dismissOnBlur`. Default `true`, except pieces with the `pty` hook default to `false` (a terminal survives focus flicker). |
 
@@ -79,6 +79,15 @@ Every spawnable with `hotkey` in `data-hooks` can bind its own combo. Pressing t
 ```
 
 No `hotkey` piece → those shortcuts stay idle. Saving `desktop/index.html` rebinds them; otherwise restart Versailles.
+
+**The Windows and Copilot keys.** `data-hotkey="Win"` binds a tap of the Windows key alone, `"Copilot"` binds the Copilot key, and any combo with `Win` (`"Win+A"`, `"Ctrl+Win+F1"`; `Super` means the same) can take over one Windows already uses. These go through a keyboard hook instead of a registered shortcut: Windows never sees the keys, and Start does not open when you let go of Win. The hook exists only while such a binding exists and ends with Versailles, so your keyboard is never left changed.
+
+```html
+<template class="spawnable" data-id="start" data-hooks="hotkey" data-hotkey="Win" data-anchor="bl"
+          data-w="420" data-h="520"></template>
+```
+
+To stop a Windows shortcut without binding it, list it in `#versailles`: `"shell": { "suppress": ["Win+A", "Win+N", "Copilot"] }`. Limits: Win+L and Ctrl+Alt+Del cannot be taken over, and while a program running as administrator has focus the hook does not see keys. The Copilot key sends Shift+Win+F23, so `"Copilot"` is that combo.
 
 ## Overlay placement
 
@@ -203,7 +212,7 @@ The widget/spawnable parser ignores this. The JSON must not contain the literal 
 "shell": { "hideTaskbar": true }
 ```
 
-Hides Explorer's taskbar on every monitor and frees the strip it reserves, so a docked bar can take its place. It applies on save and comes back when you remove the line or quit. Explorer stays the shell: Start, Quick Settings, the notification center and toasts keep working, and nothing is injected into Explorer. Win+A, Win+N and Win+X still open Explorer's panels, and toasts still appear in the corner.
+Hides Explorer's taskbar on every monitor and frees the strip it reserves, so a docked bar can take its place. It applies on save and comes back when you remove the line or quit. Explorer stays the shell: Start, Quick Settings, the notification center and toasts keep working, and nothing is injected into Explorer. Win+A, Win+N and Win+X still open Explorer's panels unless you list them in `"suppress"` (see [Overlay vs slide-out](#overlay-vs-slide-out)), and toasts still appear in the corner.
 
 The taskbar comes back even when Versailles does not end cleanly:
 - a small guard process restores it the moment the app crashes or is killed;

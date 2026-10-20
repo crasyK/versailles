@@ -17,6 +17,7 @@ mod placement;
 mod power;
 mod push;
 mod hotkeys;
+mod keys;
 mod layout;
 mod media;
 mod monitors;

@@ -115,6 +115,16 @@ function probe(pid) {
   return JSON.parse(out.trim());
 }
 
+/** Press a chord of virtual-key codes ("5B,87" = Win+F24). */
+function press(chord) {
+  const out = execFileSync(
+    "powershell",
+    ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", join(repo, "tests/e2e/keys.ps1"), "-Chord", chord],
+    { encoding: "utf8" },
+  );
+  return JSON.parse(out.trim());
+}
+
 const reservedBottom = (p) => Math.max(...[p.monitors].flat().map((m) => m.bottom));
 
 async function until(what, fn, ms = 60_000) {
@@ -174,6 +184,18 @@ async function main() {
       return p.texts.some((t) => /E2E BAR/i.test(t)) ? p : null;
     }, 20_000).catch(() => probe(child.pid));
     check("bar still visible after the edit", p2.texts.some((t) => /E2E BAR/i.test(t)));
+
+    // Win combos and the Copilot key go through the keyboard hook (#31); the
+    // edit above registered the page's hotkeys.
+    await sleep(1500);
+    const winF24 = press("5B,87");
+    const keyOpened = await until("Win+F24 piece", () => store(dest, "e2e-key")?.opened, 10_000).catch(() => false);
+    check("Win+F24 opens its piece", keyOpened);
+    check("Win+F24 does not open Start", !winF24.shellOpen, `foreground ${winF24.foreground}`);
+    const copilot = press("A0,5B,86");
+    const copilotOpened = await until("Copilot piece", () => store(dest, "e2e-copilot")?.opened, 10_000).catch(() => false);
+    check("Copilot key opens its piece", copilotOpened);
+    check("Copilot key does not open Windows' own", !copilot.shellOpen, `foreground ${copilot.foreground}`);
 
     // Restart: storage survives, the reservation is released while down.
     kill(child);

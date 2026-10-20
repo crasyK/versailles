@@ -62,5 +62,29 @@
         })(0);
       </script>
     </template>
+    <template class="spawnable" data-id="e2e-key" data-anchor="tl" data-dim="none" data-dismiss-on-blur="false"
+              data-hooks="hotkey,storage" data-hotkey="Win+F24" data-w="160" data-h="40">
+      <div style="font:12px monospace;padding:8px">e2e key</div>
+      <script>
+        /* Opened by Win+F24 through the keyboard hook. */
+        (function wait(n) {
+          var v = window.versailles;
+          if (!v || typeof v.for !== 'function') { if (n < 400) setTimeout(function () { wait(n + 1); }, 50); return; }
+          v.for('e2e-key').storage.set('opened', true).catch(function () {});
+        })(0);
+      </script>
+    </template>
+    <template class="spawnable" data-id="e2e-copilot" data-anchor="tr" data-dim="none" data-dismiss-on-blur="false"
+              data-hooks="hotkey,storage" data-hotkey="Copilot" data-w="160" data-h="40">
+      <div style="font:12px monospace;padding:8px">e2e copilot</div>
+      <script>
+        /* Opened by the Copilot key (LShift+LWin+F23). */
+        (function wait(n) {
+          var v = window.versailles;
+          if (!v || typeof v.for !== 'function') { if (n < 400) setTimeout(function () { wait(n + 1); }, 50); return; }
+          v.for('e2e-copilot').storage.set('opened', true).catch(function () {});
+        })(0);
+      </script>
+    </template>
     <!-- ── end of e2e test pieces ── -->
 

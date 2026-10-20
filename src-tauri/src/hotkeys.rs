@@ -10,19 +10,25 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 /// Mid-save / empty reads of `desktop/index.html` used to call `unregister_all`
 /// first and leave Alt+Space dead for the rest of the session.
 pub fn register_page_hotkeys(app: &AppHandle) -> AppResult<()> {
-    let bindings = {
+    let (bindings, suppress) = {
         let state = app.state::<crate::state::AppState>();
         let cat = crate::desktop::page_catalog(&state);
-        let fallback = state.config.lock().unwrap().launcher_hotkey.clone();
-        cat.hotkey_bindings(&fallback)
+        let config = state.config.lock().unwrap();
+        (cat.hotkey_bindings(&config.launcher_hotkey), config.shell.suppress.clone())
     };
 
     if bindings.is_empty() {
+        crate::keys::apply(app, None, &suppress);
         tracing::warn!(
             "no spawnable declared data-hooks=hotkey; keeping existing global hotkeys"
         );
         return Ok(());
     }
+
+    // Win, Copilot and Win+ combos go to the keyboard hook (src/keys.rs).
+    let (hooked, bindings): (Vec<_>, Vec<_>) =
+        bindings.into_iter().partition(|(accel, _)| crate::keys::wants_hook(accel));
+    crate::keys::apply(app, Some(hooked), &suppress);
 
     let _ = app.global_shortcut().unregister_all();
 

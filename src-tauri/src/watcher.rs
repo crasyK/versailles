@@ -154,6 +154,8 @@ fn handle_changes(app: &AppHandle, root: &Path, changed: &[String]) {
             if let Err(err) = crate::hotkeys::register_page_hotkeys(&app2) {
                 tracing::warn!("hotkey rebind failed: {err}");
             }
+            // Docked bars follow the page (added, removed, edge / mode changed).
+            crate::docks::reconcile(&app2);
         });
     }
 

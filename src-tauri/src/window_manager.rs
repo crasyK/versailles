@@ -376,6 +376,17 @@ fn force_borderless(_window: &WebviewWindow) {}
 
 /// Raise a widget off the calling thread. Sync show/focus on the UI/IPC thread
 /// can re-enter WebView2 and freeze the whole desktop.
+/// Windows shown without taking focus (docked bars).
+fn quiet_labels() -> &'static Mutex<HashSet<String>> {
+    static SET: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    SET.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// Show `label` without focusing it when it is raised.
+pub fn mark_quiet(label: &str) {
+    quiet_labels().lock().unwrap().insert(label.to_string());
+}
+
 fn defer_raise_widget(window: WebviewWindow, position: Option<Position>) {
     let app = window.app_handle().clone();
     std::thread::spawn(move || {
@@ -389,7 +400,9 @@ fn defer_raise_widget(window: WebviewWindow, position: Option<Position>) {
             }
             let _ = window.unminimize();
             let _ = window.show();
-            let _ = window.set_focus();
+            if !quiet_labels().lock().unwrap().contains(window.label()) {
+                let _ = window.set_focus();
+            }
         });
     });
 }
@@ -744,6 +757,8 @@ pub fn open_widget_window(
         let state = app.state::<AppState>();
         crate::desktop::page_catalog(&state).is_overlay(id)
     };
+    // Docked bars are placed by the host: never snap them after a move.
+    let no_snap = overlay || crate::docks::is_dock(app, id);
     let sync_id = id.to_string();
     let sync_app = app.clone();
     window.on_window_event(move |event| {
@@ -759,7 +774,7 @@ pub fn open_widget_window(
                 }
                 // Ignore snap while restoring / applying programmatic moves —
                 // otherwise startup Moved events rearrange the whole layout.
-                if !overlay && !snap_is_suppressed(&sync_id) {
+                if !no_snap && !snap_is_suppressed(&sync_id) {
                     schedule_snap_after_drag(sync_app.clone(), sync_id.clone());
                 }
             }
@@ -1297,6 +1312,14 @@ pub fn reveal_overlay(
     arm_overlay_focus_guard();
     // Cancels a hide still waiting out its grace period.
     bump_overlay_generation(&piece.id);
+
+    if crate::docks::is_dock(app, &piece.id) {
+        // A docked bar is either up already or comes back on.
+        if app.get_webview_window(&label).is_none() {
+            crate::docks::toggle(app, &piece.id)?;
+        }
+        return Ok(());
+    }
 
     if !overlay {
         // Hotkey slide-out: plain docked open / raise.
@@ -2027,6 +2050,7 @@ pub fn on_monitors_changed(app: &AppHandle) {
         }
     }
     let _ = app.emit("desktop://layout", true);
+    crate::docks::reconcile(app);
 }
 
 fn launcher_seed_slot() -> &'static Mutex<Option<String>> {
@@ -2093,6 +2117,10 @@ pub fn toggle_slideout_widget(
         .spawnable(key)
         .map(|p| p.id.clone())
         .unwrap_or_else(|| key.to_string());
+
+    if crate::docks::is_dock(app, &resolved) {
+        return crate::docks::toggle(app, &resolved);
+    }
 
     if cat.is_overlay(&resolved) {
         let label = widget_label(&resolved);

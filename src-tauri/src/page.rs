@@ -40,6 +40,12 @@ pub struct PagePiece {
     /// `data-monitor="primary|all|cursor|<n>"` — which monitor(s) the piece is on.
     #[serde(default)]
     pub monitor: Option<String>,
+    /// `data-dock="reserve|float|auto-hide"` — docked bars (`data-anchor` top / bottom / left / right).
+    #[serde(default)]
+    pub dock: Option<String>,
+    /// `data-peek="<px>"` — what an auto-hide bar leaves showing.
+    #[serde(default)]
+    pub peek: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -226,6 +232,8 @@ pub fn parse_page(html: &str) -> PageCatalog {
         let offset = placement::parse_offset(attr(tag, "data-offset").as_deref());
         let dim = attr(tag, "data-dim").filter(|s| !s.trim().is_empty());
         let monitor = attr(tag, "data-monitor").filter(|s| !s.trim().is_empty());
+        let dock = attr(tag, "data-dock").filter(|s| !s.trim().is_empty());
+        let peek = attr(tag, "data-peek").and_then(|v| v.trim().parse().ok());
         let hotkey = attr(tag, "data-hotkey").filter(|s| !s.trim().is_empty());
         let dismiss_on_blur = attr(tag, "data-dismiss-on-blur").and_then(|v| match v.trim().to_ascii_lowercase().as_str() {
             "true" | "1" | "yes" => Some(true),
@@ -244,6 +252,8 @@ pub fn parse_page(html: &str) -> PageCatalog {
             offset,
             dim,
             monitor,
+            dock,
+            peek,
         });
     }
     PageCatalog { pieces }

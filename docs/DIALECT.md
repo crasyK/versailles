@@ -21,10 +21,12 @@ The host is a small windowing + hooks layer. Pieces on the page are the product.
 | `data-id` | yes | Catalog id. Unique, case-insensitive. `calc` aliases `calculator`. |
 | `data-w` | no | Window width in CSS pixels. Default 280. |
 | `data-h` | no | Window height. Default 200. |
-| `data-anchor` | no | Placement. Overlays (cover apps): a point of the grid `tl tc · / ml c mr / bl bc br`, or `cursor`. `center` / `overlay` alias `c`. `tc` (action bar) rests 120 px (logical) from the top. `tr`, no anchor, or an unknown value = docked top-right slide-out. See [Overlay placement](#overlay-placement). |
+| `data-anchor` | no | Placement. Overlays (cover apps): a point of the grid `tl tc · / ml c mr / bl bc br`, or `cursor`. `center` / `overlay` alias `c`. `tc` (action bar) rests 120 px (logical) from the top. `tr`, no anchor, or an unknown value = docked top-right slide-out. `top` / `bottom` / `left` / `right` = a docked bar (see [Docked bars](#docked-bars)). See [Overlay placement](#overlay-placement). |
 | `data-offset` | no | Overlays only. `x,y` in logical px from the anchor, inward: from the left/top edge for `l`/`t` anchors, from the right/bottom edge for `r`/`b` anchors, a plain right/down shift on a centre axis, added to the cursor for `cursor`. Default `0,0` (`tc`: `0,120`). |
 | `data-dim` | no | Overlays only. `host` (default) = the host's dim window behind the overlay. `page` = the overlay window covers the monitor and the page draws its own backdrop. `none` = no backdrop. Wins over `spawnables.<id>.overlay.dim`. |
 | `data-monitor` | no | Which monitor. Widgets: `primary` (default), a display number (`2`, as in Windows display settings) or `all`; each monitor named gets its own wallpaper. Spawnables: `primary` or a number pins where they open; default (or `cursor`) is the monitor under the mouse. See [Multiple monitors](#multiple-monitors). |
+| `data-dock` | no | Docked bars only. `reserve` (default): reserves its strip like the taskbar, so maximized apps stop at its edge. `float`: always on top, no space reserved. `auto-hide`: tucked at the edge, slides out when the mouse touches it. |
+| `data-peek` | no | `auto-hide` bars: logical px left showing while tucked away. Default 4. |
 | `data-hotkey` | no | Global accelerator for this spawnable when `data-hooks` includes `hotkey`. Format: Tauri accelerators (`Alt+Space`, `Ctrl+Shift+D`, `CommandOrControl+K`). Duplicate combos: first piece on the page wins. A hook piece with no `data-hotkey` uses `#versailles` `launcher.hotkey` (once). |
 | `data-hooks` | no | Comma-separated allowlist. See [`HOOKS.md`](HOOKS.md). |
 | `data-dismiss-on-blur` | no | Overlays only. `true` / `false`: hide the overlay when its window loses focus. Wins over `#versailles` `spawnables.<id>.overlay.dismissOnBlur`. Default `true`, except pieces with the `pty` hook default to `false` (a terminal survives focus flicker). |
@@ -133,6 +135,22 @@ These are values only; the host adds no styles.
 ```
 
 **Example bar.** `"coverMonitor": true` in `spawnables.<id>.opts` (or `data-dim="page"`) makes the bar's window cover the monitor. It sets `html[data-stage]` and `--stage-x` / `--stage-y` / `--stage-w` / `--stage-h` (logical px) and pins its surface (`#cli-root`'s parent, marked `data-stage-box`) to that box: 120 px from the top for `tc` in action mode, centered otherwise. A press outside the surface dismisses, except on elements marked `data-stage-keep`. Without it, the bar sizes its window to its box and only knows `tc` and `c` placement.
+
+## Docked bars
+
+A spawnable with `data-anchor="top"`, `"bottom"`, `"left"` or `"right"` is a docked bar: a top bar, a taskbar, a dock, a side rail. It runs the full length of its monitor's edge; its depth is `data-h` (top / bottom) or `data-w` (left / right). It opens by itself when the page declares it, has no dim, is never dismissed by losing focus, and does not take focus when it appears.
+
+```html
+<template class="spawnable" data-id="topbar" data-anchor="top" data-h="36"></template>
+<template class="spawnable" data-id="dock" data-anchor="bottom" data-dock="float" data-h="64" data-monitor="2"></template>
+<template class="spawnable" data-id="rail" data-anchor="right" data-dock="auto-hide" data-w="320" data-peek="4"></template>
+```
+
+- `reserve` (default) registers a Windows AppBar: the work area shrinks, maximized windows stop at the bar, and it moves out of the way when the taskbar or another bar moves. While a fullscreen app (a video, a game) is up, the bar drops behind it. The space is given back when the bar hides or Versailles quits; if Versailles crashes, Windows releases it on its own.
+- `float` sits on top inside the work area without reserving space.
+- `auto-hide` leaves a `data-peek` px strip at the edge. Touching the edge with the mouse slides it out (the piece gets `shown`); moving off it tucks it back after half a second (`hiding`, then `hidden`).
+
+A bar is on the primary monitor unless `data-monitor` names a display number; it does not follow the mouse. With `hotkey` in `data-hooks`, its `data-hotkey` hides and shows it (hiding gives reserved space back); `spawn(id)` does the same. Everything inside the bar is the page's own HTML and CSS.
 
 ## Multiple monitors
 

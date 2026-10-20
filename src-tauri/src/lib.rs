@@ -8,6 +8,7 @@ mod commands;
 mod config;
 mod crash;
 mod desktop;
+mod docks;
 mod engine_runtime;
 mod error;
 mod page;
@@ -252,6 +253,15 @@ pub fn run() {
                 }
             }
 
+            // Docked bars (data-anchor top / bottom / left / right) open with
+            // the app, off the setup path like the other surfaces.
+            let dock_app = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+                let handle = dock_app.clone();
+                let _ = dock_app.run_on_main_thread(move || docks::reconcile(&handle));
+            });
+
             // Pre-create the dim window off the hotkey path so Alt+Space only
             // shows existing surfaces (creating WebView2 on the UI thread hangs Windows).
             if !crate::boot::is_bench() {
@@ -442,9 +452,11 @@ pub fn run() {
         ])
         .build(tauri::generate_context!());
     match app {
-        Ok(app) => app.run(|_app, event| match event {
+        Ok(app) => app.run(|app, event| match event {
             RunEvent::ExitRequested { code: Some(_), .. } | RunEvent::Exit => {
                 crash::note_exiting();
+                // Give reserved screen space back before the windows go.
+                docks::release_all(app);
             }
             _ => {}
         }),

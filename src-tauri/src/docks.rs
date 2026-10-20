@@ -101,6 +101,28 @@ pub fn strip(edge: Edge, area: Rect, thick: i32) -> Rect {
     }
 }
 
+/// Whether `r` is a usable bar strip for `edge` of `monitor`: inside the
+/// monitor, `thick` deep, and on that edge's half. Explorer's AppBar answers
+/// are not always (a bottom bar on a monitor whose taskbar is at the top came
+/// back with its bottom at y = 0).
+pub fn usable_strip(edge: Edge, r: Rect, monitor: Rect, thick: i32) -> bool {
+    let inside = r.width > 0
+        && r.height > 0
+        && r.x >= monitor.x
+        && r.y >= monitor.y
+        && r.x + r.width <= monitor.x + monitor.width
+        && r.y + r.height <= monitor.y + monitor.height;
+    let mid_x = monitor.x + monitor.width / 2;
+    let mid_y = monitor.y + monitor.height / 2;
+    let (depth, on_edge) = match edge {
+        Edge::Top => (r.height, r.y + r.height <= mid_y),
+        Edge::Bottom => (r.height, r.y >= mid_y),
+        Edge::Left => (r.width, r.x + r.width <= mid_x),
+        Edge::Right => (r.width, r.x >= mid_x),
+    };
+    inside && on_edge && (depth - thick).abs() <= 1
+}
+
 /// Whether the cursor touches the edge zone of an auto-hide bar: within
 /// `zone` px of `edge` of `area`, along the bar's length.
 pub fn at_edge(edge: Edge, area: Rect, zone: i32, x: i32, y: i32) -> bool {
@@ -209,11 +231,21 @@ fn place(window: &WebviewWindow, st: &mut DockState) {
         DockMode::Reserve => {
             #[cfg(windows)]
             {
-                if let Some(r) = appbar::set_pos(window, st.dock.edge, st.monitor, st.thick, !st.appbar) {
+                // Explorer judges an AppBar by the monitor its window is on:
+                // put the window on its edge first.
+                set_rect(window, strip(st.dock.edge, st.work, st.thick));
+                if let Some(r) = appbar::set_pos(window, st.dock.edge, st.monitor, st.work, st.thick, !st.appbar) {
+                    if !st.appbar {
+                        tracing::info!("dock '{}': reserved {:?} on display {}", st.label, r, st.number);
+                    }
                     st.appbar = true;
                     set_rect(window, r);
                     return;
                 }
+                tracing::warn!(
+                    "dock '{}': Windows granted no usable reservation on display {}; it floats instead",
+                    st.label, st.number
+                );
             }
             set_rect(window, strip(st.dock.edge, st.work, st.thick));
         }
@@ -297,11 +329,16 @@ fn open(app: &AppHandle, piece: &PagePiece, label: &str, mon: &MonitorInfo) -> A
     st.number = mon.number;
     st.primary = mon.primary;
     st.monitor = mon.rect;
-    st.work = mon.work;
+    // While reserving, the monitor's work area already excludes our own
+    // strip: keep the one from before, so a fallback strip does not creep.
+    if !st.appbar {
+        st.work = mon.work;
+    }
     st.scale = mon.scale;
     st.thick = thick;
 
     if app.get_webview_window(label).is_none() {
+        tracing::info!("dock '{label}': opening on display {} ({:?})", mon.number, dock.mode);
         crate::window_manager::mark_quiet(label);
         let first = strip(dock.edge, mon.work, thick);
         crate::window_manager::open_dock_window(
@@ -686,7 +723,14 @@ mod appbar {
 
     /// Register (when `new`) and position an AppBar `thick` px deep on
     /// `edge` of `monitor`. Returns the rect Explorer granted.
-    pub fn set_pos(window: &WebviewWindow, edge: Edge, monitor: Rect, thick: i32, new: bool) -> Option<Rect> {
+    pub fn set_pos(
+        window: &WebviewWindow,
+        edge: Edge,
+        monitor: Rect,
+        work: Rect,
+        thick: i32,
+        new: bool,
+    ) -> Option<Rect> {
         let h = hwnd(window)?;
         unsafe {
             let mut abd = data(h);
@@ -697,30 +741,65 @@ mod appbar {
                 registered().lock().unwrap().insert(h.0 as isize);
             }
             abd.uEdge = abe(edge);
+            // Propose a strip already `thick` deep along the edge (Microsoft's
+            // pattern): Explorer slides it past the taskbar and other bars. A
+            // whole-monitor proposal collapsed to a 1 px sliver for a bottom
+            // bar on a monitor whose taskbar is at the top.
+            let r = super::strip(edge, monitor, thick);
             abd.rc = RECT {
-                left: monitor.x,
-                top: monitor.y,
-                right: monitor.x + monitor.width,
-                bottom: monitor.y + monitor.height,
+                left: r.x,
+                top: r.y,
+                right: r.x + r.width,
+                bottom: r.y + r.height,
             };
-            // Ask for the whole monitor side; Explorer moves the inner edge past
-            // the taskbar and other bars. Then set our depth from that edge.
+            let proposed = abd.rc;
             SHAppBarMessage(ABM_QUERYPOS, &mut abd);
+            let queried = abd.rc;
+            // Explorer may have shifted or trimmed it: restore our depth from
+            // the edge it kept.
             match edge {
                 Edge::Top => abd.rc.bottom = abd.rc.top + thick,
                 Edge::Bottom => abd.rc.top = abd.rc.bottom - thick,
                 Edge::Left => abd.rc.right = abd.rc.left + thick,
                 Edge::Right => abd.rc.left = abd.rc.right - thick,
             }
+            let to_rect = |rc: RECT| Rect {
+                x: rc.left,
+                y: rc.top,
+                width: rc.right - rc.left,
+                height: rc.bottom - rc.top,
+            };
+            if !super::usable_strip(edge, to_rect(abd.rc), monitor, thick) {
+                // Explorer's answer is unusable: take our strip of the work
+                // area (it already leaves out the taskbar and other bars).
+                let r = super::strip(edge, work, thick);
+                abd.rc = RECT {
+                    left: r.x,
+                    top: r.y,
+                    right: r.x + r.width,
+                    bottom: r.y + r.height,
+                };
+            }
+            let sent = abd.rc;
             SHAppBarMessage(ABM_SETPOS, &mut abd);
+            tracing::debug!(
+                "appbar {:?}: proposed {:?} queried {:?} sent {:?} granted {:?}",
+                edge,
+                (proposed.left, proposed.top, proposed.right, proposed.bottom),
+                (queried.left, queried.top, queried.right, queried.bottom),
+                (sent.left, sent.top, sent.right, sent.bottom),
+                (abd.rc.left, abd.rc.top, abd.rc.right, abd.rc.bottom)
+            );
             *last_set().lock().unwrap() = Some(std::time::Instant::now());
-            let r = abd.rc;
-            Some(Rect {
-                x: r.left,
-                y: r.top,
-                width: (r.right - r.left).max(1),
-                height: (r.bottom - r.top).max(1),
-            })
+            let granted = to_rect(abd.rc);
+            if !super::usable_strip(edge, granted, monitor, thick) {
+                // Even the reservation came back unusable: give it up; the
+                // caller places the bar as a floating strip instead.
+                SHAppBarMessage(ABM_REMOVE, &mut abd);
+                registered().lock().unwrap().remove(&(h.0 as isize));
+                return None;
+            }
+            Some(granted)
         }
     }
 
@@ -868,6 +947,22 @@ mod tests {
         // Not a dock: never "every monitor".
         let overlay = piece(r#"<template class="spawnable" data-id="x" data-anchor="c" data-monitor="all"></template>"#);
         assert!(!on_every_monitor(&overlay));
+    }
+
+    #[test]
+    fn usable_strip_rejects_explorers_broken_answers() {
+        let mon2 = Rect { x: 1920, y: 0, width: 3840, height: 2160 };
+        // What Explorer granted on display 2: a 1 px sliver at the top.
+        assert!(!usable_strip(Edge::Bottom, Rect { x: 1920, y: 72, width: 3840, height: 1 }, mon2, 66));
+        // Bottom pushed to y = 0 (negative height).
+        assert!(!usable_strip(Edge::Bottom, Rect { x: 1920, y: 2094, width: 3840, height: -2094 }, mon2, 66));
+        // The right answer.
+        assert!(usable_strip(Edge::Bottom, Rect { x: 1920, y: 2094, width: 3840, height: 66 }, mon2, 66));
+        // A top bar below a 72 px taskbar is fine; one on the wrong half is not.
+        assert!(usable_strip(Edge::Top, Rect { x: 1920, y: 72, width: 3840, height: 48 }, mon2, 48));
+        assert!(!usable_strip(Edge::Top, Rect { x: 1920, y: 2000, width: 3840, height: 48 }, mon2, 48));
+        // Off the monitor.
+        assert!(!usable_strip(Edge::Left, Rect { x: 0, y: 0, width: 60, height: 2160 }, mon2, 60));
     }
 
     #[test]

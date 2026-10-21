@@ -141,13 +141,14 @@ fn canonical_file(full: &Path, key: &str) -> AppResult<PathBuf> {
     Ok(canonical)
 }
 
-/// Long-lived assets get a short shared cache; HTML always revalidates.
+/// Images and fonts get a short shared cache; HTML, CSS and JS always
+/// revalidate. A cached script outlived page edits and SDK updates: a window
+/// opened within a minute of a reload ran the old `versailles.js`.
 pub(crate) fn cache_control_for_mime(mime: &str) -> &'static str {
     match mime {
         "text/html; charset=utf-8" => "no-store, no-cache, must-revalidate",
-        "text/css; charset=utf-8"
-        | "text/javascript; charset=utf-8"
-        | "image/png"
+        "text/css; charset=utf-8" | "text/javascript; charset=utf-8" => "no-cache",
+        "image/png"
         | "image/jpeg"
         | "image/svg+xml"
         | "font/woff2" => "public, max-age=60",

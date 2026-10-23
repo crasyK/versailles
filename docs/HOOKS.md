@@ -32,6 +32,8 @@ The host never grants more than that list. The catalog is fixed in [`src-tauri/s
 | `audio-control` | The active outputs; set volume, mute and the default output from a bar or overlay |
 | `display` | Projection mode and brightness per screen; change them from a bar or overlay |
 | `power-mode` | Power mode (efficiency / balanced / performance), energy saver; change the mode from a bar or overlay |
+| `wifi` | Wi-Fi networks in range; scan, join (with a password for a new one), disconnect from a bar or overlay. Network names reveal where you are: declare it only where needed |
+| `bluetooth` | Paired Bluetooth devices and whether they are connected; connect / disconnect audio devices from a bar or overlay |
 
 Unknown hook names are rejected.
 
@@ -83,7 +85,7 @@ Identity comes from the **calling window**, never from an IPC argument:
 
 That piece must list the hook in `data-hooks`. A piece that omitted `data-hooks="media"` cannot call `media_now` even if the JS tries.
 
-**Control class.** `quick_set` (`radios`, `audio-control`, `display`, `power-mode`) changes a system setting. Like exec class it is refused from the desktop wallpaper and from folder widgets; only a spawn window (bar, slide-out, overlay) whose piece declares the hook may change a setting. The SDK also asks for a click or key press first. Reading those hooks works anywhere.
+**Control class.** `quick_set` (`radios`, `audio-control`, `display`, `power-mode`, `wifi`, `bluetooth`) changes a system setting. Like exec class it is refused from the desktop wallpaper and from folder widgets; only a spawn window (bar, slide-out, overlay) whose piece declares the hook may change a setting. The SDK also asks for a click or key press first. Reading those hooks works anywhere.
 
 **Exec class.** `cli_exec`, `cli_exec_term`, `cli_search_files` (`shell`) and `pty_open` / `pty_write` / `pty_resize` / `pty_is_alive` / `pty_close` (`pty`) run code. They are refused from the desktop wallpaper entirely and only work from a spawn window whose piece declares the hook. `cli_open` (open a URL/path) is not exec class: the wallpaper may call it via `versailles.for(id).shell.open(...)`.
 
@@ -128,6 +130,8 @@ await hud.focus.onChange((w) => (title.textContent = w.title));
 | `radios` | 2 s | `{ wifi, bluetooth }` (`true`, `false`, or `null` without that radio) |
 | `power-mode` | 2 s | `{ supported, mode: "efficiency"\|"balanced"\|"performance"\|null, energySaver }` |
 | `audio-control` | 3 s | `{ outputs: [{ id, name, default }] }` (volume and mute are the `audio` hook) |
+| `bluetooth` | 3 s | `{ devices: [{ id, name, connected, audio }] }` (`audio`: headphones / speakers, can be connected) |
+| `wifi` | 5 s | `{ access: "ok"\|"location-denied"\|"no-adapter", connected, networks: [{ ssid, signal, secure, known, connected }] }` |
 | `display` | 5 s | `{ projection: "pc"\|"duplicate"\|"extend"\|"second", brightness: [{ id, device, kind: "internal"\|"external", level }] }` |
 
 A sensor is only read while some piece on the page declares its hook, and a value is pushed only when it changed. Pushes go only to the windows of pieces that declare the hook, by a script run in those windows (not a broadcast event). Sensor subscriptions also get the current value right away.
@@ -232,7 +236,7 @@ The SDK only runs these inside a click or key press (`navigator.userActivation`)
 
 ## Quick settings
 
-Four hooks for a quick-settings panel. Each reads like a sensor (`now()`, `onChange(fn)`, `on(hook, fn)`); each change goes through `quick_set` in the control class. It works only from a bar or overlay, only inside a click or key press, and answers the hook's new state. Every change is logged.
+Six hooks for a quick-settings panel. Each reads like a sensor (`now()`, `onChange(fn)`, `on(hook, fn)`); each change goes through `quick_set` in the control class. It works only from a bar or overlay, only inside a click or key press, and answers the hook's new state. Every change is logged.
 
 ```html
 <template class="spawnable" data-id="qs" data-anchor="tr" data-w="320" data-h="420"
@@ -253,9 +257,19 @@ const { brightness, projection } = await qs.display.now();     // brightness: [{
 await qs.display.setBrightness(brightness[0].id, 60);          // 0–100
 await qs.display.project("extend");                            // "pc" | "duplicate" | "extend" | "second"
 await qs.powerMode.set("balanced");                            // "efficiency" | "balanced" | "performance"
+
+await qs.wifi.scan();                                          // no click needed; the list updates seconds later
+await qs.on("wifi", ({ networks }) => draw(networks));         // [{ ssid, signal, secure, known, connected }]
+await qs.wifi.connect("Home");                                 // a known network
+await qs.wifi.connect("Café", "password");                     // a new secured one
+await qs.wifi.disconnect();
+const { devices } = await qs.bluetooth.now();                  // [{ id, name, connected, audio }]
+await qs.bluetooth.connect(devices[0].id);                     // audio devices only
 ```
 
 - **Radios:** Windows' radio switches. Wi-Fi and Bluetooth only; airplane mode is not covered.
+- **Wi-Fi** uses the WLAN API. Joining a new network saves a Windows profile (WPA2 / WPA3 personal or open; enterprise sign-in is not supported). Windows 11 24H2 may hide networks until location access is on: the read then says `access: "location-denied"`. Windows only refreshes the list on a scan, so call `scan()` when the panel opens.
+- **Bluetooth** lists paired devices (classic and LE) from a device watcher, so a read is instant and changes are pushed. Windows has no public call to connect a device; headphones and speakers are connected and disconnected through their audio driver (as Windows' own audio flyout does). Mice and keyboards reconnect by themselves and show their state only.
 - **Volume and mute** act on the default output; read them through `audio`. **The default output** uses the same undocumented call as Windows' sound settings and takes only ids from `outputs`.
 - **Brightness:** built-in panels through WMI (`kind: "internal"`), external monitors over DDC/CI (`kind: "external"`, `device` is the screen, e.g. `\\.\DISPLAY2`; slow and not every monitor answers). A screen that offers neither is missing from the list.
 - **Projection** is Win+P. `"second"` turns the built-in screen off.

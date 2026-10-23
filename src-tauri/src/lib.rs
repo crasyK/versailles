@@ -35,6 +35,7 @@ mod storage;
 mod toasts;
 mod watcher;
 mod weather;
+mod wireless;
 mod window_manager;
 
 use api::start_api_server;

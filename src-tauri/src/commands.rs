@@ -373,7 +373,7 @@ pub async fn quick_set(
 ) -> AppResult<serde_json::Value> {
     let hook = action.hook();
     let acting = require_hook(&state, &webview, caller.as_deref(), hook, HookClass::Control)?;
-    tracing::info!("quick settings: '{acting}' requested {action:?}");
+    tracing::info!("quick settings: '{acting}' requested {}", action.describe());
     tokio::task::spawn_blocking(move || {
         crate::quick::apply(&action)?;
         crate::quick::read(hook)

@@ -41,6 +41,8 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "nat
 [target.'cfg(windows)'.dependencies]
 # `#[interface]` for undocumented COM interfaces (quick.rs); same version as `windows`.
 windows-core = "0.61"
+# WinRT collection arguments (wireless.rs); same version as `windows` uses.
+windows-collections = "0.2"
 windows = { version = "0.61", features = [
   "Foundation",
   "Devices_Geolocation",
@@ -60,6 +62,10 @@ windows = { version = "0.61", features = [
   "Win32_System_Rpc",
   "Win32_Devices_Display",
   "Devices_Radios",
+  "Devices_Enumeration",
+  "Win32_NetworkManagement_WiFi",
+  "Win32_NetworkManagement_Ndis",
+  "Win32_Media_KernelStreaming",
   "Foundation_Collections",
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_Shell",

@@ -34,9 +34,27 @@ pub enum QuickAction {
     Project { mode: String },
     /// `"efficiency"`, `"balanced"` or `"performance"`.
     PowerMode { mode: String },
+    /// Look for Wi-Fi networks now (the list updates a few seconds later).
+    WifiScan,
+    /// Join a network in range; `password` for a new secured one.
+    WifiConnect { ssid: String, password: Option<String> },
+    WifiDisconnect,
+    /// `id` from `bluetooth`'s `devices`; audio devices only.
+    BluetoothConnect { id: String },
+    BluetoothDisconnect { id: String },
 }
 
 impl QuickAction {
+    /// For the log: the action without a Wi-Fi password.
+    pub fn describe(&self) -> String {
+        match self {
+            QuickAction::WifiConnect { ssid, password } => {
+                format!("WifiConnect {{ ssid: {ssid:?}, password: {} }}", if password.is_some() { "<set>" } else { "none" })
+            }
+            other => format!("{other:?}"),
+        }
+    }
+
     /// The hook a piece must declare for this change.
     pub fn hook(&self) -> &'static str {
         match self {
@@ -44,6 +62,8 @@ impl QuickAction {
             QuickAction::Volume { .. } | QuickAction::Mute { .. } | QuickAction::Output { .. } => "audio-control",
             QuickAction::Brightness { .. } | QuickAction::Project { .. } => "display",
             QuickAction::PowerMode { .. } => "power-mode",
+            QuickAction::WifiScan | QuickAction::WifiConnect { .. } | QuickAction::WifiDisconnect => "wifi",
+            QuickAction::BluetoothConnect { .. } | QuickAction::BluetoothDisconnect { .. } => "bluetooth",
         }
     }
 }
@@ -55,6 +75,7 @@ pub fn read(hook: &str) -> AppResult<Value> {
         "audio-control" => imp::outputs(),
         "display" => imp::display(),
         "power-mode" => imp::power_mode(),
+        "wifi" | "bluetooth" => crate::wireless::read(hook),
         _ => Err(AppError::msg(format!("'{hook}' is not a quick-settings hook"))),
     }
 }
@@ -69,6 +90,11 @@ pub fn apply(action: &QuickAction) -> AppResult<()> {
         QuickAction::Brightness { id, level } => imp::set_brightness(id, level.clamp(0.0, 100.0).round() as u32),
         QuickAction::Project { mode } => imp::project(mode),
         QuickAction::PowerMode { mode } => imp::set_power_mode(mode),
+        QuickAction::WifiScan => crate::wireless::wifi_scan(),
+        QuickAction::WifiConnect { ssid, password } => crate::wireless::wifi_connect(ssid, password.as_deref()),
+        QuickAction::WifiDisconnect => crate::wireless::wifi_disconnect(),
+        QuickAction::BluetoothConnect { id } => crate::wireless::bluetooth_connect(id, true),
+        QuickAction::BluetoothDisconnect { id } => crate::wireless::bluetooth_connect(id, false),
     }
 }
 
@@ -668,6 +694,10 @@ mod tests {
         assert_eq!(a.hook(), "display");
         let a: QuickAction = serde_json::from_str(r#"{ "kind": "powerMode", "mode": "balanced" }"#).unwrap();
         assert_eq!(a.hook(), "power-mode");
+        let a: QuickAction = serde_json::from_str(r#"{ "kind": "wifiConnect", "ssid": "Home" }"#).unwrap();
+        assert_eq!(a.hook(), "wifi");
+        let a: QuickAction = serde_json::from_str(r#"{ "kind": "bluetoothDisconnect", "id": "{x}" }"#).unwrap();
+        assert_eq!(a.hook(), "bluetooth");
         assert!(serde_json::from_str::<QuickAction>(r#"{ "kind": "reboot" }"#).is_err());
     }
 

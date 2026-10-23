@@ -253,7 +253,7 @@
     /**
      * `fn(data)` on each push of `name`: a hook (`media`, `battery`,
      * `network`, `focus`, `audio`, `clipboard`, `notify`, `radios`,
-     * `audio-control`, `display`, `power-mode`; must be declared) or a piece event
+     * `audio-control`, `display`, `power-mode`, `wifi`, `bluetooth`; must be declared) or a piece event
      * (`shown`, `hidden`, `idle`, `active`, `theme-changed`). Sensor hooks
      * also call `fn` with the current value right away. Returns a function
      * that unsubscribes.
@@ -425,6 +425,35 @@
         /** Win+P: `"pc"`, `"duplicate"`, `"extend"` or `"second"`. */
         async project(mode) {
           return quick("display", { kind: "project", mode: String(mode) });
+        },
+      }),
+      /**
+       * Wi-Fi networks in range: `{ access, connected, networks: [{ ssid, signal, secure, known, connected }] }`.
+       * `access: "location-denied"` when Windows' location permission is off.
+       */
+      wifi: Object.assign(sensor("wifi"), {
+        /** Look for networks now; the list updates a few seconds later. No click needed. */
+        async scan() {
+          return hostInvoke("wifi", "quick_set", { action: { kind: "wifiScan" } });
+        },
+        /** Join `ssid`; `password` for a new secured network (known ones need none). */
+        async connect(ssid, password) {
+          const action = { kind: "wifiConnect", ssid: String(ssid) };
+          if (password != null && password !== "") action.password = String(password);
+          return quick("wifi", action);
+        },
+        async disconnect() {
+          return quick("wifi", { kind: "wifiDisconnect" });
+        },
+      }),
+      /** Paired Bluetooth devices: `{ devices: [{ id, name, connected, audio }] }`. */
+      bluetooth: Object.assign(sensor("bluetooth"), {
+        /** Audio devices (`audio: true`) only. */
+        async connect(id) {
+          return quick("bluetooth", { kind: "bluetoothConnect", id: String(id) });
+        },
+        async disconnect(id) {
+          return quick("bluetooth", { kind: "bluetoothDisconnect", id: String(id) });
         },
       }),
       /** `{ supported, mode, energySaver }`; `mode`: `"efficiency"`, `"balanced"`, `"performance"`. */
@@ -683,7 +712,7 @@
     return () => pushSubscribers.delete(sub);
   }
   /** Hooks whose changes the host pushes; `on()` needs them declared. */
-  const QUICK_HOOKS = ["radios", "audio-control", "display", "power-mode"];
+  const QUICK_HOOKS = ["radios", "audio-control", "display", "power-mode", "wifi", "bluetooth"];
   const PUSH_HOOKS = new Set(["media", "battery", "network", "focus", "audio", "clipboard", "windows", "notify"].concat(QUICK_HOOKS));
   const SENSOR_HOOKS = new Set(["battery", "network", "focus", "audio"].concat(QUICK_HOOKS));
   // On the wallpaper this page runs in an iframe of the host shell, which
@@ -781,6 +810,8 @@
     audioControl: scoped.audioControl,
     display: scoped.display,
     powerMode: scoped.powerMode,
+    wifi: scoped.wifi,
+    bluetooth: scoped.bluetooth,
     windows: scoped.windows,
     notify: scoped.notify,
     /** Data the last `spawn(id, data)` handed this spawnable (or undefined). */

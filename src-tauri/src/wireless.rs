@@ -80,7 +80,7 @@ mod imp {
     use windows::core::{GUID, HSTRING, PCWSTR};
     use windows::Win32::Foundation::{ERROR_ACCESS_DENIED, HANDLE};
     use windows::Win32::NetworkManagement::WiFi::{
-        WlanCloseHandle, WlanConnect, WlanDisconnect, WlanEnumInterfaces, WlanFreeMemory, WlanGetAvailableNetworkList,
+        WlanCloseHandle, WlanConnect, WlanDeleteProfile, WlanDisconnect, WlanEnumInterfaces, WlanFreeMemory, WlanGetAvailableNetworkList,
         WlanOpenHandle, WlanScan, WlanSetProfile, dot11_BSS_type_infrastructure, wlan_connection_mode_profile,
         DOT11_AUTH_ALGO_80211_OPEN, DOT11_AUTH_ALGO_RSNA_PSK, DOT11_AUTH_ALGO_WPA3_SAE, DOT11_AUTH_ALGO_WPA_PSK,
         WLAN_AVAILABLE_NETWORK, WLAN_AVAILABLE_NETWORK_CONNECTED, WLAN_AVAILABLE_NETWORK_HAS_PROFILE,
@@ -237,7 +237,8 @@ mod imp {
             .find(|n| n.ssid == ssid)
             .ok_or_else(|| AppError::msg(format!("wifi: '{ssid}' is not in range")))?;
         let password = password.filter(|p| !p.is_empty());
-        let profile = if net.known && password.is_none() {
+        let created = !(net.known && password.is_none());
+        let profile = if !created {
             net.profile.clone()
         } else {
             let (auth, cipher) = match net.auth {
@@ -269,10 +270,40 @@ mod imp {
             dwFlags: 0,
         };
         let r = unsafe { WlanConnect(w.0, &iface, &params, None) };
+        let joined = r == 0 && wait_for(&w, &iface, CONNECT_WAIT, |list| list.iter().any(|n| n.ssid == ssid && n.connected));
+        if joined {
+            return Ok(());
+        }
+        // A profile we just saved with a wrong password would make the
+        // network look known and fail again: drop it.
+        if created {
+            unsafe {
+                WlanDeleteProfile(w.0, &iface, &HSTRING::from(profile.as_str()), None);
+            }
+        }
         if r != 0 {
             return Err(AppError::msg(format!("wifi: connect to '{ssid}' failed (error {r})")));
         }
-        Ok(())
+        Err(AppError::msg(format!(
+            "wifi: '{ssid}' did not connect within {} s{}",
+            CONNECT_WAIT.as_secs(),
+            if created { " (wrong password?)" } else { "" }
+        )))
+    }
+
+    /// How long a connect waits for Windows to report the network joined.
+    const CONNECT_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
+
+    /// Poll the network list until `done` or `timeout`.
+    fn wait_for(w: &Wlan, iface: &GUID, timeout: std::time::Duration, done: impl Fn(&[Network]) -> bool) -> bool {
+        let end = std::time::Instant::now() + timeout;
+        while std::time::Instant::now() < end {
+            if networks(w, iface).is_ok_and(|list| done(&list)) {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+        false
     }
 
     pub fn wifi_disconnect() -> AppResult<()> {
@@ -282,6 +313,8 @@ mod imp {
         if r != 0 {
             return Err(AppError::msg(format!("wifi: disconnect failed (error {r})")));
         }
+        // Answer with the new state, not the one from before.
+        wait_for(&w, &iface, std::time::Duration::from_secs(5), |list| !list.iter().any(|n| n.connected));
         Ok(())
     }
 

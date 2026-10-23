@@ -1274,10 +1274,13 @@
             $('.q-bt').onclick = function () { act(me.radios.set('bluetooth', !radios.bluetooth)); };
 
             // Wi-Fi: networks in range; a new secured one asks for its password here.
-            var joining = null;
+            // `busy` names the network a connect / disconnect is running for.
+            var joining = null, busy = null, lastWifi = null;
             function renderNets(w) {
+              if (w) lastWifi = w; else w = lastWifi;
               var box = $('.q-nets');
-              if (box.contains(document.activeElement)) return; // typing a password
+              var f = document.activeElement;
+              if (f && f.tagName === 'INPUT' && box.contains(f)) return; // typing a password
               box.innerHTML = '';
               if (!w) return;
               if (w.access === 'location-denied') {
@@ -1288,19 +1291,22 @@
               (w.networks || []).forEach(function (n) {
                 var row = el('div', 'item' + (n.connected ? ' current' : ''));
                 row.appendChild(el('span', 'name', n.ssid));
-                row.appendChild(el('span', 'meta', (n.secure ? 'locked · ' : '') + n.signal + '%'));
-                if (n.connected) {
+                var label = busy === n.ssid ? (n.connected ? 'disconnecting…' : 'connecting…') : (n.secure ? 'locked · ' : '') + n.signal + '%';
+                row.appendChild(el('span', 'meta', label));
+                if (busy) {
+                  row.classList.add('static'); // one change at a time
+                } else if (n.connected) {
                   var off = el('button', null, 'disconnect');
-                  off.onclick = function (e) { e.stopPropagation(); act(me.wifi.disconnect()); };
+                  off.onclick = function (e) { e.stopPropagation(); run(n.ssid, me.wifi.disconnect()); };
                   row.appendChild(off);
                 } else {
                   row.onclick = function () {
-                    if (n.secure && !n.known) { joining = n.ssid; renderNets(w); return; }
-                    act(me.wifi.connect(n.ssid));
+                    if (n.secure && !n.known) { joining = n.ssid; renderNets(); return; }
+                    run(n.ssid, me.wifi.connect(n.ssid));
                   };
                 }
                 box.appendChild(row);
-                if (joining === n.ssid && !n.connected) {
+                if (joining === n.ssid && !n.connected && !busy) {
                   var form = el('form', 'join');
                   var pass = el('input');
                   pass.type = 'password';
@@ -1312,13 +1318,20 @@
                   form.onsubmit = function (e) {
                     e.preventDefault();
                     joining = null;
-                    act(me.wifi.connect(n.ssid, pass.value));
+                    pass.blur();
+                    run(n.ssid, me.wifi.connect(n.ssid, pass.value));
                   };
                   box.appendChild(form);
                   pass.focus();
                 }
               });
               if (!(w.networks || []).length) box.appendChild(el('div', 'note', 'no networks found'));
+            }
+            // Show the change as running, then redraw from the state it answers.
+            function run(ssid, promise) {
+              busy = ssid;
+              renderNets();
+              act(promise).then(function (w) { busy = null; renderNets(w); });
             }
             me.on('wifi', renderNets).catch(function () {});
             function scan() { me.wifi.scan().catch(function () {}); }
@@ -1327,15 +1340,31 @@
             me.on('shown', scan).catch(function () {});
 
             // Bluetooth: paired devices; audio ones can be connected from here.
-            me.on('bluetooth', function (b) {
+            // The device answers seconds later, through the pushed list.
+            var btPending = {}, lastBt = null;
+            function renderDevs(b) {
+              if (b) lastBt = b; else b = lastBt;
               var box = $('.q-devs');
               box.innerHTML = '';
               ((b && b.devices) || []).forEach(function (d) {
+                var pending = btPending[d.id];
+                if (pending && pending.want === d.connected) { delete btPending[d.id]; pending = null; }
                 var row = el('div', 'item' + (d.connected ? ' current' : '') + (d.audio ? '' : ' static'));
                 row.appendChild(el('span', 'name', d.name));
-                if (d.audio) {
+                if (pending) {
+                  row.appendChild(el('span', 'meta', pending.want ? 'connecting…' : 'disconnecting…'));
+                } else if (d.audio) {
                   var btn = el('button', d.connected ? 'on' : null, d.connected ? 'disconnect' : 'connect');
-                  btn.onclick = function () { act(d.connected ? me.bluetooth.disconnect(d.id) : me.bluetooth.connect(d.id)); };
+                  btn.onclick = function () {
+                    var want = !d.connected;
+                    btPending[d.id] = { want: want };
+                    renderDevs();
+                    // Give up the label if nothing changed within 15 s.
+                    setTimeout(function () { if (btPending[d.id]) { delete btPending[d.id]; renderDevs(); } }, 15000);
+                    act(want ? me.bluetooth.connect(d.id) : me.bluetooth.disconnect(d.id)).then(function (r) {
+                      if (r === undefined) { delete btPending[d.id]; renderDevs(); } // refused
+                    });
+                  };
                   row.appendChild(btn);
                 } else {
                   row.appendChild(el('span', 'meta', d.connected ? 'connected' : 'not connected'));
@@ -1343,7 +1372,8 @@
                 box.appendChild(row);
               });
               if (!((b && b.devices) || []).length) box.appendChild(el('div', 'note', 'no paired devices'));
-            }).catch(function () {});
+            }
+            me.on('bluetooth', renderDevs).catch(function () {});
 
             var muted = false;
             me.on('audio', function (a) {

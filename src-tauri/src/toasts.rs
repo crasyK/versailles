@@ -296,8 +296,23 @@ mod imp {
         listener.RemoveNotification(id).map_err(err)
     }
 
+    /// `ClearNotifications` leaves the list untouched for an unpackaged
+    /// process (it answers OK), while removing one by one works: do both.
     pub fn clear() -> AppResult<()> {
-        allowed()?.ClearNotifications().map_err(err)
+        let listener = allowed()?;
+        let _ = listener.ClearNotifications();
+        let mut left = 0;
+        for n in list()? {
+            if let Ok(id) = n.Id() {
+                if listener.RemoveNotification(id).is_err() {
+                    left += 1;
+                }
+            }
+        }
+        if left > 0 {
+            return Err(AppError::msg(format!("notify-control: {left} notification(s) could not be removed")));
+        }
+        Ok(())
     }
 }
 

@@ -65,7 +65,7 @@ A spawnable whose `data-anchor` is a grid point (`tl`, `tc`, `ml`, `c`, `mr`, `b
 - Click-dim dismisses; blur dismisses unless `data-dismiss-on-blur="false"` (default off for `pty` pieces)
 - Hide/show (not destroy) so an embedded PTY survives Alt+Space
 
-`data-anchor="tr"` (or no anchor) stays a docked slide-out. Toggle closes it. Top-right is the slide-out's place, so the grid has no `tr` overlay.
+`data-anchor="tr"` (or no anchor) stays a docked slide-out. Toggle closes it. A slide-out's window can be dragged from any element that is not a button, link, form field or label, so a click on a plain element (a list row, a card) starts a drag instead of a click. Put `data-no-drag` on clickable areas (or on the whole panel), or set `spawnables.<id>.overlay.draggable` to `false`. Top-right is the slide-out's place, so the grid has no `tr` overlay.
 
 Every spawnable with `hotkey` in `data-hooks` can bind its own combo. Pressing that shortcut toggles that piece (overlay hide/show, slide-out open/close). Tray left-click still toggles the first such piece.
 

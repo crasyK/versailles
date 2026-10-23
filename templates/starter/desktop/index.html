@@ -1226,7 +1226,8 @@
         .qs .note { color: var(--ink-mut); font-size: 11px; padding: 2px 8px; }
         .qs .err { color: var(--ink-mut); font-size: 11px; min-height: 1em; }
       </style>
-      <div class="qs">
+      <!-- data-no-drag: a slide-out drags from any plain element, which would swallow clicks on the rows. -->
+      <div class="qs" data-no-drag>
         <h3>wi-fi <button class="q-wifi">on</button></h3>
         <div class="list q-nets"></div>
         <div class="row"><button class="q-scan">scan</button></div>
@@ -1275,12 +1276,14 @@
 
             // Wi-Fi: networks in range; a new secured one asks for its password here.
             // `busy` names the network a connect / disconnect is running for.
-            var joining = null, busy = null, lastWifi = null;
+            var joining = null, focusJoin = false, busy = null, lastWifi = null;
             function renderNets(w) {
               if (w) lastWifi = w; else w = lastWifi;
               var box = $('.q-nets');
-              var f = document.activeElement;
-              if (f && f.tagName === 'INPUT' && box.contains(f)) return; // typing a password
+              // A redraw keeps a half-typed password and its cursor.
+              var typed = box.querySelector('.join input');
+              var keep = typed ? { value: typed.value, focused: document.activeElement === typed,
+                                   start: typed.selectionStart, end: typed.selectionEnd } : null;
               box.innerHTML = '';
               if (!w) return;
               if (w.access === 'location-denied') {
@@ -1301,7 +1304,8 @@
                   row.appendChild(off);
                 } else {
                   row.onclick = function () {
-                    if (n.secure && !n.known) { joining = n.ssid; renderNets(); return; }
+                    if (n.secure && !n.known) { joining = n.ssid; focusJoin = true; renderNets(); return; }
+                    joining = null;
                     run(n.ssid, me.wifi.connect(n.ssid));
                   };
                 }
@@ -1315,6 +1319,7 @@
                   go.type = 'submit';
                   form.appendChild(pass);
                   form.appendChild(go);
+                  if (keep) pass.value = keep.value;
                   form.onsubmit = function (e) {
                     e.preventDefault();
                     joining = null;
@@ -1322,7 +1327,11 @@
                     run(n.ssid, me.wifi.connect(n.ssid, pass.value));
                   };
                   box.appendChild(form);
-                  pass.focus();
+                  if (focusJoin || (keep && keep.focused)) {
+                    pass.focus();
+                    if (keep && keep.focused) pass.setSelectionRange(keep.start, keep.end);
+                  }
+                  focusJoin = false;
                 }
               });
               if (!(w.networks || []).length) box.appendChild(el('div', 'note', 'no networks found'));
@@ -1331,7 +1340,12 @@
             function run(ssid, promise) {
               busy = ssid;
               renderNets();
-              act(promise).then(function (w) { busy = null; renderNets(w); });
+              act(promise).then(function (w) {
+                busy = null;
+                renderNets(w);
+                // A list read just before the change may still be on its way: read again.
+                setTimeout(function () { me.wifi.now().then(renderNets, function () {}); }, 1500);
+              });
             }
             me.on('wifi', renderNets).catch(function () {});
             function scan() { me.wifi.scan().catch(function () {}); }

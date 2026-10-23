@@ -192,6 +192,19 @@ pub fn icon(id: i64) -> AppResult<Option<String>> {
     imp::icon(id)
 }
 
+/// Any icon handle (another process's too) as a PNG data URL, drawn at its
+/// own size (16–64 px). For the tray, whose icons are handles, not windows.
+#[cfg(windows)]
+pub fn icon_handle_url(icon: isize) -> Option<String> {
+    imp::icon_handle_url(icon)
+}
+
+/// Full executable path of a process.
+#[cfg(windows)]
+pub fn process_path(pid: u32) -> Option<String> {
+    imp::process_path(pid)
+}
+
 /// Run a control action on a listed window (never one of Versailles').
 pub fn control(id: i64, action: Action, to: Option<MoveTo>) -> AppResult<()> {
     let to = match action {
@@ -333,7 +346,7 @@ mod imp {
     use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, RECT, WPARAM};
     use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
     use windows::Win32::Graphics::Gdi::{
-        CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GetMonitorInfoW,
+        CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GetMonitorInfoW, GetObjectW, BITMAP,
         MonitorFromWindow, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
         HGDIOBJ, MONITORINFO, MONITORINFOEXW, MONITOR_DEFAULTTONEAREST,
     };
@@ -344,10 +357,10 @@ mod imp {
     use windows::Win32::UI::Shell::ExtractIconExW;
     use windows::Win32::UI::WindowsAndMessaging::{
         BringWindowToTop, DestroyIcon, DrawIconEx, EnumWindows, GetClassLongPtrW, GetClassNameW,
-        GetForegroundWindow, GetWindow, GetWindowLongPtrW, GetWindowPlacement, GetWindowTextLengthW,
+        GetForegroundWindow, GetIconInfo, GetWindow, GetWindowLongPtrW, GetWindowPlacement, GetWindowTextLengthW,
         GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, IsZoomed,
         PostMessageW, SendMessageTimeoutW, SetForegroundWindow, SetWindowPos, ShowWindow, DI_MASK,
-        DI_NORMAL, GCLP_HICON, GCLP_HICONSM, GWL_EXSTYLE, GW_OWNER, HICON, ICON_BIG, ICON_SMALL2,
+        DI_NORMAL, GCLP_HICON, GCLP_HICONSM, GWL_EXSTYLE, GW_OWNER, HICON, ICONINFO, ICON_BIG, ICON_SMALL2,
         SMTO_ABORTIFHUNG, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_MAXIMIZE,
         SW_MINIMIZE, SW_RESTORE, WINDOWPLACEMENT, WM_CLOSE, WM_GETICON, WS_EX_APPWINDOW,
         WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
@@ -442,7 +455,13 @@ mod imp {
         if let Some(hit) = exe_cache().lock().unwrap().get(&pid) {
             return hit.clone();
         }
-        let path = unsafe {
+        let path = process_path(pid);
+        exe_cache().lock().unwrap().insert(pid, path.clone());
+        path
+    }
+
+    pub fn process_path(pid: u32) -> Option<String> {
+        unsafe {
             OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
                 .ok()
                 .and_then(|handle| {
@@ -458,9 +477,7 @@ mod imp {
                     let _ = CloseHandle(handle);
                     ok.then(|| String::from_utf16_lossy(&buf[..size as usize]))
                 })
-        };
-        exe_cache().lock().unwrap().insert(pid, path.clone());
-        path
+        }
     }
 
     fn monitor_of(h: HWND) -> Option<u32> {
@@ -638,13 +655,49 @@ mod imp {
                 png
             }),
         }
-        .map(|png| format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(png)));
+        .map(|png| data_url(&png));
         icon_cache().lock().unwrap().insert(key, url.clone());
         url
     }
 
-    /// Draw `icon` at 32×32 into a DIB and read it back.
-    fn draw(icon: HICON, flags: windows::Win32::UI::WindowsAndMessaging::DI_FLAGS, fill: u8) -> Option<Vec<u8>> {
+    fn data_url(png: &[u8]) -> String {
+        format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(png))
+    }
+
+    pub fn icon_handle_url(icon: isize) -> Option<String> {
+        let icon = HICON(icon as *mut _);
+        icon_png_sized(icon, native_size(icon)).map(|png| data_url(&png))
+    }
+
+    /// Width of the icon's own bitmap, kept to 16–64 px (32 when unknown).
+    fn native_size(icon: HICON) -> i32 {
+        unsafe {
+            let mut info = ICONINFO::default();
+            if GetIconInfo(icon, &mut info).is_err() {
+                return ICON_PX;
+            }
+            let mut bm = BITMAP::default();
+            let source = if info.hbmColor.is_invalid() { info.hbmMask } else { info.hbmColor };
+            let ok = GetObjectW(
+                HGDIOBJ(source.0),
+                std::mem::size_of::<BITMAP>() as i32,
+                Some(&mut bm as *mut BITMAP as *mut _),
+            ) != 0;
+            for b in [info.hbmColor, info.hbmMask] {
+                if !b.is_invalid() {
+                    let _ = DeleteObject(HGDIOBJ(b.0));
+                }
+            }
+            if ok && bm.bmWidth > 0 {
+                bm.bmWidth.clamp(16, 64)
+            } else {
+                ICON_PX
+            }
+        }
+    }
+
+    /// Draw `icon` at `px`×`px` into a DIB and read it back.
+    fn draw(icon: HICON, flags: windows::Win32::UI::WindowsAndMessaging::DI_FLAGS, fill: u8, px: i32) -> Option<Vec<u8>> {
         unsafe {
             let dc = CreateCompatibleDC(None);
             if dc.is_invalid() {
@@ -653,8 +706,8 @@ mod imp {
             let bmi = BITMAPINFO {
                 bmiHeader: BITMAPINFOHEADER {
                     biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-                    biWidth: ICON_PX,
-                    biHeight: -ICON_PX, // top-down
+                    biWidth: px,
+                    biHeight: -px, // top-down
                     biPlanes: 1,
                     biBitCount: 32,
                     biCompression: BI_RGB.0,
@@ -667,10 +720,10 @@ mod imp {
                 let _ = DeleteDC(dc);
                 return None;
             };
-            let len = (ICON_PX * ICON_PX * 4) as usize;
+            let len = (px * px * 4) as usize;
             let old = SelectObject(dc, HGDIOBJ(bitmap.0));
             std::ptr::write_bytes(bits as *mut u8, fill, len);
-            let ok = DrawIconEx(dc, 0, 0, icon, ICON_PX, ICON_PX, 0, None, flags).is_ok();
+            let ok = DrawIconEx(dc, 0, 0, icon, px, px, 0, None, flags).is_ok();
             let pixels = ok.then(|| std::slice::from_raw_parts(bits as *const u8, len).to_vec());
             SelectObject(dc, old);
             let _ = DeleteObject(HGDIOBJ(bitmap.0));
@@ -680,15 +733,19 @@ mod imp {
     }
 
     fn icon_png(icon: HICON) -> Option<Vec<u8>> {
-        let color = draw(icon, DI_NORMAL, 0)?;
+        icon_png_sized(icon, ICON_PX)
+    }
+
+    fn icon_png_sized(icon: HICON, px: i32) -> Option<Vec<u8>> {
+        let color = draw(icon, DI_NORMAL, 0, px)?;
         // An icon without alpha: its mask (black = opaque) gives the shape.
         let opaque: Option<Vec<bool>> = if color.chunks(4).all(|p| p[3] == 0) {
-            draw(icon, DI_MASK, 0xFF).map(|mask| mask.chunks(4).map(|p| p[0] == 0).collect())
+            draw(icon, DI_MASK, 0xFF, px).map(|mask| mask.chunks(4).map(|p| p[0] == 0).collect())
         } else {
             None
         };
         let rgba = bgra_to_rgba(&color, opaque.as_deref());
-        Some(png_rgba(ICON_PX as u32, ICON_PX as u32, &rgba))
+        Some(png_rgba(px as u32, px as u32, &rgba))
     }
 
     /// Bring `h` to the front. Windows only lets the foreground process do

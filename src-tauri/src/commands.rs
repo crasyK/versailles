@@ -432,6 +432,42 @@ pub async fn windows_control(
         .map_err(|e| crate::error::AppError::msg(e.to_string()))?
 }
 
+/// `tray` hook: the notification-area icons, `{ active, icons }`. Versailles
+/// holds them only while it hides the Windows taskbar (`active`); changes
+/// are pushed (see `tray`).
+#[tauri::command]
+pub async fn tray_list(
+    webview: Webview,
+    state: State<'_, AppState>,
+    caller: Option<String>,
+) -> AppResult<serde_json::Value> {
+    require_hook(&state, &webview, caller.as_deref(), "tray", HookClass::Plain)?;
+    Ok(crate::tray::state())
+}
+
+/// `tray` hook: click one icon, as Explorer would. `x` / `y` are physical
+/// screen pixels (where the app opens its menu); the cursor by default.
+/// Plain class like `windows-control`: a click only does what clicking the
+/// icon in Explorer's tray does. The SDK asks for a click or key press.
+#[tauri::command]
+pub async fn tray_click(
+    webview: Webview,
+    state: State<'_, AppState>,
+    id: u32,
+    button: Option<crate::tray::Button>,
+    x: Option<i32>,
+    y: Option<i32>,
+    caller: Option<String>,
+) -> AppResult<()> {
+    let acting = require_hook(&state, &webview, caller.as_deref(), "tray", HookClass::Plain)?;
+    let button = button.unwrap_or(crate::tray::Button::Left);
+    tracing::debug!("tray: '{acting}' {button:?} click on {id}");
+    let at = x.zip(y);
+    tokio::task::spawn_blocking(move || crate::tray::click(id, button, at))
+        .await
+        .map_err(|e| crate::error::AppError::msg(e.to_string()))?
+}
+
 /// Every monitor (logical sizes, display numbers, primary flag) and the one
 /// the calling window is on. Read-only; no hook needed.
 #[tauri::command]

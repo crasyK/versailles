@@ -1,4 +1,4 @@
-/*! versailles-sdk 0.9.0 */
+/*! versailles-sdk 0.10.0 */
 /**
  * Versailles widget SDK — named hooks, native chrome, browser stubs.
  *
@@ -14,7 +14,7 @@
   "use strict";
 
   /** Keep in step with the marker on the first line. */
-  const SDK_VERSION = "0.9.0";
+  const SDK_VERSION = "0.10.0";
 
   function inIframe() {
     try {
@@ -252,7 +252,7 @@
 
     /**
      * `fn(data)` on each push of `name`: a hook (`media`, `battery`,
-     * `network`, `focus`, `audio`, `clipboard`, `notify`, `radios`,
+     * `network`, `focus`, `audio`, `clipboard`, `notify`, `tray`, `radios`,
      * `audio-control`, `display`, `power-mode`, `wifi`, `bluetooth`, `dnd`; must be declared) or a piece event
      * (`shown`, `hidden`, `idle`, `active`, `theme-changed`). Sensor hooks
      * also call `fn` with the current value right away. Returns a function
@@ -390,9 +390,92 @@
       },
     };
 
+    /**
+     * Notification-area icons (`tray` hook). Versailles holds them only
+     * while it hides the Windows taskbar (`shell.hideTaskbar`); otherwise
+     * Explorer's tray has them and `active` is false. An icon: { id, tip,
+     * app, exe, pid, guid, system, clickable, icon }.
+     */
+    const tray = {
+      /** `{ active, icons }`. */
+      async state() {
+        const s = await hostInvoke("tray", "tray_list", {});
+        return s && Array.isArray(s.icons) ? s : { active: false, icons: [] };
+      },
+      async list() {
+        return (await tray.state()).icons;
+      },
+      /** `fn({ type: "added"|"changed"|"removed", id, icon })` per change, `{ type: "active", active }` when Versailles starts or stops holding them. */
+      async onChange(fn) {
+        return on("tray", fn);
+      },
+      /**
+       * `fn(icons, active)` now and after every change, oldest icon first.
+       * Returns a function that stops tracking.
+       */
+      async track(fn) {
+        let list = null;
+        let active = false;
+        const pending = [];
+        const emit = () => {
+          try {
+            fn(list.slice(), active);
+          } catch (err) {
+            console.error(err);
+          }
+        };
+        const apply = (ev) => {
+          if (!ev) return;
+          if (ev.type === "active") {
+            active = !!ev.active;
+            if (!active) list = [];
+            return;
+          }
+          const i = list.findIndex((t) => t.id === ev.id);
+          if (ev.type === "removed") {
+            if (i >= 0) list.splice(i, 1);
+          } else if (ev.icon) {
+            if (i >= 0) list[i] = ev.icon;
+            else list.push(ev.icon);
+          }
+        };
+        const off = await on("tray", (ev) => {
+          if (!list) {
+            pending.push(ev);
+            return;
+          }
+          apply(ev);
+          emit();
+        });
+        const s = await tray.state();
+        list = s.icons.slice();
+        active = !!s.active;
+        pending.splice(0).forEach(apply);
+        emit();
+        return off;
+      },
+      /**
+       * Click an icon as Explorer would: `"left"` (click), `"right"`
+       * (contextmenu), `"double"` (dblclick: the second half of a double
+       * click, so skip the second `click`, whose `detail` is 2) or `"middle"`. The app opens its menu at `x`, `y`
+       * (physical screen px), by default where the cursor is. Only inside a
+       * click or key press.
+       */
+      async click(id, button, x, y) {
+        const activation = global.navigator && global.navigator.userActivation;
+        if (activation && !activation.isActive) {
+          throw new Error("tray.click needs a click or key press");
+        }
+        const args = { id: Number(id), button: String(button || "left") };
+        if (Number.isFinite(x) && Number.isFinite(y)) Object.assign(args, { x: Math.round(x), y: Math.round(y) });
+        return hostInvoke("tray", "tray_click", args);
+      },
+    };
+
     return {
       on,
       windows,
+      tray,
       battery: sensor("battery"),
       network: sensor("network"),
       focus: sensor("focus"),
@@ -741,7 +824,7 @@
   }
   /** Hooks whose changes the host pushes; `on()` needs them declared. */
   const QUICK_HOOKS = ["radios", "audio-control", "display", "power-mode", "wifi", "bluetooth", "dnd"];
-  const PUSH_HOOKS = new Set(["media", "battery", "network", "focus", "audio", "clipboard", "windows", "notify"].concat(QUICK_HOOKS));
+  const PUSH_HOOKS = new Set(["media", "battery", "network", "focus", "audio", "clipboard", "windows", "notify", "tray"].concat(QUICK_HOOKS));
   const SENSOR_HOOKS = new Set(["battery", "network", "focus", "audio"].concat(QUICK_HOOKS));
   // On the wallpaper this page runs in an iframe of the host shell, which
   // forwards bus messages and pushes here. Only the parent may send them.
@@ -843,6 +926,7 @@
     dnd: scoped.dnd,
     notifyControl: scoped.notifyControl,
     windows: scoped.windows,
+    tray: scoped.tray,
     notify: scoped.notify,
     /** Data the last `spawn(id, data)` handed this spawnable (or undefined). */
     monitors,

@@ -36,13 +36,14 @@ The host never grants more than that list. The catalog is fixed in [`src-tauri/s
 | `bluetooth` | Paired Bluetooth devices and whether they are connected; connect / disconnect audio devices from a bar or overlay |
 | `dnd` | Do Not Disturb: off, priority only, alarms only; change it from a bar or overlay |
 | `notify-control` | Dismiss one notification, clear all, open the app that raised one, turn an app's own banners on / off (from a bar or overlay; read them with `notify`) |
+| `tray` | The notification-area icons (tooltip, app, icon), pushed changes, and clicking one, while Versailles hides the Windows taskbar (see [Tray](#tray)). Tooltips can be private |
 
 Unknown hook names are rejected.
 
 ## Contents
 
 - **Basics:** [SDK](#sdk) · [Enforcement](#enforcement) · [Events](#events)
-- **Reading the system:** [Push](#push) · [Notifications](#notifications) · [Windows](#windows)
+- **Reading the system:** [Push](#push) · [Notifications](#notifications) · [Windows](#windows) · [Tray](#tray)
 - **Acting:** [Layout](#layout) · [Power](#power) · [Quick settings](#quick-settings) · [Clipboard](#clipboard)
 - **Between pieces:** [Storage](#storage) · [Bus](#bus) · [Piece events](#piece-events)
 
@@ -129,6 +130,7 @@ await hud.focus.onChange((w) => (title.textContent = w.title));
 | `media` | on change | same as `media.now()` |
 | `windows` | 0.25 s | `{ type: "opened"\|"closed"\|"focused"\|"changed", id, window }` (see [Windows](#windows)) |
 | `notify` | 2 s | one new toast (see [Notifications](#notifications)) |
+| `tray` | on change | `{ type: "added"\|"changed"\|"removed", id, icon }` or `{ type: "active", active }` (see [Tray](#tray)) |
 | `radios` | 2 s | `{ wifi, bluetooth }` (`true`, `false`, or `null` without that radio) |
 | `power-mode` | 2 s | `{ supported, mode: "efficiency"\|"balanced"\|"performance"\|null, energySaver }` |
 | `audio-control` | 3 s | `{ outputs: [{ id, name, default }] }` (volume and mute are the `audio` hook) |
@@ -218,6 +220,43 @@ Read (`windows`):
 Control (`windows-control`): `focus(id)` (restores a minimized window), `minimize(id)`, `restore(id)`, `maximize(id)`, `close(id)` (posts `WM_CLOSE`: the app may still ask to save), `move(id, { x, y, width, height })` (physical px; `x` / `y` alone moves, `width` / `height` alone resizes; a maximized or minimized window is restored first).
 
 Listed are visible, titled top-level windows without a tool-window style or owner (or with `WS_EX_APPWINDOW`). Never listed: Versailles' own windows, the shell's desktop and taskbars, and cloaked windows (other virtual desktops, suspended store apps). Control calls only accept a listed window and refuse Versailles' own. Store apps show as `ApplicationFrameHost`. The list is only read while a piece on the page declares `windows`.
+
+## Tray
+
+`tray` lists the notification-area icons apps put in the system tray and clicks them. Windows has no API for another app to read them, so Versailles becomes the tray: while it hides the Windows taskbar (`"shell": { "hideTaskbar": true }`) and some piece declares `tray`, it runs a `Shell_TrayWnd` window of its own in front of Explorer's, the way Cairo and RetroBar do (nothing is injected into Explorer). Apps then send their icons to Versailles. Every message also goes on to Explorer's taskbar, so Explorer keeps the same icons (balloons still become Windows notifications), and when Versailles stops, quits or crashes, nothing is lost. Without a hidden taskbar, Explorer's tray has the icons and `active` is false.
+
+```html
+<template class="spawnable" data-id="taskbar" data-anchor="bottom" data-h="44"
+          data-monitor="all" data-hooks="windows,windows-control,tray"></template>
+```
+
+```js
+const tray = versailles.for("taskbar").tray;
+await tray.track((icons, active) => render(icons.filter((t) => !t.system)));
+
+button.onclick = (e) => e.detail < 2 && tray.click(t.id, "left");
+button.ondblclick = () => tray.click(t.id, "double");
+button.oncontextmenu = (e) => (e.preventDefault(), tray.click(t.id, "right"));
+```
+
+An icon:
+
+| Field | |
+| ----- | - |
+| `id` | Versailles' number for the icon (for this run); pass it to `click` |
+| `tip` | The tooltip, as the app set it (may have several lines) |
+| `app`, `exe`, `pid` | The owning app: executable name without `.exe`, full path, process id |
+| `guid` | The app's own id for the icon, when it gives one (stable across runs) |
+| `system` | One of Windows' own icons, drawn by Explorer (volume, battery). The quick-settings hooks cover these better |
+| `clickable` | The app takes clicks. `click` refuses an icon that does not |
+| `icon` | PNG data URL at the icon's own size (16–64 px) |
+
+- `tray.state()`: `{ active, icons }`. `tray.list()`: the icons alone, oldest first.
+- `tray.onChange(fn)` / `on("tray", fn)`: `fn({ type: "added"|"changed"|"removed", id, icon })` per change (an icon the app hides is `removed`; shown again, `added`), and `{ type: "active", active }` when Versailles starts or stops holding the icons. Changes within 100 ms go out together.
+- `tray.track(fn)`: `fn(icons, active)` now and after every change. Returns a function that stops tracking.
+- `tray.click(id, button, x, y)`: what clicking the icon in Windows' tray does. `button` is `"left"`, `"right"` (usually the app's menu), `"double"` or `"middle"`. Map browser events one to one: `click` → `left`, `contextmenu` → `right`, `dblclick` → `double`; skip the second `click` of a double click (`event.detail` 2), since Windows sends one click and then the double. `x`, `y` are physical screen pixels where the app should open its menu; leave them out to use the cursor. Only inside a click or key press, like quick settings; it is not control class, because a click does no more than the user clicking the icon in Explorer would. The app gets permission to come to the front.
+
+Icons arrive within about a second of the tray starting: apps add theirs again when Versailles tells them a taskbar was created. An app that ignores that message shows up the next time it changes its icon. An icon whose app quits without removing it is dropped within 2 s. Tooltips can be private (message counts, account names, VPN state): declare `tray` only on pieces that show them.
 
 ## Layout
 

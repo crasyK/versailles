@@ -10,7 +10,7 @@ pub const KNOWN_HOOKS: &[&str] = &[
     "media", "mouse", "layout", "spawn", "shell", "hotkey", "pty", "storage", "clipboard", "power", "bus",
     "battery", "network", "focus", "audio", "windows", "windows-control", "notify",
     "radios", "audio-control", "display", "power-mode", "wifi", "bluetooth",
-    "dnd", "notify-control",
+    "dnd", "notify-control", "tray",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1038,7 +1038,7 @@ mod tests {
         assert_eq!(piece_offset(cat.spawnable("hello").unwrap()), (24, 24));
         let taskbar = cat.spawnable("taskbar").expect("taskbar");
         assert!(crate::docks::on_every_monitor(taskbar));
-        assert_eq!(taskbar.hooks, vec!["windows".to_string(), "windows-control".to_string()]);
+        assert_eq!(taskbar.hooks, vec!["windows".to_string(), "windows-control".to_string(), "tray".to_string()]);
         assert!(cat.get("clock").is_some() && cat.get("action-bar").is_some());
     }
 

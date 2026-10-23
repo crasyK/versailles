@@ -20,6 +20,8 @@ fn main() {
                 "windows_list",
                 "windows_icon",
                 "windows_control",
+                "tray_list",
+                "tray_click",
                 "set_widget_always_on_top",
                 "set_widget_opacity",
                 "get_mouse_position_cmd",

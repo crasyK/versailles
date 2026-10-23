@@ -33,6 +33,7 @@ mod single_instance_fixup;
 mod state;
 mod storage;
 mod toasts;
+mod tray;
 mod watcher;
 mod weather;
 mod wireless;
@@ -316,6 +317,7 @@ pub fn run() {
             clipboard::start_change_watcher(app.handle().clone());
             sensors::start_watcher(app.handle().clone());
             app_windows::start_watcher(app.handle().clone());
+            tray::start_watcher(app.handle().clone());
             monitors::start_watcher(app.handle().clone());
 
             // Session restore off the setup path; bounded to 2 concurrent WebView2
@@ -425,6 +427,8 @@ pub fn run() {
             commands::windows_list,
             commands::windows_icon,
             commands::windows_control,
+            commands::tray_list,
+            commands::tray_click,
             commands::set_widget_always_on_top,
             commands::set_widget_opacity,
             commands::get_mouse_position_cmd,
@@ -477,6 +481,7 @@ pub fn run() {
         Ok(app) => app.run(|app, event| match event {
             RunEvent::ExitRequested { code: Some(_), .. } | RunEvent::Exit => {
                 crash::note_exiting();
+                tray::release();
                 taskbar::release();
                 // Give reserved screen space back before the windows go.
                 docks::release_all(app);

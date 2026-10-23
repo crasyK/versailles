@@ -35,6 +35,7 @@ pub const SHIPPED: &[(&str, u64)] = &[
     // Installed from a test build before notify-control / dnd (#33).
     ("0.9.0-dev2", 0x8227_2d77_d9e3_9cbe),
     ("0.9.0", 0xfda8_3495_1985_eba2),
+    ("0.10.0", 0x3423_a61f_e74b_679e),
 ];
 
 /// Version on the SDK's first line (`/*! versailles-sdk 0.6.0 */`). Releases

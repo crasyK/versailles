@@ -1,11 +1,14 @@
 # e2e probe: visible texts of a process's top-level windows (UI Automation), and
 # each monitor's reserved top / bottom strips, whether Explorer's taskbar is
-# visible and whether the taskbar RunOnce restore is set. Prints one JSON object.
+# visible and whether the taskbar RunOnce restore is set, and which process owns
+# the Shell_TrayWnd apps find first (Versailles' tray, #35). Prints one JSON object.
 param([int]$ProcessId)
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
 Add-Type -Namespace E2E -Name U -MemberDefinition @'
 [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
 [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(string cls, string title);
+[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string cls, string title);
+[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
 [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
 '@
 [E2E.U]::SetProcessDPIAware() | Out-Null
@@ -22,7 +25,16 @@ foreach ($w in $windows) {
 $monitors = [System.Windows.Forms.Screen]::AllScreens | ForEach-Object {
   @{ name = $_.DeviceName; top = $_.WorkingArea.Top - $_.Bounds.Top; bottom = $_.Bounds.Bottom - $_.WorkingArea.Bottom }
 }
-$tray = [E2E.U]::FindWindow('Shell_TrayWnd', $null)
+$pidOf = { param($h) $p = [uint32]0; [void][E2E.U]::GetWindowThreadProcessId($h, [ref]$p); $p }
+$first = [E2E.U]::FindWindow('Shell_TrayWnd', $null)
+$trayFirst = if ($first -ne [IntPtr]::Zero) { & $pidOf $first } else { 0 }
+# Explorer's taskbar, not a Versailles tray window in front of it.
+$tray = [IntPtr]::Zero
+$h = [IntPtr]::Zero
+while (($h = [E2E.U]::FindWindowEx([IntPtr]::Zero, $h, 'Shell_TrayWnd', $null)) -ne [IntPtr]::Zero) {
+  $owner = Get-Process -Id (& $pidOf $h) -ErrorAction SilentlyContinue
+  if ($owner -and $owner.ProcessName -eq 'explorer') { $tray = $h; break }
+}
 $taskbar = ($tray -ne [IntPtr]::Zero) -and [E2E.U]::IsWindowVisible($tray)
 $runOnce = $null -ne (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce' -Name VersaillesRestoreTaskbar -ErrorAction SilentlyContinue)
-@{ texts = @($texts); monitors = @($monitors); taskbar = $taskbar; runOnce = $runOnce } | ConvertTo-Json -Depth 4 -Compress
+@{ texts = @($texts); monitors = @($monitors); taskbar = $taskbar; runOnce = $runOnce; trayFirst = $trayFirst } | ConvertTo-Json -Depth 4 -Compress

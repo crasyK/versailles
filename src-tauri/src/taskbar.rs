@@ -29,6 +29,14 @@ struct Hider {
     thread: JoinHandle<()>,
 }
 
+/// Set while this process holds the taskbar hidden (not when another
+/// Versailles does): the tray (`tray`) only runs then.
+static HIDING: AtomicBool = AtomicBool::new(false);
+
+pub fn hiding() -> bool {
+    HIDING.load(Ordering::SeqCst)
+}
+
 fn hider() -> &'static Mutex<Option<Hider>> {
     static HIDER: OnceLock<Mutex<Option<Hider>>> = OnceLock::new();
     HIDER.get_or_init(|| Mutex::new(None))
@@ -73,9 +81,19 @@ pub fn release() {
 }
 
 fn stop(h: Hider) {
+    // Icons go back to Explorer before its taskbar does (and the tray
+    // watcher does not start it again meanwhile).
+    HIDING.store(false, Ordering::SeqCst);
+    crate::tray::release();
     h.stop.store(true, Ordering::SeqCst);
     // The thread wakes within one poll (300 ms), restores, then ends.
     let _ = h.thread.join();
+}
+
+/// Explorer's own taskbar window (never the tray window of ours).
+#[cfg(windows)]
+pub fn explorer_tray() -> Option<windows::Win32::Foundation::HWND> {
+    win::primary()
 }
 
 /// `--restore-taskbar` and the guard run here, before the supervisor and
@@ -115,7 +133,7 @@ mod win {
     use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
     use windows::Win32::UI::Shell::{SHAppBarMessage, ABM_GETSTATE, ABM_SETSTATE, APPBARDATA};
     use windows::Win32::UI::WindowsAndMessaging::{
-        DispatchMessageW, FindWindowExW, FindWindowW, GetClassNameW, IsWindowVisible, MsgWaitForMultipleObjects,
+        DispatchMessageW, FindWindowExW, GetClassNameW, GetWindowThreadProcessId, IsWindowVisible, MsgWaitForMultipleObjects,
         PeekMessageW, SetWindowPos, ShowWindow, TranslateMessage, EVENT_OBJECT_SHOW, HWND_BOTTOM, MSG, PM_REMOVE,
         QS_ALLINPUT, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_SHOWNA, WINEVENT_OUTOFCONTEXT,
         WINEVENT_SKIPOWNPROCESS,
@@ -195,8 +213,19 @@ mod win {
         }
     }
 
-    fn primary() -> Option<HWND> {
-        unsafe { FindWindowW(w!("Shell_TrayWnd"), None) }.ok()
+    /// Explorer's taskbar. While the tray runs (`tray`), Versailles has a
+    /// `Shell_TrayWnd` of its own in front of it: skip ours.
+    pub fn primary() -> Option<HWND> {
+        let mut after: Option<HWND> = None;
+        while let Ok(h) = unsafe { FindWindowExW(None, after, w!("Shell_TrayWnd"), None) } {
+            let mut pid = 0u32;
+            unsafe { GetWindowThreadProcessId(h, Some(&mut pid)) };
+            if pid != std::process::id() {
+                return Some(h);
+            }
+            after = Some(h);
+        }
+        None
     }
 
     /// The primary taskbar and one per other monitor.
@@ -308,6 +337,7 @@ mod win {
         set_run_once(true);
         spawn_self("--taskbar-guard");
         tracing::info!("taskbar: hiding (saved state {original:#x})");
+        super::HIDING.store(true, Ordering::SeqCst);
 
         let hook = unsafe {
             SetWinEventHook(
@@ -345,6 +375,7 @@ mod win {
                 let _ = UnhookWinEvent(hook);
             }
         }
+        super::HIDING.store(false, Ordering::SeqCst);
         restore();
         tracing::info!("taskbar: restored");
         unsafe {

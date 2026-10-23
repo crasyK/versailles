@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-tray-list"
+description = "Enables the tray_list command without any pre-configured scope."
+commands.allow = ["tray_list"]
+
+[[permission]]
+identifier = "deny-tray-list"
+description = "Denies the tray_list command without any pre-configured scope."
+commands.deny = ["tray_list"]

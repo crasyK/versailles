@@ -106,7 +106,7 @@
       data-hooks           allowlist: media, mouse, layout, spawn, shell, hotkey, pty, storage,
                            clipboard, power, bus, battery, network, focus, audio,
                            windows, windows-control, notify, radios, audio-control,
-                           display, power-mode, wifi, bluetooth, dnd, notify-control
+                           display, power-mode, wifi, bluetooth, dnd, notify-control, tray
 
       A piece inside an HTML comment is not on the page: the examples near the
       end of <body> are commented out until you remove their comment markers.
@@ -1120,13 +1120,16 @@
          A docked bar along the bottom of each monitor (data-monitor="all": one
          copy per monitor) listing that monitor's app windows with the windows
          hook. Click a window to bring it up, click the focused one to minimize
-         it, middle-click to close it (windows-control). It sits above the
-         Windows taskbar; set that to hide automatically if you want this one
-         alone. To try it, delete the two "try me" marker lines around the template
+         it, middle-click to close it (windows-control). On the right, the
+         notification-area icons (tray): click, right-click or double-click
+         them as in Windows. The tray icons only show while Versailles hides
+         the Windows taskbar ("shell": { "hideTaskbar": true } in #versailles);
+         otherwise this bar sits above the Windows taskbar, which keeps them.
+         To try it, delete the two "try me" marker lines around the template
          below. To remove it, delete everything down to the end of the example. -->
     <!-- try me (taskbar): delete this line
     <template class="spawnable" data-id="taskbar" data-anchor="bottom" data-h="44"
-              data-monitor="all" data-hooks="windows,windows-control">
+              data-monitor="all" data-hooks="windows,windows-control,tray">
       <style>
         .spawn-surface.solo:has(.taskbar) { border: 0 !important; box-shadow: none !important; border-radius: 0 !important; }
         .taskbar {
@@ -1143,12 +1146,21 @@
         .taskbar .tk-win.minimized { opacity: 0.55; }
         .taskbar .tk-win img { width: 18px; height: 18px; flex: none; }
         .taskbar .tk-win span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .taskbar .tk-wins { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; overflow: hidden; }
+        .taskbar .tk-tray { flex: none; display: flex; align-items: center; gap: 2px; }
+        .taskbar .tk-tray button {
+          width: 30px; height: 30px; display: grid; place-items: center; padding: 0;
+          border: 0; border-radius: var(--radius-chip); background: transparent;
+        }
+        .taskbar .tk-tray button:hover { background: var(--chip); }
+        .taskbar .tk-tray img { width: 18px; height: 18px; }
       </style>
-      <div class="taskbar"></div>
+      <div class="taskbar"><div class="tk-wins"></div><div class="tk-tray"></div></div>
       <script>
         (function taskbar() {
           var root = document.currentScript && document.currentScript.closest('.spawn-surface');
-          var bar = root && root.querySelector('.taskbar');
+          var bar = root && root.querySelector('.tk-wins');
+          var trayBox = root && root.querySelector('.tk-tray');
           if (!bar) return;
           (function whenSdk(fn) { window.versailles && typeof window.versailles.for === 'function' ? fn(window.versailles) : setTimeout(function () { whenSdk(fn); }, 50); })(function (v) {
             var wins = v.for('taskbar').windows;
@@ -1182,6 +1194,32 @@
               var here = m ? m.number : null;
               return wins.track(function (list) { render(list, here); }, { icons: true });
             }).catch(function () {});
+
+            // Tray icons. Windows' own volume / battery icons (system) are
+            // left out: the quick settings example has those.
+            var tray = v.for('taskbar').tray;
+            function renderTray(icons) {
+              trayBox.replaceChildren();
+              icons.forEach(function (t) {
+                if (t.system || !t.icon) return;
+                var b = document.createElement('button');
+                b.type = 'button';
+                b.title = t.tip || t.app || ''; // tooltips come from other apps: text only
+                var img = document.createElement('img');
+                img.src = t.icon;
+                img.alt = '';
+                b.appendChild(img);
+                function send(button) { tray.click(t.id, button).catch(function () {}); }
+                // A double click is click, click, dblclick here; Windows sends
+                // one click and then the double.
+                b.addEventListener('click', function (e) { if (e.detail < 2) send('left'); });
+                b.addEventListener('dblclick', function () { send('double'); });
+                b.addEventListener('contextmenu', function (e) { e.preventDefault(); send('right'); });
+                b.addEventListener('auxclick', function (e) { if (e.button === 1) send('middle'); });
+                trayBox.appendChild(b);
+              });
+            }
+            if (trayBox) tray.track(renderTray).catch(function () {});
           });
         })();
       </script>

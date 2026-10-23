@@ -174,6 +174,10 @@ async function main() {
     const dismiss = await until("overlay dismiss", () => store(dest, "e2e-overlay")?.dismiss, 15_000).catch(() => null);
     check("dismissing a missing notification is refused", /no notification 0|not allowed access/.test(dismiss || ""), dismiss);
     check("overlay template script runs once", overlay.runs === 1, `runs ${overlay.runs}`);
+    const tray = await until("tray report", () => store(dest, "e2e-wall")?.report?.trayClick && store(dest, "e2e-wall").report, 15_000)
+      .catch(() => store(dest, "e2e-wall")?.report || {});
+    check("tray answers", tray.tray && tray.tray.active === false, JSON.stringify(tray.tray) + (tray.errors?.tray || ""));
+    check("tray click without the tray is refused", /Explorer holds the icons/.test(tray.trayClick || ""), tray.trayClick);
     await until("bar load", () => store(dest, "e2e-bar")?.loads >= 1);
     const p1 = await until("bar visible", () => {
       const p = probe(child.pid);
@@ -248,9 +252,24 @@ async function main() {
       const hidden = await taskbar(false, "taskbar hidden");
       check("config hides the taskbar", !hidden.taskbar);
       check("hidden taskbar sets the logon restore", hidden.runOnce);
+      // The tray (#35): our Shell_TrayWnd in front; apps (at least this
+      // Versailles' own icon) add their icons to it.
+      const held = await until("tray icons", () => {
+        const t = store(dest, "e2e-wall")?.report?.tray;
+        return t && t.active && t.icons > 0 ? t : null;
+      }, 15_000).catch(() => store(dest, "e2e-wall")?.report?.tray);
+      check("tray holds the icons while the taskbar is hidden", held && held.active && held.icons > 0, JSON.stringify(held));
+      const front = probe(process.pid).trayFirst;
+      check("apps find the Versailles tray first", front === child.pid, `Shell_TrayWnd of pid ${front}, app ${child.pid}`);
       writeFileSync(page, html);
       const shown = await taskbar(true, "taskbar shown");
       check("config off restores the taskbar", shown.taskbar && !shown.runOnce);
+      const handed = await until("tray handed back", () => {
+        const t = store(dest, "e2e-wall")?.report?.tray;
+        return t && !t.active ? t : null;
+      }, 15_000).catch(() => store(dest, "e2e-wall")?.report?.tray);
+      check("tray goes back to Explorer with the taskbar", handed && !handed.active && probe(process.pid).trayFirst !== child.pid,
+        JSON.stringify(handed));
       writeFileSync(page, on);
       await taskbar(false, "taskbar hidden again");
       kill(child);

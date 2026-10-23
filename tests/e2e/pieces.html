@@ -1,5 +1,5 @@
     <!-- ── e2e test pieces, injected by scripts/e2e.mjs ── -->
-    <article class="widget" data-id="e2e-wall" data-hooks="storage,battery,network,focus,audio,bus,spawn,radios,audio-control,display,power-mode,wifi,bluetooth,dnd"
+    <article class="widget" data-id="e2e-wall" data-hooks="storage,battery,network,focus,audio,bus,spawn,radios,audio-control,display,power-mode,wifi,bluetooth,dnd,tray"
              style="position:fixed;left:8px;top:8px;font:12px monospace">e2e</article>
     <script>
       /* Reports what the wallpaper sees into its storage ("report"). */
@@ -7,7 +7,7 @@
         if (/[?&]m=spawn/.test(location.search)) return;
         if (window.__e2eWall) return;
         window.__e2eWall = true;
-        var report = { sdk: null, sensors: {}, pushes: {}, bus: [], persisted: null, errors: {}, controlRefused: null };
+        var report = { sdk: null, sensors: {}, pushes: {}, bus: [], persisted: null, errors: {}, controlRefused: null, tray: null, trayClick: null };
         (function wait(n) {
           var v = window.versailles;
           if (!v || typeof v.for !== 'function') { if (n < 400) setTimeout(function () { wait(n + 1); }, 50); return; }
@@ -24,6 +24,14 @@
             api.now().then(function (x) { report.sensors[h] = x == null ? 'null' : 'ok'; save(); }, err(h));
             me.on(h, function () { report.pushes[h] = (report.pushes[h] || 0) + 1; }).catch(err(h + '.on'));
           });
+          // Tray icons: held only while this Versailles hides the taskbar.
+          me.tray.track(function (icons, active) {
+            report.tray = { active: active, icons: icons.length, apps: icons.map(function (t) { return t.app; }) };
+            save();
+          }).catch(err('tray'));
+          v.invoke('tray_click', { id: 0, caller: 'e2e-wall' }).then(
+            function () { report.trayClick = 'allowed'; save(); },
+            function (e) { report.trayClick = String((e && e.message) || e); save(); });
           // Settings never change from the wallpaper, whatever it declares.
           v.invoke('quick_set', { action: { kind: 'mute', on: false }, caller: 'e2e-wall' }).then(
             function () { report.controlRefused = 'allowed'; save(); },

@@ -2,6 +2,11 @@
 
 What changed in each release of Versailles, newest first. Full notes and installers: [GitHub releases](https://github.com/crasyK/versailles/releases). Each release commit updates this file.
 
+## 0.9.1 — 2026-10-24
+
+- **Tray icons in bars:** the `tray` hook lists the notification-area icons (tooltip, app, icon), pushes their changes and clicks them (left, right, double, middle) like Windows does, while Versailles hides the Windows taskbar. Versailles holds the tray with a window of its own, the way Cairo and RetroBar do; nothing is injected into Explorer, and Explorer keeps a copy of every icon, so nothing is lost when Versailles stops, crashes or Explorer restarts. The starter's taskbar example has a tray strip. SDK 0.9.1: `versailles.tray`. (#35)
+- Fixed: a desktop SDK from a test build marked ahead of the release was never updated.
+
 ## 0.9.0 — 2026-10-23
 
 - **Hide the Windows taskbar:** `"shell": { "hideTaskbar": true }` hides Explorer's taskbar and its reserved strip so a Versailles bar can take its place. It comes back on its own if Versailles crashes or is ended (a guard process), at the next logon, or with `versailles.exe --restore-taskbar`. (#30)

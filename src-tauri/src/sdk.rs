@@ -35,7 +35,9 @@ pub const SHIPPED: &[(&str, u64)] = &[
     // Installed from a test build before notify-control / dnd (#33).
     ("0.9.0-dev2", 0x8227_2d77_d9e3_9cbe),
     ("0.9.0", 0xfda8_3495_1985_eba2),
-    ("0.10.0", 0x3423_a61f_e74b_679e),
+    // Installed from a test build of the tray (#35), marked 0.10.0.
+    ("0.9.1-dev1", 0x3423_a61f_e74b_679e),
+    ("0.9.1", 0xb22c_bc01_6619_66aa),
 ];
 
 /// Version on the SDK's first line (`/*! versailles-sdk 0.6.0 */`). Releases
@@ -91,15 +93,17 @@ pub fn decide(desktop: Option<&str>, bundled: &str) -> Decision {
     if hash == content_hash(bundled) {
         return Decision::Current;
     }
+    // One of ours, whatever its marker says: a test build may be marked
+    // ahead of the release that shipped it.
+    if let Some((version, _)) = SHIPPED.iter().find(|(_, h)| *h == hash) {
+        return Decision::Update(version.to_string());
+    }
     if let (Some(theirs), Some(ours)) = (marker(desktop), marker(bundled)) {
         if version_key(theirs) > version_key(ours) {
             return Decision::Newer(theirs.to_string());
         }
     }
-    match SHIPPED.iter().find(|(_, h)| *h == hash) {
-        Some((version, _)) => Decision::Update(version.to_string()),
-        None => Decision::Edited,
-    }
+    Decision::Edited
 }
 
 /// Result of the start-up check, for `get_spawnable_engine_context`.
@@ -232,6 +236,27 @@ mod tests {
         );
         // An older marked copy that was edited is not a release.
         assert_eq!(decide(Some("/*! versailles-sdk 0.5.9 */\nedited"), bundled), Decision::Edited);
+    }
+
+    #[test]
+    fn a_listed_test_build_updates_even_when_marked_ahead() {
+        // Marked ahead and unknown: a newer Versailles wrote it.
+        let bundled = "/*! versailles-sdk 0.6.0 */\nnew";
+        let ahead = "/*! versailles-sdk 0.10.0 */\nunlisted";
+        assert_eq!(decide(Some(ahead), bundled), Decision::Newer("0.10.0".into()));
+        // The tray test build (marked 0.10.0) is listed: it is replaced.
+        let (version, hash) = SHIPPED.iter().find(|(v, _)| *v == "0.9.1-dev1").unwrap();
+        assert_eq!(*hash, 0x3423_a61f_e74b_679e);
+        let from_git = std::process::Command::new("git")
+            .args(["show", "903570e:templates/starter/.sdk/versailles.js"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+        if let Some(dev) = from_git {
+            assert_eq!(marker(&dev), Some("0.10.0"));
+            assert_eq!(decide(Some(&dev), BUNDLED), Decision::Update(version.to_string()));
+        }
     }
 
     #[test]

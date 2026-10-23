@@ -253,7 +253,7 @@
     /**
      * `fn(data)` on each push of `name`: a hook (`media`, `battery`,
      * `network`, `focus`, `audio`, `clipboard`, `notify`, `radios`,
-     * `audio-control`, `display`, `power-mode`, `wifi`, `bluetooth`; must be declared) or a piece event
+     * `audio-control`, `display`, `power-mode`, `wifi`, `bluetooth`, `dnd`; must be declared) or a piece event
      * (`shown`, `hidden`, `idle`, `active`, `theme-changed`). Sensor hooks
      * also call `fn` with the current value right away. Returns a function
      * that unsubscribes.
@@ -456,6 +456,34 @@
           return quick("bluetooth", { kind: "bluetoothDisconnect", id: String(id) });
         },
       }),
+      /** Do Not Disturb: `{ supported, mode }`; `mode`: `"off"`, `"priority"`, `"alarms"`. */
+      dnd: Object.assign(sensor("dnd"), {
+        async set(mode) {
+          return quick("dnd", { kind: "dnd", mode: String(mode) });
+        },
+      }),
+      /**
+       * Act on Windows notifications (read them with `notify`). Each answers
+       * the notifications as `notify.now()` would.
+       */
+      notifyControl: {
+        /** Remove one notification by its `id`. */
+        async dismiss(id) {
+          return quick("notify-control", { kind: "notifyDismiss", id: Number(id) });
+        },
+        /** Remove all of them. */
+        async clear() {
+          return quick("notify-control", { kind: "notifyClear" });
+        },
+        /** Open the app that raised a notification (its `aumid`). */
+        async open(aumid) {
+          return quick("notify-control", { kind: "notifyOpen", aumid: String(aumid) });
+        },
+        /** Turn an app's own Windows pop-ups on or off; its notifications still arrive. */
+        async banners(aumid, on) {
+          return quick("notify-control", { kind: "notifyBanners", aumid: String(aumid), on: !!on });
+        },
+      },
       /** `{ supported, mode, energySaver }`; `mode`: `"efficiency"`, `"balanced"`, `"performance"`. */
       powerMode: Object.assign(sensor("power-mode"), {
         async set(mode) {
@@ -712,7 +740,7 @@
     return () => pushSubscribers.delete(sub);
   }
   /** Hooks whose changes the host pushes; `on()` needs them declared. */
-  const QUICK_HOOKS = ["radios", "audio-control", "display", "power-mode", "wifi", "bluetooth"];
+  const QUICK_HOOKS = ["radios", "audio-control", "display", "power-mode", "wifi", "bluetooth", "dnd"];
   const PUSH_HOOKS = new Set(["media", "battery", "network", "focus", "audio", "clipboard", "windows", "notify"].concat(QUICK_HOOKS));
   const SENSOR_HOOKS = new Set(["battery", "network", "focus", "audio"].concat(QUICK_HOOKS));
   // On the wallpaper this page runs in an iframe of the host shell, which
@@ -812,6 +840,8 @@
     powerMode: scoped.powerMode,
     wifi: scoped.wifi,
     bluetooth: scoped.bluetooth,
+    dnd: scoped.dnd,
+    notifyControl: scoped.notifyControl,
     windows: scoped.windows,
     notify: scoped.notify,
     /** Data the last `spawn(id, data)` handed this spawnable (or undefined). */

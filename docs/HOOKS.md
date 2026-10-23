@@ -34,6 +34,8 @@ The host never grants more than that list. The catalog is fixed in [`src-tauri/s
 | `power-mode` | Power mode (efficiency / balanced / performance), energy saver; change the mode from a bar or overlay |
 | `wifi` | Wi-Fi networks in range; scan, join (with a password for a new one), disconnect from a bar or overlay. Network names reveal where you are: declare it only where needed |
 | `bluetooth` | Paired Bluetooth devices and whether they are connected; connect / disconnect audio devices from a bar or overlay |
+| `dnd` | Do Not Disturb: off, priority only, alarms only; change it from a bar or overlay |
+| `notify-control` | Dismiss one notification, clear all, open the app that raised one, turn an app's own banners on / off (from a bar or overlay; read them with `notify`) |
 
 Unknown hook names are rejected.
 
@@ -85,7 +87,7 @@ Identity comes from the **calling window**, never from an IPC argument:
 
 That piece must list the hook in `data-hooks`. A piece that omitted `data-hooks="media"` cannot call `media_now` even if the JS tries.
 
-**Control class.** `quick_set` (`radios`, `audio-control`, `display`, `power-mode`, `wifi`, `bluetooth`) changes a system setting. Like exec class it is refused from the desktop wallpaper and from folder widgets; only a spawn window (bar, slide-out, overlay) whose piece declares the hook may change a setting. The SDK also asks for a click or key press first. Reading those hooks works anywhere.
+**Control class.** `quick_set` (`radios`, `audio-control`, `display`, `power-mode`, `wifi`, `bluetooth`, `dnd`, `notify-control`) changes a system setting. Like exec class it is refused from the desktop wallpaper and from folder widgets; only a spawn window (bar, slide-out, overlay) whose piece declares the hook may change a setting. The SDK also asks for a click or key press first. Reading those hooks works anywhere.
 
 **Exec class.** `cli_exec`, `cli_exec_term`, `cli_search_files` (`shell`) and `pty_open` / `pty_write` / `pty_resize` / `pty_is_alive` / `pty_close` (`pty`) run code. They are refused from the desktop wallpaper entirely and only work from a spawn window whose piece declares the hook. `cli_open` (open a URL/path) is not exec class: the wallpaper may call it via `versailles.for(id).shell.open(...)`.
 
@@ -130,6 +132,7 @@ await hud.focus.onChange((w) => (title.textContent = w.title));
 | `radios` | 2 s | `{ wifi, bluetooth }` (`true`, `false`, or `null` without that radio) |
 | `power-mode` | 2 s | `{ supported, mode: "efficiency"\|"balanced"\|"performance"\|null, energySaver }` |
 | `audio-control` | 3 s | `{ outputs: [{ id, name, default }] }` (volume and mute are the `audio` hook) |
+| `dnd` | 2 s | `{ supported, mode: "off"\|"priority"\|"alarms"\|null }` |
 | `bluetooth` | 3 s | `{ devices: [{ id, name, connected, audio }] }` (`audio`: headphones / speakers, can be connected) |
 | `wifi` | 5 s | `{ access: "ok"\|"location-denied"\|"no-adapter", connected, networks: [{ ssid, signal, secure, known, connected }] }` |
 | `display` | 5 s | `{ projection: "pc"\|"duplicate"\|"extend"\|"second", brightness: [{ id, device, kind: "internal"\|"external", level }] }` |
@@ -156,6 +159,25 @@ A toast is `{ id, app, aumid, title, body, time }`: `app` is the sending app's d
 | `unavailable` | No notification listener on this system (or not Windows) |
 
 Windows offers no change event to an unpackaged app, so the host checks for new toasts every 2 s while some piece declares `notify` and pushes each one it has not seen (oldest first). The first check only notes what is already there. `onToast` does not fire on subscribe: call `now()` for the current list. Toast text can be private: declare `notify` only on pieces that need it.
+
+### Acting on notifications
+
+`notify-control` (control class: bars and overlays, inside a click or key press) works on the toasts `notify` reads. Each call answers the list as `notify.now()` would.
+
+```js
+const qs = versailles.for("qs");                  // data-hooks="notify,notify-control,dnd"
+const { items } = await qs.notify.now();
+await qs.notifyControl.dismiss(items[0].id);      // remove one from Action Center
+await qs.notifyControl.clear();                   // remove all
+await qs.notifyControl.open(items[0].aumid);      // open the app that raised it
+await qs.notifyControl.banners(items[0].aumid, false); // no Windows pop-ups from that app
+await qs.dnd.set("priority");                     // "off" | "priority" | "alarms"
+```
+
+- A notification's own click action cannot be run from outside (Windows does not hand out its arguments); `open` starts the app instead.
+- `banners(aumid, false)` hides that app's Windows pop-ups; its notifications still reach Action Center, so `notify` still sees them and a page can show its own. To take over for every app, turn on Do Not Disturb "priority": Windows keeps the notifications and only hides the pop-ups.
+- Do Not Disturb uses the shell's undocumented quiet-hours setting; `supported: false` when Windows does not offer it.
+- Dismissing needs the notification access the read already needs.
 
 ## Windows
 

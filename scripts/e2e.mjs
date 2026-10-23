@@ -158,11 +158,11 @@ async function main() {
     child = launch(exe, dest, await freePort());
     const wall = await until("wallpaper report", () => {
       const r = store(dest, "e2e-wall")?.report;
-      return r && r.sdk && Object.keys(r.sensors).length + Object.keys(r.errors).length >= 10 && r.bus.length && r.controlRefused
+      return r && r.sdk && Object.keys(r.sensors).length + Object.keys(r.errors).length >= 11 && r.bus.length && r.controlRefused
         ? r : null;
     });
     check("wallpaper loads the SDK", wall.sdk, `sdk ${wall.sdk}`);
-    for (const h of ["battery", "network", "focus", "audio", "radios", "audio-control", "display", "power-mode", "wifi", "bluetooth"]) {
+    for (const h of ["battery", "network", "focus", "audio", "radios", "audio-control", "display", "power-mode", "wifi", "bluetooth", "dnd"]) {
       check(`sensor ${h} answers`, wall.sensors[h], wall.errors[h] || wall.sensors[h]);
     }
     check("bus reaches a wallpaper widget", wall.bus.includes("e2e-overlay"), `from ${wall.bus.join(", ")}`);
@@ -171,6 +171,8 @@ async function main() {
     const overlay = await until("overlay report", () => store(dest, "e2e-overlay")?.report);
     const quick = await until("overlay quick_set", () => store(dest, "e2e-overlay")?.quick, 15_000).catch(() => null);
     check("an overlay can change a setting", quick === "ok", `mute unchanged: ${quick}`);
+    const dismiss = await until("overlay dismiss", () => store(dest, "e2e-overlay")?.dismiss, 15_000).catch(() => null);
+    check("dismissing a missing notification is refused", /no notification 0|not allowed access/.test(dismiss || ""), dismiss);
     check("overlay template script runs once", overlay.runs === 1, `runs ${overlay.runs}`);
     await until("bar load", () => store(dest, "e2e-bar")?.loads >= 1);
     const p1 = await until("bar visible", () => {

@@ -106,7 +106,7 @@
       data-hooks           allowlist: media, mouse, layout, spawn, shell, hotkey, pty, storage,
                            clipboard, power, bus, battery, network, focus, audio,
                            windows, windows-control, notify, radios, audio-control,
-                           display, power-mode, wifi, bluetooth
+                           display, power-mode, wifi, bluetooth, dnd, notify-control
 
       A piece inside an HTML comment is not on the page: the examples near the
       end of <body> are commented out until you remove their comment markers.
@@ -1191,15 +1191,16 @@
 
     <!-- ===== Example: quick settings =====
          A slide-out with Wi-Fi networks, Bluetooth devices, volume, the output,
-         brightness, projection and power mode, opened with Ctrl+Alt+Q. Settings change only
+         brightness, projection, Do Not Disturb, recent notifications and power
+         mode, opened with Ctrl+Alt+Q. Settings change only
          from a slide-out, bar or overlay and only on a click or key press: the
          wallpaper can show them but never change them. Values arrive by push,
          so changes made in Windows show up here too.
          To try it, delete the two "try me" marker lines around the template below.
          To remove it, delete everything down to the end of the example. -->
     <!-- try me (quick settings): delete this line
-    <template class="spawnable" data-id="quick" data-anchor="tr" data-w="340" data-h="640"
-              data-hotkey="Ctrl+Alt+Q" data-hooks="hotkey,radios,wifi,bluetooth,audio,audio-control,display,power-mode">
+    <template class="spawnable" data-id="quick" data-anchor="tr" data-w="340" data-h="760"
+              data-hotkey="Ctrl+Alt+Q" data-hooks="hotkey,radios,wifi,bluetooth,audio,audio-control,display,power-mode,dnd,notify,notify-control">
       <style>
         .qs { height: 100%; padding: 16px; display: flex; flex-direction: column; gap: 12px; color: var(--ink);
               font: 13px/1.3 var(--font-sans); overflow: auto; box-sizing: border-box; }
@@ -1225,6 +1226,11 @@
         .qs .join input { flex: 1; min-width: 0; font: inherit; padding: 4px 6px; }
         .qs .note { color: var(--ink-mut); font-size: 11px; padding: 2px 8px; }
         .qs .err { color: var(--ink-mut); font-size: 11px; min-height: 1em; }
+        .qs .toast { align-items: flex-start; }
+        .qs .toast .text { flex: 1; min-width: 0; }
+        .qs .toast .text b, .qs .toast .text span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .qs .toast .text span { color: var(--ink-mut); font-size: 12px; }
+        .qs .toast .x { padding: 2px 7px; }
       </style>
       <!-- data-no-drag: a slide-out drags from any plain element, which would swallow clicks on the rows. -->
       <div class="qs" data-no-drag>
@@ -1242,6 +1248,13 @@
           <button data-mode="pc">pc</button><button data-mode="duplicate">duplicate</button>
           <button data-mode="extend">extend</button><button data-mode="second">second</button>
         </div>
+        <h3>do not disturb</h3>
+        <div class="row q-dnd">
+          <button data-mode="off">off</button><button data-mode="priority">priority</button>
+          <button data-mode="alarms">alarms</button>
+        </div>
+        <h3>notifications <button class="q-clear">clear all</button></h3>
+        <div class="list q-toasts"></div>
         <h3>power mode</h3>
         <div class="row q-power">
           <button data-mode="efficiency">efficiency</button><button data-mode="balanced">balanced</button>
@@ -1432,6 +1445,51 @@
             root.querySelectorAll('.q-proj button').forEach(function (b) {
               b.onclick = function () { act(me.display.project(b.dataset.mode)); };
             });
+
+            me.on('dnd', function (d) {
+              if (!d) return;
+              root.querySelectorAll('.q-dnd button').forEach(function (b) {
+                b.classList.toggle('on', b.dataset.mode === d.mode);
+                b.disabled = !d.supported;
+              });
+            }).catch(function () {});
+            root.querySelectorAll('.q-dnd button').forEach(function (b) {
+              b.onclick = function () { act(me.dnd.set(b.dataset.mode)); };
+            });
+
+            // Notifications: the newest few; click one to open its app.
+            function renderToasts(n) {
+              var box = $('.q-toasts');
+              box.innerHTML = '';
+              if (!n) return;
+              if (n.access && n.access !== 'allowed') {
+                box.appendChild(el('div', 'note', 'Windows has not allowed access to notifications (Settings > Privacy & security > Notifications).'));
+                return;
+              }
+              var items = (n.items || []).slice(0, 6);
+              items.forEach(function (item) {
+                var row = el('div', 'item toast');
+                var text = el('div', 'text');
+                text.appendChild(el('b', null, item.title || item.app || 'notification'));
+                text.appendChild(el('span', null, item.body || item.app || ''));
+                row.appendChild(text);
+                var x = el('button', 'x', '×');
+                x.title = 'dismiss';
+                x.onclick = function (e) { e.stopPropagation(); act(me.notifyControl.dismiss(item.id)).then(function (r) { if (r) renderToasts(r); }); };
+                row.appendChild(x);
+                if (item.aumid) row.onclick = function () { act(me.notifyControl.open(item.aumid)); };
+                else row.classList.add('static');
+                box.appendChild(row);
+              });
+              if (!items.length) box.appendChild(el('div', 'note', 'no notifications'));
+            }
+            function refreshToasts() { me.notify.now().then(renderToasts, function () {}); }
+            $('.q-clear').onclick = function () { act(me.notifyControl.clear()).then(function (r) { if (r) renderToasts(r); }); };
+            me.on('notify', refreshToasts).catch(function () {});
+            me.on('shown', refreshToasts).catch(function () {});
+            refreshToasts();
+            // Notifications removed in Windows are not pushed: look again now and then.
+            setInterval(refreshToasts, 10000);
 
             me.on('power-mode', function (p) {
               if (!p) return;

@@ -42,6 +42,16 @@ pub enum QuickAction {
     /// `id` from `bluetooth`'s `devices`; audio devices only.
     BluetoothConnect { id: String },
     BluetoothDisconnect { id: String },
+    /// Do Not Disturb: `"off"`, `"priority"` (priority only) or `"alarms"` (alarms only).
+    Dnd { mode: String },
+    /// Remove one notification (an `id` from `notify`).
+    NotifyDismiss { id: u32 },
+    /// Remove all notifications.
+    NotifyClear,
+    /// Open the app that raised a notification (its `aumid`).
+    NotifyOpen { aumid: String },
+    /// Turn an app's own Windows pop-ups on or off.
+    NotifyBanners { aumid: String, on: bool },
 }
 
 impl QuickAction {
@@ -64,6 +74,11 @@ impl QuickAction {
             QuickAction::PowerMode { .. } => "power-mode",
             QuickAction::WifiScan | QuickAction::WifiConnect { .. } | QuickAction::WifiDisconnect => "wifi",
             QuickAction::BluetoothConnect { .. } | QuickAction::BluetoothDisconnect { .. } => "bluetooth",
+            QuickAction::Dnd { .. } => "dnd",
+            QuickAction::NotifyDismiss { .. }
+            | QuickAction::NotifyClear
+            | QuickAction::NotifyOpen { .. }
+            | QuickAction::NotifyBanners { .. } => "notify-control",
         }
     }
 }
@@ -76,6 +91,9 @@ pub fn read(hook: &str) -> AppResult<Value> {
         "display" => imp::display(),
         "power-mode" => imp::power_mode(),
         "wifi" | "bluetooth" => crate::wireless::read(hook),
+        "dnd" => imp::dnd(),
+        // Answered after a change: the notifications as `notify` reads them.
+        "notify-control" => crate::toasts::read(),
         _ => Err(AppError::msg(format!("'{hook}' is not a quick-settings hook"))),
     }
 }
@@ -95,8 +113,20 @@ pub fn apply(action: &QuickAction) -> AppResult<()> {
         QuickAction::WifiDisconnect => crate::wireless::wifi_disconnect(),
         QuickAction::BluetoothConnect { id } => crate::wireless::bluetooth_connect(id, true),
         QuickAction::BluetoothDisconnect { id } => crate::wireless::bluetooth_connect(id, false),
+        QuickAction::Dnd { mode } => imp::set_dnd(mode),
+        QuickAction::NotifyDismiss { id } => crate::toasts::dismiss(*id),
+        QuickAction::NotifyClear => crate::toasts::clear(),
+        QuickAction::NotifyOpen { aumid } => crate::toasts::open_app(aumid),
+        QuickAction::NotifyBanners { aumid, on } => crate::toasts::banners(aumid, *on),
     }
 }
+
+/// Do Not Disturb profiles as Windows names them, and as pages do.
+const DND_PROFILES: &[(&str, &str)] = &[
+    ("off", "Microsoft.QuietHoursProfile.Unrestricted"),
+    ("priority", "Microsoft.QuietHoursProfile.PriorityOnly"),
+    ("alarms", "Microsoft.QuietHoursProfile.AlarmsOnly"),
+];
 
 /// Power mode overlay GUIDs (Settings > Power > Power mode).
 const POWER_MODES: &[(&str, u128)] = &[
@@ -589,6 +619,60 @@ mod imp {
         Err(AppError::msg(format!("display: unknown brightness id '{id}'")))
     }
 
+    // ── dnd ────────────────────────────────────────────────────────────
+
+    /// The shell's Do Not Disturb settings (undocumented; what yasb uses).
+    mod quiet {
+        #![allow(non_snake_case)]
+        use windows::core::{HRESULT, PCWSTR, PWSTR};
+        #[windows_core::interface("6bff4732-81ec-4ffb-ae67-b6c1bc29631f")]
+        pub unsafe trait IQuietHoursSettings: windows::core::IUnknown {
+            fn get_UserSelectedProfile(&self, profile: *mut PWSTR) -> HRESULT;
+            fn put_UserSelectedProfile(&self, profile: PCWSTR) -> HRESULT;
+        }
+
+        /// The generated methods are private to this module.
+        pub unsafe fn get(s: &IQuietHoursSettings) -> windows::core::Result<String> {
+            let mut out = PWSTR::null();
+            s.get_UserSelectedProfile(&mut out).ok()?;
+            let text = out.to_string().unwrap_or_default();
+            windows::Win32::System::Com::CoTaskMemFree(Some(out.0 as *const _));
+            Ok(text)
+        }
+
+        pub unsafe fn put(s: &IQuietHoursSettings, profile: &str) -> windows::core::Result<()> {
+            let wide: Vec<u16> = profile.encode_utf16().chain([0]).collect();
+            s.put_UserSelectedProfile(PCWSTR(wide.as_ptr())).ok()
+        }
+    }
+
+    const QUIET_HOURS_SETTINGS: GUID = GUID::from_u128(0xf53321fa_34f8_4b7f_b9a3_361877cb94cf);
+
+    fn quiet_hours() -> Option<quiet::IQuietHoursSettings> {
+        use windows::Win32::System::Com::CLSCTX_LOCAL_SERVER;
+        com();
+        unsafe { CoCreateInstance(&QUIET_HOURS_SETTINGS, None, CLSCTX_LOCAL_SERVER) }.ok()
+    }
+
+    pub fn dnd() -> AppResult<Value> {
+        let profile = quiet_hours().and_then(|s| unsafe { quiet::get(&s) }.ok());
+        let mode = profile
+            .as_deref()
+            .and_then(|p| DND_PROFILES.iter().find(|(_, w)| *w == p).map(|(n, _)| *n));
+        Ok(json!({ "supported": profile.is_some(), "mode": mode }))
+    }
+
+    pub fn set_dnd(mode: &str) -> AppResult<()> {
+        let want = mode.trim().to_ascii_lowercase();
+        let profile = DND_PROFILES
+            .iter()
+            .find(|(n, _)| *n == want)
+            .map(|(_, p)| *p)
+            .ok_or_else(|| AppError::msg(format!("dnd: unknown mode '{want}' (off, priority, alarms)")))?;
+        let settings = quiet_hours().ok_or_else(|| AppError::msg("dnd: not supported on this Windows"))?;
+        unsafe { quiet::put(&settings, profile) }.map_err(|e| AppError::msg(format!("dnd: Windows refused ({e})")))
+    }
+
     // ── power-mode ─────────────────────────────────────────────────────
 
     use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
@@ -678,6 +762,12 @@ mod imp {
     pub fn set_power_mode(_: &str) -> AppResult<()> {
         unavailable()
     }
+    pub fn dnd() -> AppResult<Value> {
+        unavailable()
+    }
+    pub fn set_dnd(_: &str) -> AppResult<()> {
+        unavailable()
+    }
 }
 
 #[cfg(test)]
@@ -698,6 +788,12 @@ mod tests {
         assert_eq!(a.hook(), "wifi");
         let a: QuickAction = serde_json::from_str(r#"{ "kind": "bluetoothDisconnect", "id": "{x}" }"#).unwrap();
         assert_eq!(a.hook(), "bluetooth");
+        let a: QuickAction = serde_json::from_str(r#"{ "kind": "dnd", "mode": "priority" }"#).unwrap();
+        assert_eq!(a.hook(), "dnd");
+        let a: QuickAction = serde_json::from_str(r#"{ "kind": "notifyDismiss", "id": 7 }"#).unwrap();
+        assert_eq!(a.hook(), "notify-control");
+        let a: QuickAction = serde_json::from_str(r#"{ "kind": "notifyClear" }"#).unwrap();
+        assert_eq!(a.hook(), "notify-control");
         assert!(serde_json::from_str::<QuickAction>(r#"{ "kind": "reboot" }"#).is_err());
     }
 
@@ -705,11 +801,26 @@ mod tests {
     #[test]
     #[ignore]
     fn live_reads() {
-        for hook in ["radios", "audio-control", "display", "power-mode"] {
+        for hook in ["radios", "audio-control", "display", "power-mode", "dnd"] {
             let t = std::time::Instant::now();
             let value = read(hook).map(|v| v.to_string());
             println!("{hook} ({} ms): {value:?}", t.elapsed().as_millis());
         }
+    }
+
+    /// `cargo test live_dnd -- --ignored --nocapture`: switch to priority
+    /// only and back to what it was.
+    #[test]
+    #[ignore]
+    fn live_dnd() {
+        let before = read("dnd").unwrap();
+        println!("dnd before: {before}");
+        println!("set priority: {:?}", apply(&QuickAction::Dnd { mode: "priority".into() }));
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        println!("dnd now: {}", read("dnd").unwrap());
+        let back = before["mode"].as_str().unwrap_or("off").to_string();
+        println!("restore {back}: {:?}", apply(&QuickAction::Dnd { mode: back.clone() }));
+        println!("dnd after: {}", read("dnd").unwrap());
     }
 
     #[test]

@@ -1,5 +1,7 @@
 //! `notify` hook: the user's recent toast notifications, read-only, through
-//! Windows' `UserNotificationListener`.
+//! Windows' `UserNotificationListener`. `notify-control` (#33) dismisses and
+//! clears them, opens the app that raised one, and turns an app's own banners
+//! on or off; it goes through `quick_set` (control class, see `quick`).
 //!
 //! An unpackaged process (no package identity) can call `GetAccessStatus`
 //! and `GetNotificationsAsync`, but registering for `NotificationChanged`
@@ -76,6 +78,76 @@ pub fn unseen(seen: &HashSet<u32>, current: &[(u32, i64)]) -> Vec<u32> {
 
 /// `notify.now()`: `{ access, items }`, items newest first. Without access
 /// `items` is empty; on a system with no listener `access` is `unavailable`.
+/// Remove one notification from Action Center.
+pub fn dismiss(id: u32) -> AppResult<()> {
+    imp::dismiss(id)
+}
+
+/// Remove all of them.
+pub fn clear() -> AppResult<()> {
+    imp::clear()
+}
+
+/// App user model ids name apps, never paths or arguments: letters, digits,
+/// `.`, `_`, `-`, `!`, `{`, `}`, and `\` (desktop apps use a path-like id).
+pub fn valid_aumid(aumid: &str) -> bool {
+    !aumid.is_empty()
+        && aumid.len() <= 512
+        && !aumid.contains("..")
+        && aumid
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '!' | '{' | '}' | '\\' | ' '))
+}
+
+/// Open the app that raised a notification (its own click action is not
+/// reachable from outside: Windows does not hand out its arguments).
+pub fn open_app(aumid: &str) -> AppResult<()> {
+    if !valid_aumid(aumid) {
+        return Err(AppError::msg("notify-control: not an app id"));
+    }
+    std::process::Command::new("explorer.exe")
+        .arg(format!("shell:AppsFolder\\{aumid}"))
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| AppError::msg(format!("notify-control: could not open the app ({e})")))
+}
+
+/// Turn an app's own pop-ups (banners) on or off. Its notifications still
+/// reach Action Center, so `notify` keeps seeing them.
+pub fn banners(aumid: &str, on: bool) -> AppResult<()> {
+    if !valid_aumid(aumid) {
+        return Err(AppError::msg("notify-control: not an app id"));
+    }
+    #[cfg(windows)]
+    {
+        use windows::core::HSTRING;
+        use windows::Win32::System::Registry::{RegSetKeyValueW, HKEY_CURRENT_USER, REG_DWORD};
+        let key = HSTRING::from(format!(
+            "Software\\Microsoft\\Windows\\CurrentVersion\\Notifications\\Settings\\{aumid}"
+        ));
+        let value: u32 = on.into();
+        let r = unsafe {
+            RegSetKeyValueW(
+                HKEY_CURRENT_USER,
+                &key,
+                windows::core::w!("ShowBanner"),
+                REG_DWORD.0,
+                Some(&value as *const u32 as *const _),
+                4,
+            )
+        };
+        if r.is_err() {
+            return Err(AppError::msg(format!("notify-control: could not change banners ({r:?})")));
+        }
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = on;
+        Err(AppError::msg("notifications are only available on Windows"))
+    }
+}
+
 pub fn read() -> AppResult<Value> {
     match imp::access() {
         Ok(access) if access == "allowed" => {
@@ -204,6 +276,29 @@ mod imp {
         let listener = UserNotificationListener::Current().ok()?;
         convert(&listener.GetNotification(id).ok()?)
     }
+
+    fn allowed() -> AppResult<UserNotificationListener> {
+        let listener = UserNotificationListener::Current().map_err(err)?;
+        let status = listener.GetAccessStatus().map_err(err)?;
+        if access_name(status.0) != "allowed" {
+            return Err(AppError::msg(
+                "notify-control: Windows has not allowed access to notifications (Settings > Privacy & security > Notifications)",
+            ));
+        }
+        Ok(listener)
+    }
+
+    pub fn dismiss(id: u32) -> AppResult<()> {
+        let listener = allowed()?;
+        if listener.GetNotification(id).is_err() {
+            return Err(AppError::msg(format!("notify-control: no notification {id}")));
+        }
+        listener.RemoveNotification(id).map_err(err)
+    }
+
+    pub fn clear() -> AppResult<()> {
+        allowed()?.ClearNotifications().map_err(err)
+    }
 }
 
 #[cfg(not(windows))]
@@ -224,6 +319,12 @@ mod imp {
     pub fn one(_id: u32) -> Option<Toast> {
         None
     }
+    pub fn dismiss(_id: u32) -> AppResult<()> {
+        unavailable()
+    }
+    pub fn clear() -> AppResult<()> {
+        unavailable()
+    }
 }
 
 #[cfg(test)]
@@ -239,6 +340,31 @@ mod tests {
             body: String::new(),
             time,
         }
+    }
+
+    /// `cargo test live_dismiss -- --ignored --nocapture`: dismisses the
+    /// toasts titled "Versailles test" (raise one first).
+    #[test]
+    #[ignore]
+    fn live_dismiss() {
+        let items = imp::all().unwrap();
+        let mine: Vec<_> = items.iter().filter(|t| t.title == "Versailles test").collect();
+        println!("found {} test toast(s) of {}", mine.len(), items.len());
+        for t in &mine {
+            println!("dismiss {}: {:?}", t.id, dismiss(t.id));
+        }
+        let left = imp::all().unwrap().iter().filter(|t| t.title == "Versailles test").count();
+        println!("test toasts left: {left}");
+    }
+
+    #[test]
+    fn aumids_are_app_ids_only() {
+        assert!(valid_aumid("Microsoft.WindowsTerminal_8wekyb3d8bbwe!App"));
+        assert!(valid_aumid("{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe"));
+        assert!(!valid_aumid(""));
+        assert!(!valid_aumid("a\"b"));
+        assert!(!valid_aumid("x & calc"));
+        assert!(!valid_aumid("..\\..\\x"));
     }
 
     #[test]

@@ -1,5 +1,5 @@
     <!-- ── e2e test pieces, injected by scripts/e2e.mjs ── -->
-    <article class="widget" data-id="e2e-wall" data-hooks="storage,battery,network,focus,audio,bus,spawn,radios,audio-control,display,power-mode,wifi,bluetooth"
+    <article class="widget" data-id="e2e-wall" data-hooks="storage,battery,network,focus,audio,bus,spawn,radios,audio-control,display,power-mode,wifi,bluetooth,dnd"
              style="position:fixed;left:8px;top:8px;font:12px monospace">e2e</article>
     <script>
       /* Reports what the wallpaper sees into its storage ("report"). */
@@ -19,7 +19,7 @@
             report.persisted = p == null ? 0 : p;
             return me.storage.set('persist', report.persisted + 1);
           }).then(save, err('storage'));
-          ['battery', 'network', 'focus', 'audio', 'radios', 'audio-control', 'display', 'power-mode', 'wifi', 'bluetooth'].forEach(function (h) {
+          ['battery', 'network', 'focus', 'audio', 'radios', 'audio-control', 'display', 'power-mode', 'wifi', 'bluetooth', 'dnd'].forEach(function (h) {
             var api = me[{ 'audio-control': 'audioControl', 'power-mode': 'powerMode' }[h] || h];
             api.now().then(function (x) { report.sensors[h] = x == null ? 'null' : 'ok'; save(); }, err(h));
             me.on(h, function () { report.pushes[h] = (report.pushes[h] || 0) + 1; }).catch(err(h + '.on'));
@@ -35,7 +35,7 @@
       })();
     </script>
     <template class="spawnable" data-id="e2e-overlay" data-anchor="c" data-dim="none" data-dismiss-on-blur="false"
-              data-hooks="storage,bus,audio,audio-control" data-w="200" data-h="80">
+              data-hooks="storage,bus,audio,audio-control,notify-control" data-w="200" data-h="80">
       <div style="font:12px monospace;padding:8px">e2e overlay</div>
       <script>
         /* Counts its own runs (template scripts must run once) and says hello on the bus. */
@@ -52,6 +52,10 @@
               return v.invoke('quick_set', { action: { kind: 'mute', on: !!a.muted }, caller: 'e2e-overlay' });
             }).then(function () { return 'ok'; }, function (e) { return String((e && e.message) || e); })
               .then(function (quickSet) { me.storage.set('quick', quickSet).catch(function () {}); });
+            // Dismissing a notification that does not exist is refused with a reason.
+            v.invoke('quick_set', { action: { kind: 'notifyDismiss', id: 0 }, caller: 'e2e-overlay' })
+              .then(function () { return 'allowed'; }, function (e) { return String((e && e.message) || e); })
+              .then(function (r) { me.storage.set('dismiss', r).catch(function () {}); });
             me.storage.set('report', { runs: window.__e2eRuns }).catch(function () {});
             me.bus.publish('e2e-hello', {}).catch(function () {});
           }, 500);

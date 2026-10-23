@@ -32,7 +32,9 @@ pub const SHIPPED: &[(&str, u64)] = &[
     ("0.7.0", 0x1899_1130_1e34_5743),
     // Installed from a test build before Wi-Fi / Bluetooth (#34).
     ("0.9.0-dev1", 0xafe0_42f0_577d_f647),
-    ("0.9.0", 0x8227_2d77_d9e3_9cbe),
+    // Installed from a test build before notify-control / dnd (#33).
+    ("0.9.0-dev2", 0x8227_2d77_d9e3_9cbe),
+    ("0.9.0", 0xfda8_3495_1985_eba2),
 ];
 
 /// Version on the SDK's first line (`/*! versailles-sdk 0.6.0 */`). Releases

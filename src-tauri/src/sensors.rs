@@ -19,6 +19,7 @@ pub const SENSORS: &[(&str, Duration)] = &[
     // Quick settings (see `quick`).
     ("radios", Duration::from_millis(2000)),
     ("power-mode", Duration::from_millis(2000)),
+    ("dnd", Duration::from_millis(2000)),
     ("audio-control", Duration::from_millis(3000)),
     // DDC/CI brightness reads are slow: not more often.
     ("display", Duration::from_millis(5000)),
@@ -50,7 +51,7 @@ pub fn read(hook: &str) -> AppResult<Value> {
         "focus" => imp::focus(),
         "audio" => imp::audio(),
         "notify" => crate::toasts::read(),
-        "radios" | "audio-control" | "display" | "power-mode" | "wifi" | "bluetooth" => crate::quick::read(hook),
+        "radios" | "audio-control" | "display" | "power-mode" | "wifi" | "bluetooth" | "dnd" => crate::quick::read(hook),
         _ => Err(AppError::msg(format!("'{hook}' is not a sensor hook"))),
     }
 }

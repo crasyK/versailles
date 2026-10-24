@@ -27,6 +27,7 @@ mod sdk;
 mod sensors;
 mod taskbar;
 mod pty;
+mod nightlight;
 mod quick;
 mod registry;
 mod single_instance_fixup;

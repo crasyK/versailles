@@ -22,6 +22,11 @@ src-tauri/gen
 .env
 .env.*
 
+# Signing keys (updater key pair, certificates) never live in the repo
+*.key
+*.pfx
+latest.json
+
 # Local bench output
 scripts/bench-boot.last.json
 

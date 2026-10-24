@@ -18,7 +18,7 @@ Versailles runs in the system tray and serves **one HTML document** from `%USERP
 
 ## Install
 
-After install, look for the **Versailles tray icon**. Left-click toggles the first spawnable with the `hotkey` hook (the example command bar). **Alt+Space** also toggles it when that piece declares `data-hooks="hotkey"` and `data-hotkey="Alt+Space"`. Add `data-hotkey` on any other spawnable the same way. The tray menu is **Show desktop page** / **Hide desktop page**, **Copy diagnostics** (a zip for bug reports, see [`docs/RUNTIME.md`](docs/RUNTIME.md#diagnostics)) and **Quit**. Type `desk` in the example bar to toggle the HTML desktop.
+After install, look for the **Versailles tray icon**. Left-click toggles the first spawnable with the `hotkey` hook (the example command bar). **Alt+Space** also toggles it when that piece declares `data-hooks="hotkey"` and `data-hotkey="Alt+Space"`. Add `data-hotkey` on any other spawnable the same way. The tray menu is **Show desktop page** / **Hide desktop page**, **Copy diagnostics** (a zip for bug reports, see [`docs/RUNTIME.md`](docs/RUNTIME.md#diagnostics)) and **Quit**, plus **Update to x.y.z** when a new release is out (it installs only when you click it; [updates](docs/RUNTIME.md#updates)). Type `desk` in the example bar to toggle the HTML desktop.
 
 Copy [`templates/starter/`](templates/starter) onto `%USERPROFILE%\Documents\Widgets` if that folder is empty. The host does not seed HTML for you.
 

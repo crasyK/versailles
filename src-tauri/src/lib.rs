@@ -36,6 +36,7 @@ mod state;
 mod storage;
 mod toasts;
 mod tray;
+mod updater;
 mod watcher;
 mod weather;
 mod wireless;
@@ -85,7 +86,7 @@ fn load_config_or_defaults(store: &ConfigStore) -> AppConfig {
 /// ready yet, and the wallpaper / hotkeys still work without a tray.
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     // Left-click still opens the action bar; the menu is desktop page,
-    // diagnostics and quit.
+    // diagnostics and quit, with "Update to x.y.z" on top when there is one.
     let desktop_item = MenuItem::with_id(
         app,
         "desktop",
@@ -98,6 +99,9 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&desktop_item, &diagnostics_item, &quit_item])?;
     *app.state::<AppState>().tray_desktop_item.lock().unwrap() = Some(desktop_item);
+    // Inserted by the updater only when an update exists.
+    let update_item = MenuItem::with_id(app, "update", "Update", true, None::<&str>)?;
+    updater::set_tray(menu.clone(), update_item);
 
     let mut tray = TrayIconBuilder::new();
     if let Some(icon) = app.default_window_icon().cloned() {
@@ -124,6 +128,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 }
             }
             "diagnostics" => diagnostics::copy_from_tray(app),
+            "update" => updater::install_clicked(app),
             "quit" => {
                 app.exit(0);
             }
@@ -201,6 +206,8 @@ pub fn run() {
     }
     let app = builder
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        // Rust only: no capability grants pages the updater commands.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             // Nothing in setup may abort boot: every failure below degrades.
             let root = widgets_root().unwrap_or_else(|err| {
@@ -257,6 +264,7 @@ pub fn run() {
             if let Err(err) = build_tray(app.handle()) {
                 tracing::error!("tray icon failed: {err}");
             }
+            updater::start(app.handle());
 
             // Spawnable hotkeys (data-hotkey on pieces with the hotkey hook).
             if !crate::boot::is_bench() {

@@ -110,6 +110,11 @@ pub fn note_exiting() {
     EXITING.store(true, Ordering::SeqCst);
 }
 
+/// The exit did not happen after all (an update that failed to install).
+pub fn note_exit_cancelled() {
+    EXITING.store(false, Ordering::SeqCst);
+}
+
 /// A shutdown was requested (and not cancelled).
 pub fn exiting() -> bool {
     EXITING.load(Ordering::SeqCst)

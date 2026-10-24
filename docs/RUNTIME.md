@@ -78,6 +78,10 @@ Tray menu **Copy diagnostics** writes `versailles-diagnostics-<yyyymmdd-hhmmss>.
 
 In the config, the value of every key containing `token`, `secret`, `password`, `key` or `auth` (any case, at any depth; `hotkey` excepted) is replaced by `"<redacted>"`. Your profile folder (`C:\Users\<name>`) becomes `%USERPROFILE%` in every file. Shortcut names and targets stay as they are: look through `info.json` before you post it publicly.
 
+## Updates
+
+A minute after start and then once a day, Versailles fetches `latest.json` from the newest GitHub release (`"updates": { "check": false }` in `#versailles` turns that off; bench / e2e runs never check). When it names a newer version, the tray menu gets **Update to x.y.z** at the top. A click downloads the installer and checks its signature against the public key built into the app; then Versailles gives back the taskbar, the tray icons and the docked bars' screen space as Quit does, starts the installer in passive mode and exits. The installer starts the new version. If the download, the signature or the installer start fails, the log says why and everything stays as it was. Release steps and a local test: [`CONTRIBUTING.md`](../CONTRIBUTING.md#updates).
+
 ## ACL
 
 `npm run verify:acl` must stay green. Adding a Tauri command means `src-tauri/src/lib.rs`, `src-tauri/build.rs`, and `src-tauri/capabilities/default.json` together.

@@ -229,6 +229,14 @@ The taskbar comes back even when Versailles does not end cleanly:
 
 Your own auto-hide setting is saved before hiding and put back as it was. Taskbar mods (Windhawk and similar) that move or restyle the taskbar may fight the hiding; turn them off while it is on. Only one Versailles hides at a time.
 
+### Updates
+
+```json
+"updates": { "check": false }
+```
+
+Versailles looks for a new release on GitHub a minute after start and once a day, and shows **Update to x.y.z** in the tray menu when there is one; it installs only when you click it. `"check": false` stops the checks (default `true`); the setting applies on save.
+
 ## Preview query
 
 Same file, different surfaces:

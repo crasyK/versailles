@@ -45,6 +45,10 @@ fn hider() -> &'static Mutex<Option<Hider>> {
 /// Follow the config: start or stop hiding. Called at boot and on every
 /// config reload; does nothing when the state already matches.
 pub fn apply(hide: bool) {
+    // An update is about to install: the taskbar stays back.
+    if crate::updater::updating() {
+        return;
+    }
     let mut slot = hider().lock().unwrap();
     // The hide thread ends on its own when another Versailles already hides.
     if slot.as_ref().is_some_and(|h| h.thread.is_finished()) {

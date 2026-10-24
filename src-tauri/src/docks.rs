@@ -265,6 +265,10 @@ fn place(window: &WebviewWindow, st: &mut DockState) {
 /// the UI thread).
 pub fn reconcile(app: &AppHandle) {
     let _ = app_slot().set(app.clone());
+    // An update is about to install: reservations stay released.
+    if crate::updater::updating() {
+        return;
+    }
     let state = app.state::<AppState>();
     let cat = crate::desktop::page_catalog(&state);
     let monitors = crate::monitors::list(app);
@@ -340,6 +344,9 @@ fn start_reserve_watcher(app: &AppHandle) {
         let mut healed: HashMap<String, (Instant, u32)> = HashMap::new();
         loop {
             std::thread::sleep(Duration::from_secs(3));
+            if crate::updater::updating() {
+                continue;
+            }
             let reserving: Vec<(String, Edge)> = states()
                 .lock()
                 .unwrap()
@@ -694,6 +701,9 @@ pub fn release_all(app: &AppHandle) {
 /// The taskbar or another AppBar moved: re-place reserved docks.
 #[cfg(windows)]
 fn reposition_reserved(app: &AppHandle) {
+    if crate::updater::updating() {
+        return;
+    }
     let labels: Vec<String> = states().lock().unwrap().keys().cloned().collect();
     for label in labels {
         let Some(window) = app.get_webview_window(&label) else {
@@ -713,6 +723,9 @@ fn reposition_reserved(app: &AppHandle) {
 /// bar that was refused another chance. After Explorer restarted.
 #[cfg(windows)]
 fn reregister_reserved(app: &AppHandle) {
+    if crate::updater::updating() {
+        return;
+    }
     let labels: Vec<String> = states().lock().unwrap().keys().cloned().collect();
     for label in labels {
         let Some(window) = app.get_webview_window(&label) else {

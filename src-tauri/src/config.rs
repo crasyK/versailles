@@ -207,6 +207,28 @@ pub struct ShellConfig {
     pub suppress: Vec<String>,
 }
 
+/// `"updates"` in `#versailles`: in-app updates (updater.rs).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdatesConfig {
+    /// Look for a new release on start and once a day. Nothing installs
+    /// without a click on the tray item.
+    #[serde(default = "default_update_check")]
+    pub check: bool,
+}
+
+fn default_update_check() -> bool {
+    true
+}
+
+impl Default for UpdatesConfig {
+    fn default() -> Self {
+        Self {
+            check: default_update_check(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct UserConfig {
@@ -228,6 +250,8 @@ pub struct UserConfig {
     pub desktop: DesktopConfig,
     #[serde(default)]
     pub shell: ShellConfig,
+    #[serde(default)]
+    pub updates: UpdatesConfig,
     /// Per-spawnable engine and overlay options keyed by `data-id`.
     #[serde(default = "default_spawnables")]
     pub spawnables: HashMap<String, SpawnableConfig>,
@@ -245,6 +269,7 @@ impl Default for UserConfig {
             api: ApiConfig::default(),
             desktop: DesktopConfig::default(),
             shell: ShellConfig::default(),
+            updates: UpdatesConfig::default(),
             spawnables: default_spawnables(),
         }
     }
@@ -328,6 +353,8 @@ pub struct AppConfig {
     pub desktop: DesktopConfig,
     #[serde(default)]
     pub shell: ShellConfig,
+    #[serde(default)]
+    pub updates: UpdatesConfig,
 }
 
 impl AppConfig {
@@ -352,6 +379,7 @@ impl AppConfig {
                 page: user.desktop.page,
             },
             shell: user.shell,
+            updates: user.updates,
         }
     }
 
@@ -367,6 +395,7 @@ impl AppConfig {
         self.launcher_hotkey = user.launcher.hotkey;
         self.launcher_primary = user.launcher.primary;
         self.shell = user.shell;
+        self.updates = user.updates;
     }
 
     pub fn to_user_config(&self) -> UserConfig {
@@ -386,6 +415,7 @@ impl AppConfig {
             },
             desktop: self.desktop.clone(),
             shell: self.shell.clone(),
+            updates: self.updates.clone(),
             spawnables: HashMap::new(),
         }
     }
@@ -797,6 +827,17 @@ mod tests {
         let mut app = AppConfig::from_parts(UserConfig::default(), RuntimeState::default());
         app.apply_user_config(serde_json::from_str(r#"{ "shell": { "hideTaskbar": true } }"#).unwrap());
         assert!(app.shell.hide_taskbar);
+    }
+
+    #[test]
+    fn update_checks_default_on_and_can_be_turned_off() {
+        let user: UserConfig = serde_json::from_str("{}").unwrap();
+        assert!(user.updates.check);
+        let user: UserConfig = serde_json::from_str(r#"{ "updates": {} }"#).unwrap();
+        assert!(user.updates.check);
+        let mut app = AppConfig::from_parts(UserConfig::default(), RuntimeState::default());
+        app.apply_user_config(serde_json::from_str(r#"{ "updates": { "check": false } }"#).unwrap());
+        assert!(!app.updates.check);
     }
 
     #[test]

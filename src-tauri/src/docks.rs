@@ -702,8 +702,8 @@ mod appbar {
         ABN_POSCHANGED, APPBARDATA,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
-        SetWindowPos, HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-        WM_USER,
+        RegisterWindowMessageW, SetWindowPos, HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE,
+        SWP_NOSIZE, WM_USER,
     };
 
     /// Message Explorer sends to our bar windows.
@@ -716,6 +716,22 @@ mod appbar {
     fn last_set() -> &'static Mutex<Option<std::time::Instant>> {
         static AT: OnceLock<Mutex<Option<std::time::Instant>>> = OnceLock::new();
         AT.get_or_init(|| Mutex::new(None))
+    }
+
+    /// Explorer's taskbar when our bars registered. A restarted Explorer has
+    /// a new one and has forgotten every AppBar.
+    fn explorer_at_register() -> &'static Mutex<isize> {
+        static AT: OnceLock<Mutex<isize>> = OnceLock::new();
+        AT.get_or_init(|| Mutex::new(0))
+    }
+
+    fn explorer_now() -> isize {
+        crate::taskbar::explorer_tray().map(|h| h.0 as isize).unwrap_or(0)
+    }
+
+    fn taskbar_created() -> u32 {
+        static MSG: OnceLock<u32> = OnceLock::new();
+        *MSG.get_or_init(|| unsafe { RegisterWindowMessageW(windows::core::w!("TaskbarCreated")) })
     }
 
     fn registered() -> &'static Mutex<HashSet<isize>> {
@@ -763,6 +779,7 @@ mod appbar {
                     return None;
                 }
                 registered().lock().unwrap().insert(h.0 as isize);
+                *explorer_at_register().lock().unwrap() = explorer_now();
             }
             abd.uEdge = abe(edge);
             // Propose a strip already `thick` deep along the edge (Microsoft's
@@ -844,8 +861,34 @@ mod appbar {
         let Some(h) = hwnd(window) else {
             return;
         };
+        // Registered before any broadcast can arrive.
+        taskbar_created();
         unsafe {
             let _ = SetWindowSubclass(h, Some(proc_), SUBCLASS_ID, 0);
+        }
+    }
+
+    /// `TaskbarCreated` reached a bar. Versailles' own tray sends it too
+    /// (`tray`), so only a new Explorer taskbar means the reservations are
+    /// gone: forget them and reserve again (once for all bars).
+    fn on_taskbar_created() {
+        let now = explorer_now();
+        {
+            let mut at = explorer_at_register().lock().unwrap();
+            if now == 0 || now == *at {
+                return;
+            }
+            *at = now;
+        }
+        registered().lock().unwrap().clear();
+        tracing::info!("docks: Explorer restarted; reserving bar space again");
+        if let Some(app) = super::app_slot().get().cloned() {
+            std::thread::spawn(move || {
+                // Let the new taskbar settle (it may still be placing itself).
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                let handle = app.clone();
+                let _ = app.run_on_main_thread(move || super::reposition_reserved(&handle));
+            });
         }
     }
 
@@ -887,6 +930,9 @@ mod appbar {
                 _ => {}
             }
             return LRESULT(0);
+        }
+        if msg == taskbar_created() {
+            on_taskbar_created();
         }
         unsafe { DefSubclassProc(h, msg, wparam, lparam) }
     }

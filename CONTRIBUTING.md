@@ -52,8 +52,8 @@ Versailles checks `https://github.com/crasyK/versailles/releases/latest/download
 
 **Trying an update locally** (no GitHub involved). Test builds (`--profile release-test`, which merges `src-tauri/tauri.test.conf.json`) accept a plain-http endpoint from `VERSAILLES_UPDATE_URL` and then check after 5 s instead of 60 s; release builds ignore the variable.
 
-1. A throwaway key pair: `npx tauri signer generate -w %TEMP%\vu\dev.key --ci -p ""`. A config with its public key, `%TEMP%\vu\old.json`: `{ "plugins": { "updater": { "pubkey": "<contents of dev.key.pub>" } } }`, and `%TEMP%\vu\new.json`: the same plus `"version": "0.11.1"` (any version above the old one).
-2. `set TAURI_SIGNING_PRIVATE_KEY_PATH=%TEMP%\vu\dev.key` and `set TAURI_SIGNING_PRIVATE_KEY_PASSWORD=`.
+1. A throwaway key pair, with a password (an empty one cannot be passed: Windows drops an empty environment variable and the build then waits on a hidden password prompt): `npx tauri signer generate -w %TEMP%\vu\dev.key --ci -p test`. A config with its public key, `%TEMP%\vu\old.json`: `{ "plugins": { "updater": { "pubkey": "<contents of dev.key.pub>" } } }`, and `%TEMP%\vu\new.json`: the same plus `"version": "0.11.1"` (any version above the old one).
+2. `set TAURI_SIGNING_PRIVATE_KEY_PATH=%TEMP%\vu\dev.key` and `set TAURI_SIGNING_PRIVATE_KEY_PASSWORD=test`. (The Tauri CLI itself reads only `TAURI_SIGNING_PRIVATE_KEY`, the key or its path; `scripts/run-tauri.mjs` passes `TAURI_SIGNING_PRIVATE_KEY_PATH` on as that.) Run the builds through `npm run` or with `node_modules\.bin` on the `PATH`: the script starts `tauri` by name.
 3. Old build: `node scripts/run-tauri.mjs build --config %TEMP%\vu\old.json -- --profile release-test`. Install its `Versailles_<version>_x64-setup.exe` from `bundle\nsis\` under the target folder.
 4. New build: the same with `new.json`. Copy its `Versailles_0.11.1_x64-setup.exe` and `.exe.sig` into `%TEMP%\vu\www`, then `node scripts/latest-json.mjs --installer %TEMP%\vu\www\Versailles_0.11.1_x64-setup.exe --version 0.11.1 --url-base http://127.0.0.1:8000/ --out %TEMP%\vu\www\latest.json`.
 5. In `%TEMP%\vu\www`: `python -m http.server 8000`.

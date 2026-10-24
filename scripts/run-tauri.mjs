@@ -69,7 +69,11 @@ function buildOverlays(rest) {
   }
 
   const realKey = pubkey.length > 40 && !pubkey.includes("REPLACE_WITH") && !/\s/.test(pubkey);
-  const privateKey = process.env.TAURI_SIGNING_PRIVATE_KEY || process.env.TAURI_SIGNING_PRIVATE_KEY_PATH;
+  // The Tauri CLI reads only TAURI_SIGNING_PRIVATE_KEY (the key or a path to it).
+  if (!process.env.TAURI_SIGNING_PRIVATE_KEY && process.env.TAURI_SIGNING_PRIVATE_KEY_PATH) {
+    process.env.TAURI_SIGNING_PRIVATE_KEY = process.env.TAURI_SIGNING_PRIVATE_KEY_PATH;
+  }
+  const privateKey = process.env.TAURI_SIGNING_PRIVATE_KEY;
   if (!realKey || !privateKey) {
     console.warn(
       realKey

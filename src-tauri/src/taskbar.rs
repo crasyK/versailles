@@ -113,6 +113,8 @@ pub fn run_cli() -> Option<i32> {
             win::guard();
             Some(0)
         }
+        // The keyboard hook's helper process (see src/keys.rs).
+        "--keys-hook" => Some(crate::keys::helper_main()),
         _ => None,
     }
 }

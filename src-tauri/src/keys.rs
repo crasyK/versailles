@@ -30,8 +30,17 @@
 //! is also installed again after session unlock, resume, display on, and 30 s
 //! without key traffic.
 //!
+//! All of this runs in a helper process, `versailles --keys-hook`, that owns
+//! no windows: while one of Versailles' own windows had the focus (the
+//! desktop, an overlay, a bar), Windows did not call a low-level hook first
+//! in line in this process, nor any hook behind it, and the Win press went
+//! to the shell (Start opened instead of the bound piece, #37). A hook in
+//! another process is called as usual. The app sends the bindings to the
+//! helper's stdin as JSON lines; the helper answers on stdout with toggles
+//! and log lines, and exits when its stdin closes (the app quit or crashed).
+//!
 //! It exists only while a Win binding or a suppress entry exists, and dies
-//! with the process, so the keyboard is never left changed. Win+L and
+//! with the app, so the keyboard is never left changed. Win+L and
 //! Ctrl+Alt+Del cannot be intercepted, and keys typed into an elevated window
 //! are not seen (UIPI).
 
@@ -39,18 +48,19 @@
 
 use std::cell::UnsafeCell;
 use std::mem::MaybeUninit;
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use tauri::AppHandle;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Key {
     /// The Win key pressed and released alone.
     WinTap,
     Vk(u16),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Combo {
     pub ctrl: bool,
     pub alt: bool,
@@ -142,13 +152,13 @@ pub fn wants_hook(accel: &str) -> bool {
 
 /// What the hook matches: a combo and the piece it toggles (`None`: only
 /// swallow it).
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 struct Entry {
     combo: Combo,
     piece: Option<String>,
 }
 
-#[derive(Default)]
+#[derive(Default, Serialize, Deserialize)]
 struct Table {
     binds: Vec<Entry>,
     suppress: Vec<Entry>,
@@ -184,7 +194,7 @@ fn app_slot() -> &'static OnceLock<AppHandle> {
 /// installing or removing the hook as needed.
 pub fn apply(app: &AppHandle, binds: Option<Vec<(String, String)>>, suppress: &[String]) {
     let _ = app_slot().set(app.clone());
-    let need = {
+    let (generation, current) = {
         let mut slot = table().lock().unwrap();
         let binds = match binds {
             Some(binds) => binds
@@ -212,12 +222,10 @@ pub fn apply(app: &AppHandle, binds: Option<Vec<(String, String)>>, suppress: &[
                 }
             })
             .collect();
-        let t = Table { binds, suppress };
-        let need = !t.is_empty();
-        *slot = (slot.0 + 1, Arc::new(t));
-        need
+        *slot = (slot.0 + 1, Arc::new(Table { binds, suppress }));
+        (slot.0, slot.1.clone())
     };
-    hook::run(need);
+    client::run(!current.is_empty(), generation, &current);
 }
 
 /// Toggle the piece on the main thread.
@@ -232,6 +240,12 @@ fn fire(piece: &str) {
 /// Toggle the piece of entry `index` of table `generation` (the one the hook
 /// matched against); nothing when the bindings changed since.
 fn fire_entry(generation: u64, index: usize) {
+    if HELPER.load(Ordering::Relaxed) {
+        // In the helper: the app toggles it.
+        #[cfg(windows)]
+        helper::note(&Note::Fire { generation, index });
+        return;
+    }
     let piece = {
         let slot = table().lock().unwrap();
         if slot.0 != generation {
@@ -241,6 +255,38 @@ fn fire_entry(generation: u64, index: usize) {
     };
     if let Some(piece) = piece {
         fire(&piece);
+    }
+}
+
+/// This process is the `--keys-hook` helper.
+static HELPER: AtomicBool = AtomicBool::new(false);
+
+/// App → helper: the bindings of one generation.
+#[derive(Serialize, Deserialize)]
+struct Bindings {
+    generation: u64,
+    table: Table,
+}
+
+/// Helper → app.
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Note {
+    /// Toggle the piece of this table entry.
+    Fire { generation: u64, index: usize },
+    /// A log line for the app's log.
+    Log { level: String, text: String },
+}
+
+/// `versailles --keys-hook`: run as the helper until stdin closes.
+pub fn helper_main() -> i32 {
+    #[cfg(windows)]
+    {
+        helper::main()
+    }
+    #[cfg(not(windows))]
+    {
+        2
     }
 }
 
@@ -1387,9 +1433,188 @@ mod hook {
     }
 }
 
+/// The helper side: bindings in on stdin, notes out on stdout.
+#[cfg(windows)]
+mod helper {
+    use super::{hook, table, Bindings, Note, HELPER};
+    use std::io::{BufRead, Write};
+    use std::sync::atomic::Ordering;
+    use std::sync::Arc;
+
+    /// One note for the app (stdout is the pipe it reads).
+    pub fn note(n: &Note) {
+        if let Ok(line) = serde_json::to_string(n) {
+            let mut out = std::io::stdout().lock();
+            let _ = writeln!(out, "{line}");
+            let _ = out.flush();
+        }
+    }
+
+    /// Log lines (`tracing` ones too) go to the app's log.
+    struct Forward;
+
+    impl log::Log for Forward {
+        fn enabled(&self, metadata: &log::Metadata) -> bool {
+            metadata.level() <= log::Level::Info
+        }
+        fn log(&self, record: &log::Record) {
+            if self.enabled(record.metadata()) {
+                note(&Note::Log { level: record.level().to_string(), text: record.args().to_string() });
+            }
+        }
+        fn flush(&self) {}
+    }
+
+    pub fn main() -> i32 {
+        HELPER.store(true, Ordering::Relaxed);
+        if log::set_boxed_logger(Box::new(Forward)).is_ok() {
+            log::set_max_level(log::LevelFilter::Info);
+        }
+        for line in std::io::stdin().lock().lines() {
+            let Ok(line) = line else {
+                break;
+            };
+            match serde_json::from_str::<Bindings>(&line) {
+                Ok(b) => {
+                    let need = !b.table.is_empty();
+                    *table().lock().unwrap() = (b.generation, Arc::new(b.table));
+                    hook::run(need);
+                }
+                Err(err) => tracing::warn!("keys helper: unreadable bindings: {err}"),
+            }
+        }
+        hook::run(false);
+        0
+    }
+}
+
+/// The app side: starts the helper while bindings exist, sends it each new
+/// table, toggles what it reports, and starts it again if it ends.
+#[cfg(windows)]
+mod client {
+    use super::{fire_entry, Note, Table};
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::windows::process::CommandExt;
+    use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::{Mutex, OnceLock};
+    use std::time::Duration;
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    /// Start a helper that ended on its own again at most this many times.
+    const RESTARTS: u32 = 5;
+
+    struct Helper {
+        id: u32,
+        stdin: ChildStdin,
+    }
+
+    fn slot() -> &'static Mutex<Option<Helper>> {
+        static S: OnceLock<Mutex<Option<Helper>>> = OnceLock::new();
+        S.get_or_init(|| Mutex::new(None))
+    }
+
+    /// The bindings last sent, for a helper started again.
+    fn last() -> &'static Mutex<Option<String>> {
+        static L: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+        L.get_or_init(|| Mutex::new(None))
+    }
+
+    pub fn run(need: bool, generation: u64, table: &Table) {
+        let mut slot = slot().lock().unwrap();
+        if !need {
+            *last().lock().unwrap() = None;
+            // Its stdin closes: it removes the hook and exits.
+            slot.take();
+            return;
+        }
+        let line = serde_json::json!({ "generation": generation, "table": table }).to_string();
+        *last().lock().unwrap() = Some(line.clone());
+        if slot.is_none() {
+            *slot = start();
+        }
+        send(&mut slot, &line);
+    }
+
+    fn start() -> Option<Helper> {
+        let exe = std::env::current_exe().ok()?;
+        let mut child = Command::new(exe)
+            .arg("--keys-hook")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(|err| tracing::warn!("keyboard hook helper failed to start: {err}"))
+            .ok()?;
+        let stdin = child.stdin.take()?;
+        let stdout = child.stdout.take()?;
+        let id = child.id();
+        std::thread::Builder::new()
+            .name("versailles-keys-helper".into())
+            .spawn(move || read(child, stdout))
+            .map_err(|err| tracing::warn!("keyboard hook helper reader failed to start: {err}"))
+            .ok()?;
+        Some(Helper { id, stdin })
+    }
+
+    fn send(slot: &mut Option<Helper>, line: &str) {
+        if let Some(h) = slot.as_mut() {
+            if writeln!(h.stdin, "{line}").and_then(|_| h.stdin.flush()).is_err() {
+                tracing::warn!("keyboard hook helper did not take the bindings");
+            }
+        }
+    }
+
+    fn read(mut child: Child, stdout: ChildStdout) {
+        let id = child.id();
+        for line in BufReader::new(stdout).lines() {
+            let Ok(line) = line else {
+                break;
+            };
+            match serde_json::from_str::<Note>(&line) {
+                Ok(Note::Fire { generation, index }) => fire_entry(generation, index),
+                Ok(Note::Log { level, text }) => {
+                    let level = level.parse().unwrap_or(log::Level::Info);
+                    log::log!(target: "versailles_lib::keys::hook", level, "{text}");
+                }
+                Err(_) => {}
+            }
+        }
+        let _ = child.wait();
+        ended(id);
+    }
+
+    /// The helper `id` exited: fine when we closed it, else start another.
+    fn ended(id: u32) {
+        static RESTARTED: AtomicU32 = AtomicU32::new(0);
+        {
+            let mut slot = slot().lock().unwrap();
+            if !slot.as_ref().is_some_and(|h| h.id == id) {
+                return;
+            }
+            slot.take();
+        }
+        if RESTARTED.fetch_add(1, Ordering::Relaxed) >= RESTARTS {
+            tracing::warn!("keyboard hook helper ended; Win keys stay unbound until Versailles restarts");
+            return;
+        }
+        tracing::warn!("keyboard hook helper ended; starting it again");
+        std::thread::sleep(Duration::from_secs(1));
+        let Some(line) = last().lock().unwrap().clone() else {
+            return;
+        };
+        let mut slot = slot().lock().unwrap();
+        if slot.is_none() {
+            *slot = start();
+            send(&mut slot, &line);
+        }
+    }
+}
+
 #[cfg(not(windows))]
-mod hook {
-    pub fn run(_need: bool) {}
+mod client {
+    pub fn run(_need: bool, _generation: u64, _table: &super::Table) {}
 }
 
 #[cfg(test)]
@@ -1515,6 +1740,24 @@ mod tests {
         assert_eq!(watched(0x5C), Some(1));
         assert_eq!(watched(VK_F23), Some(2));
         assert_eq!(watched(0x41), None);
+    }
+
+    #[test]
+    fn helper_messages_round_trip() {
+        let t = Table {
+            binds: vec![Entry { combo: parse("Win").unwrap(), piece: Some("action-bar".into()) }],
+            suppress: vec![Entry { combo: parse("Copilot").unwrap(), piece: None }],
+        };
+        let line = serde_json::json!({ "generation": 7, "table": &t }).to_string();
+        let b: Bindings = serde_json::from_str(&line).unwrap();
+        assert_eq!(b.generation, 7);
+        assert_eq!(b.table.find(&parse("Win").unwrap()), Some(0));
+        assert_eq!(b.table.find(&parse("Copilot").unwrap()), Some(1));
+        assert_eq!(b.table.entry(0).and_then(|e| e.piece.as_deref()), Some("action-bar"));
+        let fire = Note::Fire { generation: 7, index: 1 };
+        let back: Note = serde_json::from_str(&serde_json::to_string(&fire).unwrap()).unwrap();
+        assert_eq!(back, fire);
+        assert!(serde_json::from_str::<Note>(r#"{"log":{"level":"WARN","text":"x"}}"#).is_ok());
     }
 
     #[test]

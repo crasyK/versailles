@@ -328,11 +328,11 @@ async function main() {
     child = launch(exe, dest, await freePort());
     const wall = await until("wallpaper report", () => {
       const r = store(dest, "e2e-wall")?.report;
-      return r && r.sdk && Object.keys(r.sensors).length + Object.keys(r.errors).length >= 12 && r.bus.length && r.controlRefused
+      return r && r.sdk && Object.keys(r.sensors).length + Object.keys(r.errors).length >= 17 && r.bus.length && r.controlRefused
         ? r : null;
     });
     check("wallpaper loads the SDK", wall.sdk, `sdk ${wall.sdk}`);
-    for (const h of ["battery", "network", "focus", "audio", "radios", "audio-control", "display", "power-mode", "wifi", "bluetooth", "dnd", "posture"]) {
+    for (const h of ["battery", "network", "focus", "audio", "radios", "audio-control", "display", "power-mode", "wifi", "bluetooth", "dnd", "posture", "keyboard", "vpn", "hotspot", "sharing", "accessibility"]) {
       check(`sensor ${h} answers`, wall.sensors[h], wall.errors[h] || wall.sensors[h]);
     }
     check("bus reaches a wallpaper widget", wall.bus.includes("e2e-overlay"), `from ${wall.bus.join(", ")}`);

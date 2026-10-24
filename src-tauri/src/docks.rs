@@ -297,6 +297,79 @@ pub fn reconcile(app: &AppHandle) {
         }
     }
     start_autohide_watcher(app);
+    #[cfg(windows)]
+    start_reserve_watcher(app);
+}
+
+/// Whether a reserving bar's strip is kept out of its monitor's work area
+/// (`bar` and `work` in physical pixels). A tolerance of one pixel.
+fn strip_reserved(edge: Edge, bar: Rect, work: Rect) -> bool {
+    match edge {
+        Edge::Top => work.y >= bar.y + bar.height - 1,
+        Edge::Bottom => work.y + work.height <= bar.y + 1,
+        Edge::Left => work.x >= bar.x + bar.width - 1,
+        Edge::Right => work.x + work.width <= bar.x + 1,
+    }
+}
+
+/// Keep reservations alive. Explorer can forget an AppBar without telling
+/// it: a restarted Explorer drops bars that registered again while it was
+/// still starting up. Every 3 s, check that each reserving bar's strip is
+/// still kept out of the work area; after two misses in a row, register it
+/// again (at most every 20 s per bar).
+#[cfg(windows)]
+fn start_reserve_watcher(app: &AppHandle) {
+    static RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if RUNNING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let mut misses: HashMap<String, u32> = HashMap::new();
+        let mut healed: HashMap<String, Instant> = HashMap::new();
+        loop {
+            std::thread::sleep(Duration::from_secs(3));
+            let reserving: Vec<(String, Edge)> = states()
+                .lock()
+                .unwrap()
+                .values()
+                .filter(|s| s.dock.mode == DockMode::Reserve && s.appbar && !s.refused)
+                .map(|s| (s.label.clone(), s.dock.edge))
+                .collect();
+            misses.retain(|label, _| reserving.iter().any(|(l, _)| l == label));
+            for (label, edge) in reserving {
+                let Some(window) = app.get_webview_window(&label) else {
+                    continue;
+                };
+                let Some((bar, work)) = appbar::bar_and_work(&window) else {
+                    continue;
+                };
+                if strip_reserved(edge, bar, work) {
+                    misses.remove(&label);
+                    continue;
+                }
+                let n = misses.entry(label.clone()).or_insert(0);
+                *n += 1;
+                let recent = healed.get(&label).is_some_and(|t| t.elapsed() < Duration::from_secs(20));
+                if *n < 2 || recent {
+                    continue;
+                }
+                misses.remove(&label);
+                healed.insert(label.clone(), Instant::now());
+                tracing::info!("dock '{label}': its space is no longer reserved; reserving it again");
+                let handle = app.clone();
+                let _ = app.run_on_main_thread(move || {
+                    let Some(window) = handle.get_webview_window(&label) else {
+                        return;
+                    };
+                    appbar::forget(&window);
+                    if let Some(st) = states().lock().unwrap().get_mut(&label) {
+                        place(&window, st);
+                    }
+                });
+            }
+        }
+    });
 }
 
 /// Docks the user toggled off with their hotkey (until toggled on again).
@@ -844,6 +917,45 @@ mod appbar {
         }
     }
 
+    /// Drop the registration (Explorer may already have) so the next
+    /// placement registers the bar afresh.
+    pub fn forget(window: &WebviewWindow) {
+        let Some(h) = hwnd(window) else {
+            return;
+        };
+        registered().lock().unwrap().remove(&(h.0 as isize));
+        let mut abd = data(h);
+        unsafe {
+            SHAppBarMessage(ABM_REMOVE, &mut abd);
+        }
+    }
+
+    /// The visible bar's window rect and its monitor's work area, physical px.
+    pub fn bar_and_work(window: &WebviewWindow) -> Option<(Rect, Rect)> {
+        use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST};
+        use windows::Win32::UI::WindowsAndMessaging::{GetWindowRect, IsWindowVisible};
+        let h = hwnd(window)?;
+        unsafe {
+            if !IsWindowVisible(h).as_bool() {
+                return None;
+            }
+            let mut r = RECT::default();
+            GetWindowRect(h, &mut r).ok()?;
+            let mut info = MONITORINFO {
+                cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+                ..Default::default()
+            };
+            if !GetMonitorInfoW(MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST), &mut info).as_bool() {
+                return None;
+            }
+            let w = info.rcWork;
+            Some((
+                Rect { x: r.left, y: r.top, width: r.right - r.left, height: r.bottom - r.top },
+                Rect { x: w.left, y: w.top, width: w.right - w.left, height: w.bottom - w.top },
+            ))
+        }
+    }
+
     pub fn remove(window: &WebviewWindow) {
         let Some(h) = hwnd(window) else {
             return;
@@ -943,6 +1055,27 @@ mod tests {
     use super::*;
 
     const WORK: Rect = Rect { x: 0, y: 72, width: 1920, height: 1128 };
+
+    #[test]
+    fn tells_whether_a_strip_is_reserved() {
+        let full = Rect { x: 0, y: 0, width: 1920, height: 1200 };
+        let bottom = Rect { x: 0, y: 1134, width: 1920, height: 66 };
+        let top = Rect { x: 0, y: 0, width: 1920, height: 48 };
+        // Both bars reserved: work area between them.
+        let work = Rect { x: 0, y: 48, width: 1920, height: 1086 };
+        assert!(strip_reserved(Edge::Bottom, bottom, work));
+        assert!(strip_reserved(Edge::Top, top, work));
+        // Explorer forgot them: the work area is the whole monitor.
+        assert!(!strip_reserved(Edge::Bottom, bottom, full));
+        assert!(!strip_reserved(Edge::Top, top, full));
+        // Side bars, and a one-pixel rounding is tolerated.
+        let left = Rect { x: 0, y: 0, width: 40, height: 1200 };
+        assert!(strip_reserved(Edge::Left, left, Rect { x: 39, y: 0, width: 1881, height: 1200 }));
+        assert!(!strip_reserved(Edge::Left, left, full));
+        let right = Rect { x: 1880, y: 0, width: 40, height: 1200 };
+        assert!(strip_reserved(Edge::Right, right, Rect { x: 0, y: 0, width: 1880, height: 1200 }));
+        assert!(!strip_reserved(Edge::Right, right, full));
+    }
 
     #[test]
     fn parses_edges_and_modes() {

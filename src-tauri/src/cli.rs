@@ -312,7 +312,7 @@ fn try_cmd_start_terminal(
 }
 
 #[cfg(windows)]
-fn open_target(target: &str) -> Result<(), String> {
+pub(crate) fn open_target(target: &str) -> Result<(), String> {
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
     use windows::core::PCWSTR;
@@ -355,7 +355,7 @@ fn open_target(target: &str) -> Result<(), String> {
 }
 
 #[cfg(not(windows))]
-fn open_target(target: &str) -> Result<(), String> {
+pub(crate) fn open_target(target: &str) -> Result<(), String> {
     Command::new("xdg-open")
         .arg(target)
         .stdin(Stdio::null())

@@ -456,7 +456,7 @@ async function main() {
         return t && t.active && t.icons > 0 ? t : null;
       }, 20_000).catch(() => store(dest, "e2e-wall")?.report?.tray);
       check("tray holds the icons after an Explorer restart", icons && icons.active && icons.icons > 0, JSON.stringify(icons));
-      const stripKept = await until("bar strip after the restart", () => reservedBottom(probe(process.pid)) >= strip, 15_000)
+      const stripKept = await until("bar strip after the restart", () => reservedBottom(probe(process.pid)) >= strip, 30_000)
         .catch(() => false);
       check("docked bar keeps its strip after an Explorer restart", stripKept,
         `bottom ${strip} -> ${reservedBottom(probe(process.pid))} px`);

@@ -312,11 +312,21 @@ fn strip_reserved(edge: Edge, bar: Rect, work: Rect) -> bool {
     }
 }
 
+/// How long to wait before registering a bar again after `tries` attempts
+/// in a row that did not bring its space back.
+fn heal_backoff(tries: u32) -> Duration {
+    if tries == 0 {
+        return Duration::ZERO;
+    }
+    Duration::from_secs((8u64 << (tries - 1).min(4)).min(120))
+}
+
 /// Keep reservations alive. Explorer can forget an AppBar without telling
 /// it: a restarted Explorer drops bars that registered again while it was
 /// still starting up. Every 3 s, check that each reserving bar's strip is
 /// still kept out of the work area; after two misses in a row, register it
-/// again (at most every 20 s per bar).
+/// again. A try that did not take (Explorer still starting) is repeated
+/// after 8 s, then 16, 32… up to 2 min, until the space is back.
 #[cfg(windows)]
 fn start_reserve_watcher(app: &AppHandle) {
     static RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -326,7 +336,8 @@ fn start_reserve_watcher(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
         let mut misses: HashMap<String, u32> = HashMap::new();
-        let mut healed: HashMap<String, Instant> = HashMap::new();
+        // Per bar: when it was last registered again, and how often in a row.
+        let mut healed: HashMap<String, (Instant, u32)> = HashMap::new();
         loop {
             std::thread::sleep(Duration::from_secs(3));
             let reserving: Vec<(String, Edge)> = states()
@@ -346,16 +357,19 @@ fn start_reserve_watcher(app: &AppHandle) {
                 };
                 if strip_reserved(edge, bar, work) {
                     misses.remove(&label);
+                    healed.remove(&label);
                     continue;
                 }
                 let n = misses.entry(label.clone()).or_insert(0);
                 *n += 1;
-                let recent = healed.get(&label).is_some_and(|t| t.elapsed() < Duration::from_secs(20));
+                let tries = healed.get(&label).map(|(_, k)| *k).unwrap_or(0);
+                let wait = heal_backoff(tries);
+                let recent = healed.get(&label).is_some_and(|(t, _)| t.elapsed() < wait);
                 if *n < 2 || recent {
                     continue;
                 }
                 misses.remove(&label);
-                healed.insert(label.clone(), Instant::now());
+                healed.insert(label.clone(), (Instant::now(), tries + 1));
                 tracing::info!("dock '{label}': its space is no longer reserved; reserving it again");
                 let handle = app.clone();
                 let _ = app.run_on_main_thread(move || {
@@ -694,6 +708,27 @@ fn reposition_reserved(app: &AppHandle) {
     }
 }
 
+/// Register every reserving bar afresh: remove first (Explorer may or may
+/// not still know it; a second ABM_NEW for a known bar fails), and give a
+/// bar that was refused another chance. After Explorer restarted.
+#[cfg(windows)]
+fn reregister_reserved(app: &AppHandle) {
+    let labels: Vec<String> = states().lock().unwrap().keys().cloned().collect();
+    for label in labels {
+        let Some(window) = app.get_webview_window(&label) else {
+            continue;
+        };
+        let mut map = states().lock().unwrap();
+        if let Some(st) = map.get_mut(&label) {
+            if st.dock.mode == DockMode::Reserve {
+                appbar::forget(&window);
+                st.refused = false;
+                place(&window, st);
+            }
+        }
+    }
+}
+
 /// Slide auto-hide docks out while the cursor is at their edge or on them.
 fn start_autohide_watcher(app: &AppHandle) {
     static RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -992,14 +1027,13 @@ mod appbar {
             }
             *at = now;
         }
-        registered().lock().unwrap().clear();
         tracing::info!("docks: Explorer restarted; reserving bar space again");
         if let Some(app) = super::app_slot().get().cloned() {
             std::thread::spawn(move || {
                 // Let the new taskbar settle (it may still be placing itself).
                 std::thread::sleep(std::time::Duration::from_millis(500));
                 let handle = app.clone();
-                let _ = app.run_on_main_thread(move || super::reposition_reserved(&handle));
+                let _ = app.run_on_main_thread(move || super::reregister_reserved(&handle));
             });
         }
     }
@@ -1055,6 +1089,16 @@ mod tests {
     use super::*;
 
     const WORK: Rect = Rect { x: 0, y: 72, width: 1920, height: 1128 };
+
+    #[test]
+    fn heal_backs_off() {
+        assert_eq!(heal_backoff(0), Duration::ZERO);
+        assert_eq!(heal_backoff(1), Duration::from_secs(8));
+        assert_eq!(heal_backoff(2), Duration::from_secs(16));
+        assert_eq!(heal_backoff(4), Duration::from_secs(64));
+        assert_eq!(heal_backoff(5), Duration::from_secs(120));
+        assert_eq!(heal_backoff(30), Duration::from_secs(120));
+    }
 
     #[test]
     fn tells_whether_a_strip_is_reserved() {

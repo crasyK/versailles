@@ -213,19 +213,30 @@ mod win {
         }
     }
 
-    /// Explorer's taskbar. While the tray runs (`tray`), Versailles has a
-    /// `Shell_TrayWnd` of its own in front of it: skip ours.
+    /// Explorer's taskbar. While the tray runs (`tray`), a Versailles has a
+    /// `Shell_TrayWnd` of its own in front of it (ours, or another
+    /// Versailles' such as the e2e's): take the one Explorer owns, else the
+    /// first that is not ours.
     pub fn primary() -> Option<HWND> {
         let mut after: Option<HWND> = None;
+        let mut fallback = None;
         while let Ok(h) = unsafe { FindWindowExW(None, after, w!("Shell_TrayWnd"), None) } {
             let mut pid = 0u32;
             unsafe { GetWindowThreadProcessId(h, Some(&mut pid)) };
             if pid != std::process::id() {
-                return Some(h);
+                let explorer = crate::app_windows::process_path(pid).is_some_and(|p| {
+                    std::path::Path::new(&p)
+                        .file_name()
+                        .is_some_and(|f| f.eq_ignore_ascii_case("explorer.exe"))
+                });
+                if explorer {
+                    return Some(h);
+                }
+                fallback.get_or_insert(h);
             }
             after = Some(h);
         }
-        None
+        fallback
     }
 
     /// The primary taskbar and one per other monitor.

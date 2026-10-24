@@ -62,6 +62,7 @@
     "allow-windows-list",
     "allow-windows-icon",
     "allow-windows-control",
+    "allow-windows-preview",
     "allow-tray-list",
     "allow-tray-click",
     "allow-tray-hover",

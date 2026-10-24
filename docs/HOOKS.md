@@ -25,7 +25,7 @@ The host never grants more than that list. The catalog is fixed in [`src-tauri/s
 | `network` | Online state, connectivity level, profile name, Wi-Fi and signal bars |
 | `focus` | The active window: title, app, exe path, pid |
 | `audio` | Default output device, volume (0–100), mute; the default microphone, its volume and mute |
-| `windows` | The app windows a taskbar would show, their icons, and pushed changes (`windows_list`, `windows_icon`) |
+| `windows` | The app windows a taskbar would show, their icons, which ones ask for attention, pushed changes, and a hover preview card from a bar or overlay (`windows_list`, `windows_icon`, `windows_preview`) |
 | `windows-control` | Focus, minimize, restore, maximize, close, move / resize one of those windows (`windows_control`) |
 | `notify` | Windows toast notifications, read-only: the recent ones and each new one (see [Notifications](#notifications)) |
 | `radios` | Wi-Fi, Bluetooth and airplane mode on / off; switch them from a bar or overlay (see [Quick settings](#quick-settings)) |
@@ -38,6 +38,7 @@ The host never grants more than that list. The catalog is fixed in [`src-tauri/s
 | `notify-control` | Dismiss one notification, clear all, open the app that raised one, turn an app's own banners on / off (from a bar or overlay; read them with `notify`) |
 | `tray` | The notification-area icons (tooltip, app, icon), pushed changes and balloons, and clicking, hovering or pressing a key on one, while Versailles hides the Windows taskbar (see [Tray](#tray)). Tooltips and balloons can be private |
 | `posture` | Whether a convertible is folded into tablet posture, whether it is docked, and its touch screen and pen (see [Posture](#posture)) |
+| `keyboard` | The installed keyboard layouts and the one the app in front uses (pushed on change); switch that app's layout from a bar or overlay (see [Keyboard](#keyboard)) |
 
 Unknown hook names are rejected.
 
@@ -45,7 +46,7 @@ Unknown hook names are rejected.
 
 - **Basics:** [SDK](#sdk) · [Enforcement](#enforcement) · [Events](#events)
 - **Reading the system:** [Push](#push) · [Notifications](#notifications) · [Windows](#windows) · [Tray](#tray) · [Posture](#posture)
-- **Acting:** [Layout](#layout) · [Power](#power) · [Quick settings](#quick-settings) · [Clipboard](#clipboard)
+- **Acting:** [Layout](#layout) · [Power](#power) · [Quick settings](#quick-settings) · [Keyboard](#keyboard) · [Clipboard](#clipboard)
 - **Between pieces:** [Storage](#storage) · [Bus](#bus) · [Piece events](#piece-events)
 
 ## SDK
@@ -89,7 +90,7 @@ Identity comes from the **calling window**, never from an IPC argument:
 
 That piece must list the hook in `data-hooks`. A piece that omitted `data-hooks="media"` cannot call `media_now` even if the JS tries.
 
-**Control class.** `quick_set` (`radios`, `audio-control`, `display`, `power-mode`, `wifi`, `bluetooth`, `dnd`, `notify-control`) changes a system setting. Like exec class it is refused from the desktop wallpaper and from folder widgets; only a spawn window (bar, slide-out, overlay) whose piece declares the hook may change a setting. The SDK also asks for a click or key press first. Reading those hooks works anywhere.
+**Control class.** `quick_set` (`radios`, `audio-control`, `display`, `power-mode`, `wifi`, `bluetooth`, `dnd`, `notify-control`, `keyboard`) changes a system setting. Like exec class it is refused from the desktop wallpaper and from folder widgets; only a spawn window (bar, slide-out, overlay) whose piece declares the hook may change a setting. The SDK also asks for a click or key press first. Reading those hooks works anywhere.
 
 **Exec class.** `cli_exec`, `cli_exec_term`, `cli_search_files` (`shell`) and `pty_open` / `pty_write` / `pty_resize` / `pty_is_alive` / `pty_close` (`pty`) run code. They are refused from the desktop wallpaper entirely and only work from a spawn window whose piece declares the hook. `cli_open` (open a URL/path) is not exec class: the wallpaper may call it via `versailles.for(id).shell.open(...)`.
 
@@ -140,6 +141,7 @@ await hud.focus.onChange((w) => (title.textContent = w.title));
 | `wifi` | 5 s | `{ access: "ok"\|"location-denied"\|"no-adapter", connected, networks: [{ ssid, signal, secure, known, connected }] }` |
 | `display` | 5 s | `{ projection: "pc"\|"duplicate"\|"extend"\|"second", brightness: [{ id, device, kind: "internal"\|"external", level }], nightLight: { supported, on } }` |
 | `posture` | on change (5 s fallback) | `{ tablet, docked, touch: { screen, pen, maxTouches } }` (`tablet: null` on a PC that is not a convertible; see [Posture](#posture)) |
+| `keyboard` | 0.5 s | `{ layouts: [{ id, name, short, lang, layout }], current }` (see [Keyboard](#keyboard)) |
 
 A sensor is only read while some piece on the page declares its hook, and a value is pushed only when it changed. Pushes go only to the windows of pieces that declare the hook, by a script run in those windows (not a broadcast event). Sensor subscriptions also get the current value right away.
 
@@ -209,6 +211,7 @@ A window:
 | `monitor` | Display number (as in `versailles.monitors()`) |
 | `minimized`, `maximized` | Window state |
 | `focused` | The app window with focus. Clicking a Versailles window (the taskbar itself, the wallpaper) does not take it away, so "click the focused window to minimize it" works. |
+| `attention` | It flashed its taskbar button (a chat message, a finished download, an app Windows kept from coming to the front) and has not been in front since |
 | `rect` | `{ x, y, width, height }` in physical screen pixels; where a minimized window restores to |
 | `icon` | 32×32 PNG data URL, only with `{ icons: true }` or from `icon(id)`; `null` / absent if the app has none |
 
@@ -216,8 +219,26 @@ Read (`windows`):
 
 - `windows.list({ icons })`: every window, top of the z-order first.
 - `windows.icon(id)`: one window's icon. Icons are cached by the host.
-- `windows.onChange(fn)` / `on("windows", fn)`: `fn({ type, id, window })` for each change. `closed` carries the last known window. `changed` covers title, minimized / maximized, focus lost and monitor; moving or resizing alone sends nothing (read `rect` with `list()` when you need it).
+- `windows.onChange(fn)` / `on("windows", fn)`: `fn({ type, id, window })` for each change. `closed` carries the last known window. `changed` covers title, minimized / maximized, focus lost, monitor and attention; moving or resizing alone sends nothing (read `rect` with `list()` when you need it).
 - `windows.track(fn, { icons })`: `fn(list)` now and after every change, in a stable order (new windows last). Returns a function that stops tracking.
+- `windows.preview(id, element)` / `windows.preview(null)`: Versailles' preview card for a window (see below).
+
+**Attention.** Versailles listens to the shell's window messages (`RegisterShellHookWindow`, as Cairo and RetroBar do), which arrive whether or not Explorer's taskbar is shown. A window that flashes its taskbar button gets `attention: true` (a `changed` push) and keeps it through the blinking, and after a flash that ends lit, until it comes to the front (it is activated, or the poll finds it in front) or closes. An app that stops flashing (`FLASHW_STOP`) loses it about 2 s later. A title change does not clear it. Caption-only flashes are not attention. Draw it however you like; the starter's taskbar example blinks a dot (steady with reduced motion).
+
+**Hover preview.** `windows.preview(id, target)` shows a card with a live thumbnail of the window and its title next to `target`: the hovered element, or its rect `{ x, y, width, height }` in the page's CSS pixels (`getBoundingClientRect()`). `windows.preview(null)` hides it.
+
+```js
+const wins = versailles.for("taskbar").windows;
+let timer;
+button.onmouseenter = () => (timer = setTimeout(() => wins.preview(w.id, button), 400));
+button.onmouseleave = () => (clearTimeout(timer), wins.preview(null));
+```
+
+- The card is Versailles' own window (native, drawn with the Paper look; it is not part of the page and cannot be styled). It never takes focus or clicks: they go to what is below.
+- It goes above the button for a bar in the lower half of a monitor, below it for a top bar, beside it for a side bar, and stays on the button's monitor (its work area), sized for that monitor's scale (the thumbnail is at most 240 × 160 px).
+- A window that gives no thumbnail shows its icon and title instead.
+- It hides about 0.1 s after `preview(null)` (moving to the next button and calling `preview` again keeps it up), when the pointer has left both the bar and the card for 0.3 s, when the window closes, and a minute after the last call. Call `preview` again when the button moves.
+- Only from a bar or overlay (a spawn window), never from the wallpaper: the card is a topmost window placed from the calling window's position. It is display only, so `windows` is enough and no click is needed. At most 30 calls a second; only listed windows.
 
 Control (`windows-control`): `focus(id)` (restores a minimized window), `minimize(id)`, `restore(id)`, `maximize(id)`, `close(id)` (posts `WM_CLOSE`: the app may still ask to save), `move(id, { x, y, width, height })` (physical px; `x` / `y` alone moves, `width` / `height` alone resizes; a maximized or minimized window is restored first).
 
@@ -395,6 +416,41 @@ await qs.bluetooth.connect(devices[0].id);                     // audio devices 
 - **Night light** has no Windows API: its state is an undocumented registry value that Explorer watches. `on` is whether night light is on now (by hand or by its schedule). Switching it works like the Quick Settings tile: by hand, so a schedule takes over again at its next start or end. Versailles writes only when it can re-encode the stored value exactly; otherwise `supported: false` (and `on: null` when it cannot be read at all) and `setNightLight` rejects. Offer `versailles.shell.open("ms-settings:nightlight")` instead. Changes made elsewhere show up within the 5 s `display` read.
 - **Power mode** is the Settings slider (an undocumented Windows call). It needs the Balanced power plan; `supported: false` when Windows does not offer it. Energy saver is read-only.
 - A setting Windows refuses fails with a message (`radios: Windows refused access`, `power-mode: … the power plan must be Balanced`) instead of failing silently.
+
+## Keyboard
+
+`keyboard` reads the installed keyboard layouts (input languages) and the one the app in front types with, and switches that app's layout, like Win+Space. Reading works anywhere; `set` is control class (a bar or overlay, inside a click or key press).
+
+```html
+<template class="spawnable" data-id="taskbar" data-anchor="bottom" data-h="44"
+          data-hooks="windows,windows-control,keyboard"></template>
+```
+
+```js
+const kb = versailles.for("taskbar").keyboard;
+await kb.onChange(({ layouts, current }) => {
+  const now = layouts.find((l) => l.id === current);
+  pill.hidden = layouts.length < 2;
+  pill.textContent = now ? now.short : "?";        // "DE", "EN"
+});
+pill.onclick = () => kb.next();                       // the next layout, wrapping around
+const { ok } = await kb.set(layouts[1].id);           // false: the app did not switch
+```
+
+`now()` / `onChange(fn)`: `{ layouts, current }`. `current` is the `id` of the layout of the app in front (`null` when none is known). A layout:
+
+| Field | |
+| ----- | - |
+| `id` | The layout handle (HKL) as 8 hex digits, `"04070407"`; pass it to `set` |
+| `name` | The language in Windows' display language, `"Deutsch (Deutschland)"` |
+| `short` | The language code in capitals, `"DE"`, for a pill. Two layouts of one language share it: show `layout` too |
+| `lang` | The locale name, `"de-DE"` |
+| `layout` | The keyboard layout's name, `"Deutsch"`, `"US"`; `null` when Windows has none |
+
+- `set(id)` asks the app in front to switch (`WM_INPUTLANGCHANGEREQUEST` to its focus window, as the language switcher does) and answers the new state with `ok`. Clicking a bar can bring the bar to the front, so "the app in front" is the last app window in front that is not Versailles'. `next()` switches to the layout after `current`.
+- `ok: false` when the app did not switch within 0.4 s: an app running as administrator ignores requests from Versailles (which runs as the user), and a few apps (some games, remote desktops) handle the keyboard themselves.
+- With Windows' default setting (one input method for all apps) the switch applies to every app; with "Let me use a different input method for each app window" only to that app. `current` always reads the app in front.
+- Windows has no event for another app's layout change: the host reads it every 0.5 s while a piece declares `keyboard`, and pushes only a change.
 
 ## Clipboard
 

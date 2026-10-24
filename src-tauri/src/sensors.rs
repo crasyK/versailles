@@ -28,6 +28,8 @@ pub const SENSORS: &[(&str, Duration)] = &[
     ("wifi", Duration::from_millis(5000)),
     // Read at once on Windows' broadcast too (see `posture`).
     ("posture", Duration::from_millis(5000)),
+    // The app in front's keyboard layout: no event for another process.
+    ("keyboard", Duration::from_millis(500)),
 ];
 
 /// No input for this long sends `idle`; the next input sends `active`.
@@ -55,7 +57,9 @@ pub fn read(hook: &str) -> AppResult<Value> {
         "audio" => imp::audio(),
         "notify" => crate::toasts::read(),
         "posture" => crate::posture::read(),
-        "radios" | "audio-control" | "display" | "power-mode" | "wifi" | "bluetooth" | "dnd" => crate::quick::read(hook),
+        "radios" | "audio-control" | "display" | "power-mode" | "wifi" | "bluetooth" | "dnd" | "keyboard" => {
+            crate::quick::read(hook)
+        }
         _ => Err(AppError::msg(format!("'{hook}' is not a sensor hook"))),
     }
 }
@@ -419,5 +423,6 @@ mod tests {
         assert!(!is_readable("bus"));
         assert!(is_sensor("radios") && is_sensor("display") && is_sensor("power-mode"));
         assert!(is_sensor("posture"));
+        assert!(is_sensor("keyboard") && crate::page::KNOWN_HOOKS.contains(&"keyboard"));
     }
 }

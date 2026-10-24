@@ -39,6 +39,9 @@ pub struct WindowInfo {
     pub focused: bool,
     /// Physical screen pixels; for a minimized window, where it restores to.
     pub rect: Rect,
+    /// It flashed its taskbar button (wants attention) and has not been
+    /// activated since (see `attention`).
+    pub attention: bool,
     /// `data:image/png;base64,…` (32×32) when asked for, if the window has one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
@@ -53,6 +56,7 @@ impl WindowInfo {
             && self.maximized == other.maximized
             && self.focused == other.focused
             && self.monitor == other.monitor
+            && self.attention == other.attention
     }
 }
 
@@ -62,7 +66,7 @@ pub enum ChangeKind {
     Opened,
     Closed,
     Focused,
-    /// Title, minimized / maximized, focus lost, or monitor.
+    /// Title, minimized / maximized, focus lost, monitor, or attention.
     Changed,
 }
 
@@ -211,6 +215,18 @@ pub fn exe_icon_url(path: &str) -> Option<String> {
     imp::exe_icon_url(path)
 }
 
+/// An error unless `id` is a window the list would show.
+pub fn check_listed(id: i64) -> AppResult<()> {
+    imp::check_listed(id)
+}
+
+/// The icon handle a listed window reports (owned by that app: never
+/// destroy it), for the hover preview.
+#[cfg(windows)]
+pub fn icon_handle(id: i64) -> Option<isize> {
+    imp::icon_handle(id)
+}
+
 /// Run a control action on a listed window (never one of Versailles').
 pub fn control(id: i64, action: Action, to: Option<MoveTo>) -> AppResult<()> {
     let to = match action {
@@ -234,13 +250,23 @@ fn declared(app: &AppHandle) -> bool {
 pub fn start_watcher(app: AppHandle) {
     std::thread::spawn(move || {
         let mut last: Option<Vec<WindowInfo>> = None;
+        // The shell hook for attention runs while the poll does.
+        let mut listening = false;
         loop {
             std::thread::sleep(POLL);
             if !declared(&app) {
                 // The next declaration starts from a fresh list.
                 last = None;
+                if listening {
+                    listening = false;
+                    crate::attention::stop();
+                }
                 std::thread::sleep(Duration::from_millis(750));
                 continue;
+            }
+            if !listening {
+                listening = true;
+                crate::attention::start();
             }
             let Ok(now) = list(false) else {
                 continue;
@@ -538,6 +564,7 @@ mod imp {
             maximized: unsafe { IsZoomed(h) }.as_bool(),
             focused: h.0 as isize == focused,
             rect: rect_of(h, minimized),
+            attention: false,
             icon: if icons { icon_for(h, exe.as_deref()) } else { None },
         }
     }
@@ -578,7 +605,16 @@ mod imp {
     pub fn list(icons: bool) -> AppResult<Vec<WindowInfo>> {
         let handles = listed_handles()?;
         let focus = focused(&handles);
-        let list: Vec<WindowInfo> = handles.iter().map(|h| info(*h, focus, icons)).collect();
+        let front = unsafe { GetForegroundWindow() };
+        let mut list: Vec<WindowInfo> = handles.iter().map(|h| info(*h, focus, icons)).collect();
+        // Attention lasts until the window is really in front (not just the
+        // last app focused while a Versailles bar is clicked).
+        for w in &mut list {
+            if w.id == id_of(front) {
+                crate::attention::clear(w.id);
+            }
+            w.attention = crate::attention::flagged(w.id);
+        }
         // Forget processes and icons of windows that are gone.
         {
             let mut exes = exe_cache().lock().unwrap();
@@ -605,6 +641,15 @@ mod imp {
             return Err(AppError::msg(format!("windows: {id} is not an app window")));
         }
         Ok(h)
+    }
+
+    pub fn check_listed(id: i64) -> AppResult<()> {
+        listed_window(id).map(|_| ())
+    }
+
+    pub fn icon_handle(id: i64) -> Option<isize> {
+        let h = listed_window(id).ok()?;
+        window_icon(h).map(|i| i.0 as isize)
     }
 
     pub fn icon(id: i64) -> AppResult<Option<String>> {
@@ -840,6 +885,9 @@ mod imp {
     pub fn icon(_id: i64) -> AppResult<Option<String>> {
         unavailable()
     }
+    pub fn check_listed(_id: i64) -> AppResult<()> {
+        unavailable()
+    }
     pub fn control(
         _id: i64,
         _action: Action,
@@ -865,6 +913,7 @@ mod tests {
             maximized: false,
             focused: false,
             rect: Rect { x: 0, y: 0, width: 800, height: 600 },
+            attention: false,
             icon: None,
         }
     }
@@ -896,6 +945,13 @@ mod tests {
             vec![(ChangeKind::Changed, 1), (ChangeKind::Focused, 2)]
         );
 
+        // A flash, then the window answered.
+        let flashing = WindowInfo { attention: true, ..a.clone() };
+        assert_eq!(kinds(&diff(&[a.clone()], &[flashing.clone()])), vec![(ChangeKind::Changed, 1)]);
+        assert_eq!(kinds(&diff(&[flashing.clone()], &[a.clone()])), vec![(ChangeKind::Changed, 1)]);
+        let answered = WindowInfo { focused: true, ..a.clone() };
+        assert_eq!(kinds(&diff(&[flashing], &[answered])), vec![(ChangeKind::Focused, 1)]);
+
         let renamed = WindowInfo { title: "a — saved".into(), ..a.clone() };
         let min = WindowInfo { minimized: true, ..b.clone() };
         let other_monitor = WindowInfo { monitor: Some(2), ..c.clone() };
@@ -913,6 +969,7 @@ mod tests {
         assert_eq!(v["window"]["title"], "Notes");
         assert_eq!(v["window"]["rect"]["width"], 800);
         assert!(v["window"].get("icon").is_none());
+        assert_eq!(v["window"]["attention"], false);
     }
 
     #[test]

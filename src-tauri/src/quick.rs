@@ -66,6 +66,8 @@ pub enum QuickAction {
     NotifyOpen { aumid: String },
     /// Turn an app's own Windows pop-ups on or off.
     NotifyBanners { aumid: String, on: bool },
+    /// Switch the app in front to this layout (an `id` from `keyboard`'s `layouts`).
+    Keyboard { id: String },
 }
 
 impl QuickAction {
@@ -100,6 +102,7 @@ impl QuickAction {
             | QuickAction::NotifyClear
             | QuickAction::NotifyOpen { .. }
             | QuickAction::NotifyBanners { .. } => "notify-control",
+            QuickAction::Keyboard { .. } => "keyboard",
         }
     }
 }
@@ -137,6 +140,7 @@ pub fn read(hook: &str) -> AppResult<Value> {
         "dnd" => imp::dnd(),
         // Answered after a change: the notifications as `notify` reads them.
         "notify-control" => crate::toasts::read(),
+        "keyboard" => crate::keyboard::read(),
         _ => Err(AppError::msg(format!("'{hook}' is not a quick-settings hook"))),
     }
 }
@@ -168,6 +172,7 @@ pub fn apply(action: &QuickAction) -> AppResult<()> {
         QuickAction::NotifyClear => crate::toasts::clear(),
         QuickAction::NotifyOpen { aumid } => crate::toasts::open_app(aumid),
         QuickAction::NotifyBanners { aumid, on } => crate::toasts::banners(aumid, *on),
+        QuickAction::Keyboard { id } => crate::keyboard::set(id),
     }
 }
 
@@ -959,6 +964,9 @@ mod tests {
         assert_eq!(a.hook(), "notify-control");
         let a: QuickAction = serde_json::from_str(r#"{ "kind": "notifyClear" }"#).unwrap();
         assert_eq!(a.hook(), "notify-control");
+        let a: QuickAction = serde_json::from_str(r#"{ "kind": "keyboard", "id": "04090409" }"#).unwrap();
+        assert_eq!(a.hook(), "keyboard");
+        assert!(serde_json::from_str::<QuickAction>(r#"{ "kind": "keyboard" }"#).is_err());
         assert!(serde_json::from_str::<QuickAction>(r#"{ "kind": "reboot" }"#).is_err());
     }
 

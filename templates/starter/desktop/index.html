@@ -975,12 +975,12 @@
               data-h="420">
       <div class="cli" id="cli-root" data-mode="action" data-search-hf="https://huggingface.co/models?search={q}">
         <div class="cli-head">
-          <i></i><span id="cli-title">versailles actions · pwsh</span>
+          <i></i><span id="cli-title">versailles actions Â· pwsh</span>
           <span class="pid" id="cli-mode-label">actions</span>
         </div>
         <div class="cli-action" id="cli-action">
           <div class="cli-line">
-            <span class="cli-ps" id="cli-ps">PS …&gt;</span>
+            <span class="cli-ps" id="cli-ps">PS â€¦&gt;</span>
             <input class="cli-in" id="cli-in" spellcheck="false" autocomplete="off" autofocus aria-label="command input" />
           </div>
           <div class="cli-res" id="cli-res"></div>
@@ -991,7 +991,7 @@
         </div>
         <div class="cli-foot" id="cli-foot">
           <span id="cli-foot-l">enter</span><span id="cli-foot-m">tab</span><span id="cli-foot-r-hint">esc</span>
-          <span class="r" id="cli-foot-r">? web · !! term · help</span>
+          <span class="r" id="cli-foot-r">? web Â· !! term Â· help</span>
         </div>
       </div>
       <script>
@@ -1121,8 +1121,12 @@
          A docked bar along the bottom of each monitor (data-monitor="all": one
          copy per monitor) listing that monitor's app windows with the windows
          hook. Click a window to bring it up, click the focused one to minimize
-         it, middle-click to close it (windows-control). On the right, the
-         notification-area icons (tray): click, right-click, double-click or
+         it, middle-click to close it (windows-control). A window that asks
+         for attention (it flashed its taskbar button) gets a blinking dot;
+         resting the pointer on a window shows Versailles' preview card. On the
+         right, a language pill when more than one keyboard layout is installed
+         (keyboard: click it to switch the app in front to the next one), then
+         the notification-area icons (tray): click, right-click, double-click or
          hover them as in Windows (Enter / Space and Shift+F10 when focused).
          When a convertible folds into tablet posture (posture), the buttons
          grow for fingers. The tray icons only show while Versailles hides
@@ -1132,7 +1136,7 @@
          below. To remove it, delete everything down to the end of the example. -->
     <!-- try me (taskbar): delete this line
     <template class="spawnable" data-id="taskbar" data-anchor="bottom" data-h="44"
-              data-monitor="all" data-hooks="windows,windows-control,tray,posture">
+              data-monitor="all" data-hooks="windows,windows-control,tray,posture,keyboard">
       <style>
         .spawn-surface.solo:has(.taskbar) { border: 0 !important; box-shadow: none !important; border-radius: 0 !important; }
         .taskbar {
@@ -1144,13 +1148,29 @@
           padding: 0 12px 0 8px; border-radius: var(--radius-chip); border: var(--stroke-dashed);
           background: var(--paper); color: var(--ink); font: 600 12px/1 var(--font-sans);
         }
+        .taskbar .tk-win { position: relative; }
         .taskbar .tk-win:hover { background: var(--chip); }
         .taskbar .tk-win.focused { background: var(--ink); color: var(--paper); border-style: solid; }
+        /* Attention: a solid border and a blinking ink dot (steady with reduced motion). */
+        .taskbar .tk-win.attention { border-style: solid; }
+        .taskbar .tk-win.attention::after {
+          content: ""; position: absolute; top: 4px; right: 4px; width: 7px; height: 7px; border-radius: 50%;
+          background: var(--ink); box-shadow: 0 0 0 2px var(--paper); animation: tk-attention 1.2s steps(1) infinite;
+        }
+        .taskbar .tk-win.focused.attention::after { background: var(--paper); box-shadow: 0 0 0 2px var(--ink); }
+        @keyframes tk-attention { 50% { opacity: 0.2; } }
+        @media (prefers-reduced-motion: reduce) { .taskbar .tk-win.attention::after { animation: none; } }
         .taskbar .tk-win.minimized { opacity: 0.55; }
         .taskbar .tk-win img { width: 18px; height: 18px; flex: none; }
         .taskbar .tk-win span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .taskbar .tk-wins { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; overflow: hidden; }
         .taskbar .tk-tray { flex: none; display: flex; align-items: center; gap: 2px; }
+        .taskbar .tk-lang {
+          flex: none; height: 26px; min-width: 34px; padding: 0 8px; border: var(--stroke); border-radius: 999px;
+          background: var(--paper); color: var(--ink); font: 700 11px/1 var(--font-sans); letter-spacing: 0.04em;
+        }
+        .taskbar .tk-lang:hover { background: var(--chip); }
+        .taskbar .tk-lang[hidden] { display: none; }
         .taskbar .tk-tray button {
           width: 30px; height: 30px; display: grid; place-items: center; padding: 0;
           border: 0; border-radius: var(--radius-chip); background: transparent;
@@ -1162,12 +1182,13 @@
         .taskbar[data-posture="tablet"] .tk-tray button { width: 40px; height: 40px; }
         .taskbar[data-posture="tablet"] img { width: 22px; height: 22px; }
       </style>
-      <div class="taskbar"><div class="tk-wins"></div><div class="tk-tray"></div></div>
+      <div class="taskbar"><div class="tk-wins"></div><button type="button" class="tk-lang" hidden></button><div class="tk-tray"></div></div>
       <script>
         (function taskbar() {
           var root = document.currentScript && document.currentScript.closest('.spawn-surface');
           var bar = root && root.querySelector('.tk-wins');
           var trayBox = root && root.querySelector('.tk-tray');
+          var langPill = root && root.querySelector('.tk-lang');
           if (!bar) return;
           (function whenSdk(fn) { window.versailles && typeof window.versailles.for === 'function' ? fn(window.versailles) : setTimeout(function () { whenSdk(fn); }, 50); })(function (v) {
             var wins = v.for('taskbar').windows;
@@ -1178,14 +1199,26 @@
               if (p && p.tablet) box.setAttribute('data-posture', 'tablet');
               else box.removeAttribute('data-posture');
             }).catch(function () {});
+            // Hover previews: Versailles' card with a live thumbnail, shown
+            // after the pointer rests on a window for a moment.
+            var previewId = null; // the window whose card is up (kept across renders)
+            var previewTimer = 0;
+            function previewOff() {
+              clearTimeout(previewTimer);
+              if (previewId != null) wins.preview(null).catch(function () {});
+              previewId = null;
+            }
+            bar.addEventListener('mouseleave', previewOff);
             function render(list, here) {
               bar.replaceChildren();
               list.forEach(function (w) {
                 if (here != null && w.monitor !== here) return; // this copy shows its own monitor
                 var b = document.createElement('button');
                 b.type = 'button';
-                b.className = 'tk-win' + (w.focused ? ' focused' : '') + (w.minimized ? ' minimized' : '');
-                b.title = w.title;
+                b.className = 'tk-win' + (w.focused ? ' focused' : '') + (w.minimized ? ' minimized' : '') +
+                  (w.attention ? ' attention' : '');
+                // No title tooltip: the preview card shows the title.
+                b.setAttribute('aria-label', w.title + (w.attention ? ' (wants attention)' : ''));
                 if (w.icon) {
                   var img = document.createElement('img');
                   img.src = w.icon;
@@ -1196,13 +1229,26 @@
                 label.textContent = w.title; // titles come from other apps: text only
                 b.appendChild(label);
                 b.addEventListener('click', function () {
+                  previewOff();
                   (w.focused && !w.minimized ? wins.minimize(w.id) : wins.focus(w.id)).catch(function () {});
                 });
                 b.addEventListener('auxclick', function (e) {
                   if (e.button === 1) wins.close(w.id).catch(function () {});
                 });
+                b.addEventListener('mouseenter', function () {
+                  clearTimeout(previewTimer);
+                  // Moving along the bar with a card up: follow at once.
+                  previewTimer = setTimeout(function () {
+                    previewId = w.id;
+                    wins.preview(w.id, b).catch(function () {});
+                  }, previewId != null ? 0 : 400);
+                });
                 bar.appendChild(b);
+                // Buttons are drawn anew on every change: keep the card on the
+                // new button (it may have moved).
+                if (previewId === w.id) wins.preview(w.id, b).catch(function () {});
               });
+              if (previewId != null && !list.some(function (w) { return w.id === previewId; })) previewOff();
             }
             v.monitor().then(function (m) {
               var here = m ? m.number : null;
@@ -1273,6 +1319,24 @@
               });
             }
             if (trayBox) tray.track(renderTray).catch(function () {});
+
+            // Language pill: the keyboard layout of the app in front, shown
+            // when more than one is installed. A click switches that app to
+            // the next layout, like Win+Space.
+            var kb = v.for('taskbar').keyboard;
+            function renderLang(s) {
+              var layouts = (s && s.layouts) || [];
+              var now = layouts.filter(function (l) { return l.id === s.current; })[0];
+              langPill.hidden = layouts.length < 2;
+              langPill.textContent = now ? now.short : '?';
+              langPill.title = now ? now.name + (now.layout ? ' \u2013 ' + now.layout : '') : '';
+            }
+            if (langPill) {
+              kb.onChange(renderLang).catch(function () {});
+              langPill.addEventListener('click', function () {
+                kb.next().then(renderLang, function () {});
+              });
+            }
           });
         })();
       </script>
@@ -1414,7 +1478,7 @@
               (w.networks || []).forEach(function (n) {
                 var row = el('div', 'item' + (n.connected ? ' current' : ''));
                 row.appendChild(el('span', 'name', n.ssid));
-                var label = busy === n.ssid ? (n.connected ? 'disconnecting…' : 'connecting…') : (n.secure ? 'locked · ' : '') + n.signal + '%';
+                var label = busy === n.ssid ? (n.connected ? 'disconnectingâ€¦' : 'connectingâ€¦') : (n.secure ? 'locked Â· ' : '') + n.signal + '%';
                 row.appendChild(el('span', 'meta', label));
                 if (busy) {
                   row.classList.add('static'); // one change at a time
@@ -1486,7 +1550,7 @@
                 var row = el('div', 'item' + (d.connected ? ' current' : '') + (d.audio ? '' : ' static'));
                 row.appendChild(el('span', 'name', d.name));
                 if (pending) {
-                  row.appendChild(el('span', 'meta', pending.want ? 'connecting…' : 'disconnecting…'));
+                  row.appendChild(el('span', 'meta', pending.want ? 'connectingâ€¦' : 'disconnectingâ€¦'));
                 } else if (d.audio) {
                   var btn = el('button', d.connected ? 'on' : null, d.connected ? 'disconnect' : 'connect');
                   btn.onclick = function () {
@@ -1639,7 +1703,7 @@
                 text.appendChild(el('b', null, item.title || item.app || 'notification'));
                 text.appendChild(el('span', null, item.body || item.app || ''));
                 row.appendChild(text);
-                var x = el('button', 'x', '×');
+                var x = el('button', 'x', 'Ã—');
                 x.title = 'dismiss';
                 x.onclick = function (e) { e.stopPropagation(); act(me.notifyControl.dismiss(item.id)).then(function (r) { if (r) renderToasts(r); }); };
                 row.appendChild(x);

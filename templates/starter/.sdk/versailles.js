@@ -253,7 +253,7 @@
     /**
      * `fn(data)` on each push of `name`: a hook (`media`, `battery`,
      * `network`, `focus`, `audio`, `posture`, `clipboard`, `notify`, `tray`, `radios`,
-     * `audio-control`, `display`, `power-mode`, `wifi`, `bluetooth`, `dnd`; must be declared) or a piece event
+     * `audio-control`, `display`, `power-mode`, `wifi`, `bluetooth`, `dnd`, `keyboard`; must be declared) or a piece event
      * (`shown`, `hidden`, `idle`, `active`, `theme-changed`). Sensor hooks
      * also call `fn` with the current value right away. Returns a function
      * that unsubscribes.
@@ -283,6 +283,12 @@
       throw new Error("unknown push '" + name + "'");
     }
 
+    async function setKeyboard(id) {
+      const s = await quick("keyboard", { kind: "keyboard", id: String(id) });
+      if (!s || s.host === false) return s;
+      return Object.assign({}, s, { ok: String(s.current || "").toUpperCase() === String(id).toUpperCase() });
+    }
+
     function windowControl(id, action, to) {
       const args = { id: Number(id), action };
       if (to) args.to = to;
@@ -292,7 +298,9 @@
     /**
      * App windows (`windows` hook to read, `windows-control` to act). A
      * window: { id, title, app, exe, pid, monitor, minimized, maximized,
-     * focused, rect, icon? }. `rect` and `move` use physical screen pixels.
+     * focused, attention, rect, icon? }. `rect` and `move` use physical
+     * screen pixels; `attention`: it flashed its taskbar button and has not
+     * been activated since.
      */
     const windows = {
       async list(opts) {
@@ -307,6 +315,25 @@
       /** `fn({ type: "opened"|"closed"|"focused"|"changed", id, window })` per change. */
       async onChange(fn) {
         return on("windows", fn);
+      },
+      /**
+       * Show the host's preview card (a live thumbnail and the title) for
+       * window `id` next to `target`: the hovered element, or its rect in
+       * this page's CSS px ({ x, y, width, height }). `preview(null)` hides
+       * it. Bars and overlays only; it also hides by itself when the pointer
+       * leaves the bar or the window closes.
+       */
+      async preview(id, target) {
+        if (id == null) return hostInvoke("windows", "windows_preview", {});
+        const r = target && typeof target.getBoundingClientRect === "function" ? target.getBoundingClientRect() : target;
+        if (!r) throw new Error("windows.preview needs the hovered element or its rect");
+        const rect = {
+          x: Number(r.left != null ? r.left : r.x),
+          y: Number(r.top != null ? r.top : r.y),
+          width: Number(r.width),
+          height: Number(r.height),
+        };
+        return hostInvoke("windows", "windows_preview", { id: Number(id), rect });
       },
       /**
        * `fn(list)` now and after every change: the current windows in a
@@ -616,6 +643,27 @@
           return quick("notify-control", { kind: "notifyBanners", aumid: String(aumid), on: !!on });
         },
       },
+      /**
+       * Keyboard layouts: `{ layouts: [{ id, name, short, lang, layout }], current }`;
+       * `current` is the layout of the app in front (an `id`, or null).
+       */
+      keyboard: Object.assign(sensor("keyboard"), {
+        /**
+         * Switch the app in front to layout `id`, like Win+Space. Answers the
+         * new state with `ok`: false when the app did not switch (an app
+         * running as administrator ignores it).
+         */
+        async set(id) {
+          return setKeyboard(id);
+        },
+        /** Switch to the layout after the current one (wraps around). */
+        async next() {
+          const s = await hostInvoke("keyboard", "sense_now", { hook: "keyboard" });
+          if (!s || !Array.isArray(s.layouts) || !s.layouts.length) return s;
+          const i = s.layouts.findIndex((l) => l.id === s.current);
+          return setKeyboard(s.layouts[(i + 1) % s.layouts.length].id);
+        },
+      }),
       /** `{ supported, mode, energySaver }`; `mode`: `"efficiency"`, `"balanced"`, `"performance"`. */
       powerMode: Object.assign(sensor("power-mode"), {
         async set(mode) {
@@ -872,7 +920,7 @@
     return () => pushSubscribers.delete(sub);
   }
   /** Hooks whose changes the host pushes; `on()` needs them declared. */
-  const QUICK_HOOKS = ["radios", "audio-control", "display", "power-mode", "wifi", "bluetooth", "dnd"];
+  const QUICK_HOOKS = ["radios", "audio-control", "display", "power-mode", "wifi", "bluetooth", "dnd", "keyboard"];
   const PUSH_HOOKS = new Set(["media", "battery", "network", "focus", "audio", "posture", "clipboard", "windows", "notify", "tray"].concat(QUICK_HOOKS));
   const SENSOR_HOOKS = new Set(["battery", "network", "focus", "audio", "posture"].concat(QUICK_HOOKS));
   // On the wallpaper this page runs in an iframe of the host shell, which
@@ -975,6 +1023,7 @@
     bluetooth: scoped.bluetooth,
     dnd: scoped.dnd,
     notifyControl: scoped.notifyControl,
+    keyboard: scoped.keyboard,
     windows: scoped.windows,
     tray: scoped.tray,
     notify: scoped.notify,

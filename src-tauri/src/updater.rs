@@ -163,16 +163,19 @@ pub fn start(app: &AppHandle) {
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(if testing { FIRST_CHECK_TESTING } else { FIRST_CHECK }).await;
         let mut last: Option<SystemTime> = None;
+        let mut said_off = false;
         loop {
             let due = last.is_none_or(|t| t.elapsed().map_or(true, |e| e >= CHECK_EVERY));
-            if due && !BUSY.load(Ordering::SeqCst) {
-                if checks_enabled(&app) {
-                    check(&app).await;
-                    last = Some(SystemTime::now());
-                } else if last.is_none() {
+            if !checks_enabled(&app) {
+                // Turned on again later: the next wake checks.
+                if !said_off {
                     tracing::info!("updates: checks are off (\"updates\": {{ \"check\": false }})");
-                    last = Some(SystemTime::now());
+                    said_off = true;
                 }
+            } else if due && !BUSY.load(Ordering::SeqCst) {
+                said_off = false;
+                check(&app).await;
+                last = Some(SystemTime::now());
             }
             tokio::time::sleep(WAKE_EVERY).await;
         }

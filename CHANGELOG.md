@@ -2,6 +2,16 @@
 
 What changed in each release of Versailles, newest first. Full notes and installers: [GitHub releases](https://github.com/crasyK/versailles/releases). Each release commit updates this file.
 
+## 0.10.0 — 2026-10-24
+
+- **Win and Copilot hotkeys are reliable.** While one of Versailles' own windows had the focus (the desktop, an overlay, a bar), Windows skipped the keyboard hook and a bound Win press opened Start. The hook now runs in a small helper process (`versailles.exe --keys-hook`) and sees every press. Missed presses are logged ("missed by hook"), and the hook re-installs itself after unlock, resume and display-on. A fast key-up no longer leaves a replayed key stuck (Win+R). (#37)
+- **Night light and airplane mode** for quick settings: `display.nightLight` / `display.setNightLight(on)` and `radios.airplane` / `radios.setAirplane(on)`. Night light is only written when Versailles understands the stored setting. (#36)
+- **Tray:** hovering an icon shows the app's own pop-up (`tray.hover`), icons answer the keyboard (Enter / Space, the menu key), apps' balloon notifications are pushed to the page, and `showTip` says whether Windows would show a tooltip. Icons come back by themselves after Explorer restarts. (#39)
+- **Testing:** `npm run e2e -- --take-taskbar` checks the hidden taskbar, the tray and an Explorer restart; a Windows Sandbox file runs the same on a clean system (Windows Pro). The log rotates at 1 MB and keeps three files. (#38)
+- Fixed: docked bars lost their reserved space after Explorer restarted while the tray ran; a bar Explorer forgets is reserved again.
+- Fixed: a crash when reading or switching radios from a short-lived thread.
+- SDK 0.10.0.
+
 ## 0.9.1 — 2026-10-24
 
 - **Tray icons in bars:** the `tray` hook lists the notification-area icons (tooltip, app, icon), pushes their changes and clicks them (left, right, double, middle) like Windows does, while Versailles hides the Windows taskbar. Versailles holds the tray with a window of its own, the way Cairo and RetroBar do; nothing is injected into Explorer, and Explorer keeps a copy of every icon, so nothing is lost when Versailles stops, crashes or Explorer restarts. The starter's taskbar example has a tray strip. SDK 0.9.1: `versailles.tray`. (#35)

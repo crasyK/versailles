@@ -170,6 +170,38 @@ pub fn parse_rect_query(data: &[u8]) -> Option<RectQuery> {
     })
 }
 
+/// `APPBARMSGDATAV3`, what `SHAppBarMessage` copies to the taskbar: an
+/// `APPBARDATA` with 32-bit handles (40 bytes), the message, then a shared
+/// memory handle and the process it belongs to.
+pub const APPBAR_MSG_LEN: usize = 64;
+/// `APPBARDATA` as it sits in that shared memory.
+pub const APPBAR_DATA_LEN: usize = 40;
+pub const ABM_QUERYPOS: u32 = 2;
+pub const ABM_SETPOS: u32 = 3;
+pub const ABM_GETTASKBARPOS: u32 = 5;
+
+/// The AppBar message and its shared memory `(handle, process)`, for the
+/// messages that answer through it.
+pub fn appbar_shared(data: &[u8]) -> Option<(u32, i64, u32)> {
+    if data.len() < APPBAR_MSG_LEN {
+        return None;
+    }
+    let message = u32_at(data, 40)?;
+    if !matches!(message, ABM_QUERYPOS | ABM_SETPOS | ABM_GETTASKBARPOS) {
+        return None;
+    }
+    let handle = i64::from_le_bytes(data.get(48..56)?.try_into().ok()?);
+    Some((message, handle, u32_at(data, 56)?))
+}
+
+/// The same AppBar message pointing at other shared memory.
+pub fn with_shared(data: &[u8], handle: i64, pid: u32) -> Vec<u8> {
+    let mut out = data.to_vec();
+    out[48..56].copy_from_slice(&handle.to_le_bytes());
+    out[56..60].copy_from_slice(&pid.to_le_bytes());
+    out
+}
+
 /// One tray icon as pages see it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -648,7 +680,8 @@ mod imp {
     use std::thread::JoinHandle;
     use std::time::Instant;
     use windows::core::w;
-    use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM};
+    use windows::Win32::Foundation::{HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM};
+    use windows::Win32::UI::Shell::{SHAllocShared, SHFreeShared, SHLockShared, SHUnlockShared};
     use windows::Win32::System::DataExchange::COPYDATASTRUCT;
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::UI::WindowsAndMessaging::{
@@ -802,6 +835,58 @@ mod imp {
         LRESULT(result as isize)
     }
 
+    /// AppBar messages that answer through shared memory (QUERYPOS, SETPOS,
+    /// GETTASKBARPOS). shell32 shares that memory with the process owning the
+    /// first `Shell_TrayWnd`, which is us, so Explorer could not read it:
+    /// copy it into memory shared with Explorer, forward, copy the answer
+    /// back (as ManagedShell's AppBarManager does). Without this, docked
+    /// bars that registered while the tray ran were accepted but never got
+    /// their space.
+    unsafe fn forward_appbar(data: &[u8]) -> Option<LRESULT> {
+        let (_, handle, source) = appbar_shared(data)?;
+        let explorer = explorer()?;
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(explorer, Some(&mut pid));
+        if pid == 0 {
+            return None;
+        }
+        let old = SHLockShared(HANDLE(handle as isize as *mut _), source);
+        if old.is_null() {
+            return None;
+        }
+        let new = SHAllocShared(Some(old as *const _), APPBAR_DATA_LEN as u32, pid);
+        if new.is_invalid() {
+            let _ = SHUnlockShared(old);
+            return None;
+        }
+        let mut msg = with_shared(data, new.0 as isize as i64, pid);
+        let cds = COPYDATASTRUCT {
+            dwData: 0,
+            cbData: msg.len() as u32,
+            lpData: msg.as_mut_ptr() as *mut _,
+        };
+        // wParam: the bar's window, as shell32 sends it.
+        let bar = WPARAM(u32_at(data, 4).unwrap_or(0) as i32 as isize as usize);
+        let mut result = 0usize;
+        SendMessageTimeoutW(
+            explorer,
+            WM_COPYDATA,
+            bar,
+            LPARAM(&cds as *const COPYDATASTRUCT as isize),
+            SMTO_ABORTIFHUNG,
+            4000,
+            Some(&mut result),
+        );
+        let answer = SHLockShared(new, pid);
+        if !answer.is_null() {
+            std::ptr::copy_nonoverlapping(answer as *const u8, old as *mut u8, APPBAR_DATA_LEN);
+            let _ = SHUnlockShared(answer);
+        }
+        let _ = SHUnlockShared(old);
+        let _ = SHFreeShared(new, pid);
+        Some(LRESULT(result as isize))
+    }
+
     fn on_notify(data: &[u8]) -> bool {
         let Some(n) = parse(data) else {
             return false;
@@ -873,7 +958,12 @@ mod imp {
                             return LRESULT(r);
                         }
                     }
-                    // 0: AppBar messages (docked bars), answered by Explorer.
+                    // AppBar messages (docked bars): Explorer answers.
+                    0 => {
+                        if let Some(r) = forward_appbar(data) {
+                            return r;
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -1292,6 +1382,23 @@ mod tests {
         assert!(!t.apply(&plain, &mut Fake).1[0].icon.show_tip);
         // The same version again: nothing to push.
         assert_eq!(t.apply(&v4, &mut Fake), (true, vec![]));
+    }
+
+    #[test]
+    fn finds_and_moves_appbar_shared_memory() {
+        let mut m = vec![0u8; APPBAR_MSG_LEN];
+        m[40..44].copy_from_slice(&ABM_SETPOS.to_le_bytes());
+        m[48..56].copy_from_slice(&0x1234i64.to_le_bytes());
+        m[56..60].copy_from_slice(&77u32.to_le_bytes());
+        assert_eq!(appbar_shared(&m), Some((ABM_SETPOS, 0x1234, 77)));
+        let moved = with_shared(&m, 0x99, 8944);
+        assert_eq!(appbar_shared(&moved), Some((ABM_SETPOS, 0x99, 8944)));
+        assert_eq!(&moved[..48], &m[..48]);
+        // Messages without shared memory pass through as they are.
+        let mut new = m.clone();
+        new[40..44].copy_from_slice(&0u32.to_le_bytes()); // ABM_NEW
+        assert_eq!(appbar_shared(&new), None);
+        assert_eq!(appbar_shared(&m[..40]), None);
     }
 
     #[test]

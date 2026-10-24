@@ -1,7 +1,8 @@
 # e2e probe: visible texts of a process's top-level windows (UI Automation), and
 # each monitor's reserved top / bottom strips, whether Explorer's taskbar is
-# visible and whether the taskbar RunOnce restore is set, and which process owns
-# the Shell_TrayWnd apps find first (Versailles' tray, #35). Prints one JSON object.
+# visible (and whether Explorer has one at all: not while it restarts) and
+# whether the taskbar RunOnce restore is set, and which process owns the
+# Shell_TrayWnd apps find first (Versailles' tray, #35). Prints one JSON object.
 param([int]$ProcessId)
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
 Add-Type -Namespace E2E -Name U -MemberDefinition @'
@@ -37,4 +38,4 @@ while (($h = [E2E.U]::FindWindowEx([IntPtr]::Zero, $h, 'Shell_TrayWnd', $null)) 
 }
 $taskbar = ($tray -ne [IntPtr]::Zero) -and [E2E.U]::IsWindowVisible($tray)
 $runOnce = $null -ne (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce' -Name VersaillesRestoreTaskbar -ErrorAction SilentlyContinue)
-@{ texts = @($texts); monitors = @($monitors); taskbar = $taskbar; runOnce = $runOnce; trayFirst = $trayFirst } | ConvertTo-Json -Depth 4 -Compress
+@{ texts = @($texts); monitors = @($monitors); taskbar = $taskbar; explorerTaskbar = ($tray -ne [IntPtr]::Zero); runOnce = $runOnce; trayFirst = $trayFirst } | ConvertTo-Json -Depth 4 -Compress

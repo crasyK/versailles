@@ -4,6 +4,8 @@
  *
  *   npm run e2e                         # test build, else release build
  *   npm run e2e -- --exe path/to/versailles.exe
+ *   npm run e2e -- --take-taskbar       # see below
+ *   npm run e2e -- --take-taskbar --dry-run   # print the plan, change nothing
  *
  * Starts the app isolated (VERSAILLES_BENCH: no single-instance bounce, no
  * hotkeys, no autostart) against a temporary desktop: the starter page plus
@@ -12,6 +14,13 @@
  * reserved screen space with tests/e2e/probe.ps1, edits the page while the
  * app runs, restarts it, and always cleans up. Never touches the user's
  * desktop folder or their running Versailles.
+ *
+ * Except with --take-taskbar (#38): when the user's own Versailles hides the
+ * taskbar, the taskbar phase would be skipped. The flag stops that Versailles
+ * (its supervisor: there is no clean external quit, and the taskbar guard
+ * restores the taskbar), runs the phase, and always starts it again
+ * afterwards (same exe, `--autostart` if it had it), even when checks fail.
+ * The taskbar phase also kills and restarts Explorer.
  */
 import { execFileSync, spawn } from "node:child_process";
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -27,6 +36,8 @@ const exeArg = (() => {
   return i >= 0 ? args[i + 1] : null;
 })();
 const keep = args.includes("--keep"); // leave the app and its folder up on failure
+const take = args.includes("--take-taskbar"); // stop the user's Versailles for the taskbar phase
+const dryRun = args.includes("--dry-run"); // print the plan only
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function resolveExe() {
@@ -125,6 +136,155 @@ function press(chord) {
   return JSON.parse(out.trim());
 }
 
+function ps(command) {
+  return execFileSync("powershell", ["-NoProfile", "-Command", command], { encoding: "utf8" }).trim();
+}
+
+function alive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === "EPERM";
+  }
+}
+
+/** Running versailles.exe processes, not the taskbar guard or a --restore-taskbar run. */
+function versaillesProcesses() {
+  const out = ps(
+    "@(Get-CimInstance Win32_Process -Filter \"Name='versailles.exe'\" | Select-Object ProcessId,ParentProcessId,ExecutablePath,CommandLine) | ConvertTo-Json -Compress",
+  );
+  return (out ? [JSON.parse(out)].flat() : [])
+    .map((p) => ({ pid: p.ProcessId, parent: p.ParentProcessId, exe: p.ExecutablePath, cmd: (p.CommandLine || "").trim() }))
+    .filter((p) => !/--taskbar-guard|--restore-taskbar/.test(p.cmd));
+}
+
+/**
+ * The user's Versailles: the top of each Versailles process tree (the
+ * supervisor; a dev build has none), never this test's own app (`exclude`).
+ */
+function userVersailles(exclude = []) {
+  const all = versaillesProcesses();
+  const pids = new Set(all.map((p) => p.pid));
+  return all
+    .filter((p) => !pids.has(p.parent) && !exclude.includes(p.pid))
+    .map((p) => ({
+      ...p,
+      app: all.filter((c) => c.parent === p.pid).map((c) => c.pid),
+      autostart: /(^|\s)--autostart(\s|$)/.test(p.cmd),
+    }));
+}
+
+/**
+ * Start a program that outlives this test and its terminal (detached, out of
+ * the terminal's job where allowed: tests/e2e/start.ps1), without the test's
+ * VERSAILLES_* / WEBVIEW2_* variables.
+ */
+function startDetached(exe, argline = "") {
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(VERSAILLES_|WEBVIEW2_)/i.test(k)));
+  const params = ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", join(repo, "tests/e2e/start.ps1"), "-Exe", exe];
+  // A leading space keeps PowerShell from reading `--autostart` as a parameter.
+  if (argline) params.push("-Arguments", ` ${argline}`);
+  return JSON.parse(execFileSync("powershell", params, { encoding: "utf8", env }).trim());
+}
+
+const say = (text) => console.log(`e2e: --take-taskbar: ${text}`);
+
+/** The user's Versailles stopped by --take-taskbar, to start again. */
+const taken = [];
+
+/**
+ * Stop the user's Versailles so this test can hide the taskbar. Returns why
+ * not, or null once Explorer's taskbar is visible again.
+ */
+async function takeTaskbar(exclude) {
+  const found = userVersailles(exclude);
+  if (!found.length) return "the taskbar is hidden, but no other Versailles is running";
+  const dev = found.find((p) => /\\target\\debug\\/i.test(p.exe));
+  if (dev) return `a dev build hides it (pid ${dev.pid}, ${dev.exe}); stop it yourself`;
+  for (const p of found) {
+    // No clean external quit: ending the supervisor ends the app (its
+    // kill-on-close job), and the taskbar guard, outside that job, restores
+    // the taskbar. Not a tree kill: apps started from Versailles live on.
+    say(`stopping your Versailles: pid ${p.pid} (app ${p.app.join(", ") || "-"}), ${p.cmd}`);
+    execFileSync("taskkill", ["/PID", String(p.pid), "/F"], { stdio: "ignore" });
+    taken.push(p);
+  }
+  await until("your Versailles to exit", () => taken.every((p) => ![p.pid, ...p.app].some(alive)), 15_000);
+  say("stopped; waiting for the taskbar guard to show Explorer's taskbar");
+  const shown = () => until("Explorer's taskbar", () => probe(process.pid).taskbar, 15_000).catch(() => false);
+  if (await shown()) return null;
+  say("still hidden; running --restore-taskbar");
+  try {
+    execFileSync(taken[0].exe, ["--restore-taskbar"], { stdio: "ignore" });
+  } catch {
+    /* checked below */
+  }
+  return (await shown()) ? null : "Explorer's taskbar did not come back after stopping your Versailles";
+}
+
+/** Start what takeTaskbar stopped. Safe to call twice. */
+function giveBack() {
+  for (const p of taken.splice(0)) {
+    const line = `"${p.exe}"${p.autostart ? " --autostart" : ""}`;
+    if (alive(p.pid)) {
+      say(`pid ${p.pid} is still running; not starting another`);
+      continue;
+    }
+    try {
+      const r = startDetached(p.exe, p.autostart ? "--autostart" : "");
+      if (!r.pid) throw new Error(r.error);
+      say(`started your Versailles again: ${line} (pid ${r.pid})`);
+      if (!r.breakaway) say("note: it runs inside this terminal's job; closing the terminal may end it");
+    } catch (err) {
+      console.error(`e2e: --take-taskbar: could not start your Versailles again; start it yourself: ${line} (${err.message || err})`);
+    }
+  }
+}
+
+function explorerPids() {
+  const out = execFileSync("tasklist", ["/FI", "IMAGENAME eq explorer.exe", "/FO", "CSV", "/NH"], { encoding: "utf8" });
+  return [...out.matchAll(/^"explorer\.exe","(\d+)"/gim)].map((m) => Number(m[1]));
+}
+
+/** Kill Explorer; start it when Windows does not bring it back within 5 s. */
+async function restartExplorer() {
+  const old = explorerPids();
+  console.log(`e2e: restarting Explorer (pid ${old.join(", ")})`);
+  execFileSync("taskkill", ["/F", "/IM", "explorer.exe"], { stdio: "ignore" });
+  const back = await until("Explorer back", () => explorerPids().some((pid) => !old.includes(pid)), 5_000).catch(() => false);
+  if (back) return "came back by itself";
+  startDetached(join(process.env.SystemRoot || "C:\\Windows", "explorer.exe"));
+  return "started by the test";
+}
+
+function printPlan(exe) {
+  const p = probe(process.pid);
+  const found = userVersailles();
+  console.log(`e2e --dry-run: nothing is started or stopped.
+  app under test: ${exe || "none found (npm run build:test, or --exe)"}
+  Explorer's taskbar: ${p.taskbar ? "visible" : p.explorerTaskbar ? "hidden" : "not found"}
+  running Versailles: ${found.map((f) => `pid ${f.pid} (app ${f.app.join(", ") || "-"}) ${f.cmd}`).join("; ") || "none"}
+1. Start the app isolated on a temporary desktop (twice) and run the checks.
+2. Taskbar phase: hide the taskbar from the page config, check the tray, restart Explorer
+   (taskkill /f /im explorer.exe, start it if it is not back within 5 s) and check the
+   taskbar stays hidden, the Versailles tray stays in front with its icons and the docked
+   bar keeps its strip; config off, on again, kill the app: the taskbar comes back.`);
+  if (p.taskbar) {
+    console.log("   The taskbar is visible: the phase runs.");
+  } else if (!take) {
+    console.log("   The taskbar is hidden: the phase is skipped (--take-taskbar runs it).");
+  } else if (!found.length) {
+    console.log("   The taskbar is hidden but no Versailles runs: the phase is skipped.");
+  } else {
+    for (const f of found) {
+      console.log(`   --take-taskbar: before it, stop pid ${f.pid} (taskkill /PID ${f.pid} /F; its app ${f.app.join(", ") || "-"} ends with it),
+   wait for Explorer's taskbar (the taskbar guard restores it; else ${f.exe} --restore-taskbar).
+3. Always, even when checks fail: stop the test app, then start "${f.exe}"${f.autostart ? " --autostart" : ""} again.`);
+    }
+  }
+}
+
 const reservedBottom = (p) => Math.max(...[p.monitors].flat().map((m) => m.bottom));
 
 async function until(what, fn, ms = 60_000) {
@@ -145,6 +305,10 @@ function check(name, ok, detail = "", known = null) {
 
 async function main() {
   const exe = resolveExe();
+  if (dryRun) {
+    printPlan(exe);
+    process.exit(0);
+  }
   if (!exe) {
     console.error("No release or test build found. Run `npm run build:test` first, or pass --exe.");
     process.exit(2);
@@ -153,6 +317,12 @@ async function main() {
   const baseline = reservedBottom(probe(process.pid));
   const { dest, page } = makeDesktop();
   let child = null;
+  // Ctrl+C: the user's Versailles comes back too.
+  process.once("SIGINT", () => {
+    kill(child);
+    giveBack();
+    process.exit(130);
+  });
   try {
     // Run 1: everything comes up.
     child = launch(exe, dest, await freePort());
@@ -237,8 +407,13 @@ async function main() {
     check("storage survives a restart", before >= 1 && again.persisted === before, `stored ${before}, read back ${again.persisted}`);
 
     // Hiding Explorer's taskbar (#30): config on, off, on, then a kill.
-    if (!probe(process.pid).taskbar) {
-      check("taskbar phase skipped", true, "the taskbar was already hidden (another Versailles?)");
+    let skip = probe(process.pid).taskbar ? null : "the taskbar was already hidden (another Versailles? --take-taskbar runs the phase)";
+    if (skip && take) {
+      const why = await takeTaskbar([child.pid]);
+      skip = why && `--take-taskbar: ${why}`;
+    }
+    if (skip) {
+      check("taskbar phase skipped", true, skip);
     } else {
       const html = readFileSync(page, "utf8");
       const on = html.replace('"autostart": true,', '"shell": { "hideTaskbar": true }, "autostart": true,');
@@ -261,6 +436,30 @@ async function main() {
       check("tray holds the icons while the taskbar is hidden", held && held.active && held.icons > 0, JSON.stringify(held));
       const front = probe(process.pid).trayFirst;
       check("apps find the Versailles tray first", front === child.pid, `Shell_TrayWnd of pid ${front}, app ${child.pid}`);
+      // Explorer restarts (a crash, an update): its new taskbar is hidden
+      // again, ours stays in front, apps add their icons again (#38).
+      const strip = reservedBottom(probe(process.pid));
+      const how = await restartExplorer();
+      await until("Explorer's new taskbar, hidden", () => {
+        const p = probe(process.pid);
+        return p.explorerTaskbar && !p.taskbar;
+      }, 30_000).catch(() => null);
+      await sleep(2000); // Explorer shows its taskbar more than once while it starts
+      const after = probe(process.pid);
+      check("taskbar stays hidden after an Explorer restart", after.explorerTaskbar && !after.taskbar,
+        `Explorer ${how}; taskbar found ${after.explorerTaskbar}, visible ${after.taskbar}`);
+      const ahead = await until("Versailles tray in front", () => probe(process.pid).trayFirst === child.pid, 15_000).catch(() => false);
+      check("apps find the Versailles tray first after an Explorer restart", ahead,
+        `Shell_TrayWnd of pid ${probe(process.pid).trayFirst}, app ${child.pid}`);
+      const icons = await until("tray icons after the restart", () => {
+        const t = store(dest, "e2e-wall")?.report?.tray;
+        return t && t.active && t.icons > 0 ? t : null;
+      }, 20_000).catch(() => store(dest, "e2e-wall")?.report?.tray);
+      check("tray holds the icons after an Explorer restart", icons && icons.active && icons.icons > 0, JSON.stringify(icons));
+      const stripKept = await until("bar strip after the restart", () => reservedBottom(probe(process.pid)) >= strip, 15_000)
+        .catch(() => false);
+      check("docked bar keeps its strip after an Explorer restart", stripKept,
+        `bottom ${strip} -> ${reservedBottom(probe(process.pid))} px`);
       writeFileSync(page, html);
       const shown = await taskbar(true, "taskbar shown");
       check("config off restores the taskbar", shown.taskbar && !shown.runOnce);
@@ -284,6 +483,7 @@ async function main() {
     if (keep && results.some((r) => !r.ok)) {
       console.log(`--keep: app pid ${child?.pid} left running on ${dest}`);
       for (const r of results) console.log(`${r.ok ? "PASS" : "FAIL"}  ${r.name}  ${r.detail}`);
+      giveBack();
       process.exit(1);
     }
     kill(child);
@@ -303,6 +503,7 @@ async function main() {
     } catch {
       /* WebView2 may still hold files for a moment */
     }
+    giveBack();
   }
 
   const width = Math.max(...results.map((r) => r.name.length));

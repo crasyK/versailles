@@ -975,12 +975,12 @@
               data-h="420">
       <div class="cli" id="cli-root" data-mode="action" data-search-hf="https://huggingface.co/models?search={q}">
         <div class="cli-head">
-          <i></i><span id="cli-title">versailles actions Â· pwsh</span>
+          <i></i><span id="cli-title">versailles actions · pwsh</span>
           <span class="pid" id="cli-mode-label">actions</span>
         </div>
         <div class="cli-action" id="cli-action">
           <div class="cli-line">
-            <span class="cli-ps" id="cli-ps">PS â€¦&gt;</span>
+            <span class="cli-ps" id="cli-ps">PS …&gt;</span>
             <input class="cli-in" id="cli-in" spellcheck="false" autocomplete="off" autofocus aria-label="command input" />
           </div>
           <div class="cli-res" id="cli-res"></div>
@@ -991,7 +991,7 @@
         </div>
         <div class="cli-foot" id="cli-foot">
           <span id="cli-foot-l">enter</span><span id="cli-foot-m">tab</span><span id="cli-foot-r-hint">esc</span>
-          <span class="r" id="cli-foot-r">? web Â· !! term Â· help</span>
+          <span class="r" id="cli-foot-r">? web · !! term · help</span>
         </div>
       </div>
       <script>
@@ -1501,7 +1501,7 @@
               (w.networks || []).forEach(function (n) {
                 var row = el('div', 'item' + (n.connected ? ' current' : ''));
                 row.appendChild(el('span', 'name', n.ssid));
-                var label = busy === n.ssid ? (n.connected ? 'disconnectingâ€¦' : 'connectingâ€¦') : (n.secure ? 'locked Â· ' : '') + n.signal + '%';
+                var label = busy === n.ssid ? (n.connected ? 'disconnecting…' : 'connecting…') : (n.secure ? 'locked · ' : '') + n.signal + '%';
                 row.appendChild(el('span', 'meta', label));
                 if (busy) {
                   row.classList.add('static'); // one change at a time
@@ -1573,7 +1573,7 @@
                 var row = el('div', 'item' + (d.connected ? ' current' : '') + (d.audio ? '' : ' static'));
                 row.appendChild(el('span', 'name', d.name));
                 if (pending) {
-                  row.appendChild(el('span', 'meta', pending.want ? 'connectingâ€¦' : 'disconnectingâ€¦'));
+                  row.appendChild(el('span', 'meta', pending.want ? 'connecting…' : 'disconnecting…'));
                 } else if (d.audio) {
                   var btn = el('button', d.connected ? 'on' : null, d.connected ? 'disconnect' : 'connect');
                   btn.onclick = function () {
@@ -1726,7 +1726,7 @@
                 text.appendChild(el('b', null, item.title || item.app || 'notification'));
                 text.appendChild(el('span', null, item.body || item.app || ''));
                 row.appendChild(text);
-                var x = el('button', 'x', 'Ã—');
+                var x = el('button', 'x', '×');
                 x.title = 'dismiss';
                 x.onclick = function (e) { e.stopPropagation(); act(me.notifyControl.dismiss(item.id)).then(function (r) { if (r) renderToasts(r); }); };
                 row.appendChild(x);

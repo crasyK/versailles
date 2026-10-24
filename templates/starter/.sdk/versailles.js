@@ -508,7 +508,11 @@
           return quick("radios", { kind: "airplane", on: !!on });
         },
       }),
-      /** Volume, mute and the default output. `now()`: `{ outputs: [{ id, name, default }] }`. */
+      /**
+       * Volume, mute, the default output and microphone, and per-app volume.
+       * `now()`: `{ outputs: [{ id, name, default }], inputs: [{ id, name, default }],
+       * sessions: [{ id, app, exe, pid, icon, volume, muted, active, system }] }`.
+       */
       audioControl: Object.assign(sensor("audio-control"), {
         async setVolume(level) {
           return quick("audio-control", { kind: "volume", level: Number(level) });
@@ -519,6 +523,24 @@
         /** Make an output from `now().outputs` the default. */
         async setOutput(id) {
           return quick("audio-control", { kind: "output", id: String(id) });
+        },
+        /** Default microphone volume, 0–100 (read it through `audio`'s `input`). */
+        async setInputVolume(level) {
+          return quick("audio-control", { kind: "inputVolume", level: Number(level) });
+        },
+        async setInputMute(on) {
+          return quick("audio-control", { kind: "inputMute", on: !!on });
+        },
+        /** Make a microphone from `now().inputs` the default. */
+        async setDefaultInput(id) {
+          return quick("audio-control", { kind: "input", id: String(id) });
+        },
+        /** One app's volume, 0–100: an `id` from `now().sessions`. */
+        async setSessionVolume(id, level) {
+          return quick("audio-control", { kind: "sessionVolume", id: String(id), level: Number(level) });
+        },
+        async setSessionMute(id, on) {
+          return quick("audio-control", { kind: "sessionMute", id: String(id), on: !!on });
         },
       }),
       /** `{ projection, brightness: [{ id, device, kind, level }], nightLight: { supported, on } }`. */

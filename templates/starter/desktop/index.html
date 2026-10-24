@@ -1269,8 +1269,9 @@
 
     <!-- ===== Example: quick settings =====
          A slide-out with Wi-Fi networks, Bluetooth devices, airplane mode, volume,
-         the output, brightness, night light, projection, Do Not Disturb, recent
-         notifications and power mode, opened with Ctrl+Alt+Q. Settings change only
+         the output, the microphone, per-app volume, brightness, night light,
+         projection, Do Not Disturb, recent notifications and power mode, opened
+         with Ctrl+Alt+Q. Settings change only
          from a slide-out, bar or overlay and only on a click or key press: the
          wallpaper can show them but never change them. Values arrive by push,
          so changes made in Windows show up here too.
@@ -1309,8 +1310,11 @@
         .qs .toast .text b, .qs .toast .text span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .qs .toast .text span { color: var(--ink-mut); font-size: 12px; }
         .qs .toast .x { padding: 2px 7px; }
+        .qs .mix img { width: 16px; height: 16px; flex: none; }
+        .qs .mix .name { flex: 0 1 96px; }
+        .qs .mix input[type=range] { min-width: 0; }
+        /* data-no-drag on .qs: a slide-out drags from any plain element, which would swallow clicks on the rows. */
       </style>
-      <!-- data-no-drag: a slide-out drags from any plain element, which would swallow clicks on the rows. -->
       <div class="qs" data-no-drag>
         <h3>wi-fi <button class="q-wifi">on</button></h3>
         <div class="list q-nets"></div>
@@ -1320,6 +1324,11 @@
         <h3>sound</h3>
         <div class="row"><input class="q-vol" type="range" min="0" max="100"><button class="q-mute">mute</button></div>
         <div class="row"><select class="q-out"></select></div>
+        <h3>microphone</h3>
+        <div class="row"><input class="q-mic" type="range" min="0" max="100"><button class="q-mic-mute">mute</button></div>
+        <div class="row"><select class="q-in"></select></div>
+        <h3>apps</h3>
+        <div class="list q-mix"></div>
         <h3>airplane mode <button class="q-plane">off</button></h3>
         <h3>display <button class="q-night">night light</button></h3>
         <div class="q-bright"></div>
@@ -1487,26 +1496,80 @@
             }
             me.on('bluetooth', renderDevs).catch(function () {});
 
-            var muted = false;
+            // Volume and mute of the output and the microphone (`input`: null without one).
+            var muted = false, micMuted = false;
             me.on('audio', function (a) {
               if (!a) return;
               muted = !!a.muted;
               if (document.activeElement !== $('.q-vol')) $('.q-vol').value = a.volume == null ? 0 : a.volume;
               $('.q-mute').classList.toggle('on', muted);
+              var mic = a.input;
+              micMuted = !!(mic && mic.muted);
+              $('.q-mic').disabled = $('.q-mic-mute').disabled = !mic;
+              if (mic && document.activeElement !== $('.q-mic')) $('.q-mic').value = mic.volume;
+              $('.q-mic-mute').classList.toggle('on', micMuted);
             }).catch(function () {});
             $('.q-vol').oninput = function () { act(me.audioControl.setVolume(this.value)); };
             $('.q-mute').onclick = function () { act(me.audioControl.setMute(!muted)); };
-            me.on('audio-control', function (s) {
-              var select = $('.q-out');
+            $('.q-mic').oninput = function () { act(me.audioControl.setInputVolume(this.value)); };
+            $('.q-mic-mute').onclick = function () { act(me.audioControl.setInputMute(!micMuted)); };
+
+            // Outputs, microphones and apps; a change answers the new lists.
+            function fill(select, list) {
+              if (document.activeElement === select) return; // not while it is open
               select.innerHTML = '';
-              ((s && s.outputs) || []).forEach(function (o) {
+              (list || []).forEach(function (o) {
                 var opt = el('option', null, o.name || o.id);
                 opt.value = o.id;
                 opt.selected = o.default;
                 select.appendChild(opt);
               });
-            }).catch(function () {});
-            $('.q-out').onchange = function () { act(me.audioControl.setOutput(this.value)); };
+              select.disabled = !(list || []).length;
+            }
+            // Apps: one slider and mute per audio session, kept by id so the
+            // slider being dragged is never redrawn under the pointer.
+            var mixRows = {}, mixNote = el('div', 'note', 'no apps are playing sound');
+            function renderMixer(sessions) {
+              var box = $('.q-mix'), seen = {};
+              mixNote.remove();
+              (sessions || []).forEach(function (s, i) {
+                seen[s.id] = true;
+                var r = mixRows[s.id];
+                if (!r) {
+                  r = mixRows[s.id] = { row: el('div', 'item static mix'), icon: el('img'), name: el('span', 'name'),
+                                        range: el('input'), mute: el('button', null, 'mute') };
+                  r.icon.alt = '';
+                  r.range.type = 'range';
+                  r.range.min = 0;
+                  r.range.max = 100;
+                  r.range.oninput = function () { act(me.audioControl.setSessionVolume(s.id, this.value)); };
+                  r.mute.onclick = function () { act(me.audioControl.setSessionMute(s.id, !r.muted)).then(renderAudio); };
+                  [r.icon, r.name, r.range, r.mute].forEach(function (c) { r.row.appendChild(c); });
+                }
+                r.muted = !!s.muted;
+                r.icon.hidden = !s.icon;
+                if (s.icon && r.icon.getAttribute('src') !== s.icon) r.icon.src = s.icon;
+                r.name.textContent = s.app || 'app';
+                r.name.title = s.exe || '';
+                if (document.activeElement !== r.range) r.range.value = s.volume;
+                r.mute.classList.toggle('on', r.muted);
+                var at = box.children[i];
+                if (at !== r.row) box.insertBefore(r.row, at || null);
+              });
+              Object.keys(mixRows).forEach(function (id) {
+                if (!seen[id]) { mixRows[id].row.remove(); delete mixRows[id]; }
+              });
+              if (!(sessions || []).length) box.appendChild(mixNote);
+            }
+            function renderAudio(s) {
+              if (!s || !s.outputs) return;
+              fill($('.q-out'), s.outputs);
+              fill($('.q-in'), s.inputs);
+              renderMixer(s.sessions);
+            }
+            me.on('audio-control', renderAudio).catch(function () {});
+            $('.q-out').onchange = function () { act(me.audioControl.setOutput(this.value)).then(renderAudio); };
+            $('.q-in').onchange = function () { act(me.audioControl.setDefaultInput(this.value)).then(renderAudio); };
 
             var night = null;
             me.on('display', function (d) {

@@ -24,12 +24,12 @@ The host never grants more than that list. The catalog is fixed in [`src-tauri/s
 | `battery` | Battery level, charging, plugged in, saver (`sense_now`, pushed on change) |
 | `network` | Online state, connectivity level, profile name, Wi-Fi and signal bars |
 | `focus` | The active window: title, app, exe path, pid |
-| `audio` | Default output device, volume (0–100), mute |
+| `audio` | Default output device, volume (0–100), mute; the default microphone, its volume and mute |
 | `windows` | The app windows a taskbar would show, their icons, and pushed changes (`windows_list`, `windows_icon`) |
 | `windows-control` | Focus, minimize, restore, maximize, close, move / resize one of those windows (`windows_control`) |
 | `notify` | Windows toast notifications, read-only: the recent ones and each new one (see [Notifications](#notifications)) |
 | `radios` | Wi-Fi, Bluetooth and airplane mode on / off; switch them from a bar or overlay (see [Quick settings](#quick-settings)) |
-| `audio-control` | The active outputs; set volume, mute and the default output from a bar or overlay |
+| `audio-control` | The active outputs and microphones, and the apps playing sound (per-app volume); set volume, mute, the default output and microphone, and each app's volume and mute from a bar or overlay. The app list reveals which apps play audio: declare it only where needed |
 | `display` | Projection mode, brightness per screen and night light; change them from a bar or overlay |
 | `power-mode` | Power mode (efficiency / balanced / performance), energy saver; change the mode from a bar or overlay |
 | `wifi` | Wi-Fi networks in range; scan, join (with a password for a new one), disconnect from a bar or overlay. Network names reveal where you are: declare it only where needed |
@@ -126,14 +126,14 @@ await hud.focus.onChange((w) => (title.textContent = w.title));
 | `battery` | 15 s | `{ present, percent, plugged, charging, secondsLeft, saver }` (`present: false` on a desktop PC) |
 | `network` | 3 s | `{ online, level: "none"\|"local"\|"constrained"\|"internet", name, wifi, signalBars }` |
 | `focus` | 0.5 s | `{ title, app, exe, pid, self }` (`self`: a Versailles window) |
-| `audio` | 1 s | `{ device, volume, muted }` |
+| `audio` | 1 s | `{ device, volume, muted, input: { device, volume, muted } }` (`input`: the default microphone, `null` without one) |
 | `media` | on change | same as `media.now()` |
 | `windows` | 0.25 s | `{ type: "opened"\|"closed"\|"focused"\|"changed", id, window }` (see [Windows](#windows)) |
 | `notify` | 2 s | one new toast (see [Notifications](#notifications)) |
 | `tray` | on change | `{ type: "added"\|"changed"\|"removed", id, icon }`, `{ type: "balloon", id, title, text, kind }` or `{ type: "active", active }` (see [Tray](#tray)) |
 | `radios` | 2 s | `{ wifi, bluetooth, airplane }` (`true`, `false`, or `null` without that radio; `airplane: null` where Windows offers no airplane switch) |
 | `power-mode` | 2 s | `{ supported, mode: "efficiency"\|"balanced"\|"performance"\|null, energySaver }` |
-| `audio-control` | 3 s | `{ outputs: [{ id, name, default }] }` (volume and mute are the `audio` hook) |
+| `audio-control` | 3 s | `{ outputs: [{ id, name, default }], inputs: [{ id, name, default }], sessions: [{ id, app, exe, pid, icon, volume, muted, active, system }] }` (volume and mute of the default output and microphone are the `audio` hook) |
 | `dnd` | 2 s | `{ supported, mode: "off"\|"priority"\|"alarms"\|null }` |
 | `bluetooth` | 3 s | `{ devices: [{ id, name, connected, audio }] }` (`audio`: headphones / speakers, can be connected) |
 | `wifi` | 5 s | `{ access: "ok"\|"location-denied"\|"no-adapter", connected, networks: [{ ssid, signal, secure, known, connected }] }` |
@@ -323,6 +323,15 @@ volume.oninput = () => qs.audioControl.setVolume(volume.value);   // 0–100
 muteButton.onclick = () => qs.audioControl.setMute(true);
 const { outputs } = await qs.audioControl.now();               // [{ id, name, default }]
 await qs.audioControl.setOutput(outputs[1].id);
+const { input } = await qs.audio.now();                        // { device, volume, muted } or null
+micMute.onclick = () => qs.audioControl.setInputMute(!input.muted);
+mic.oninput = () => qs.audioControl.setInputVolume(mic.value);  // 0–100
+const { inputs, sessions } = await qs.audioControl.now();      // inputs: [{ id, name, default }]
+await qs.audioControl.setDefaultInput(inputs[1].id);
+for (const s of sessions) {                                    // [{ id, app, exe, pid, icon, volume, muted, active, system }]
+  slider(s.app, s.icon, s.volume).oninput = (e) => qs.audioControl.setSessionVolume(s.id, e.target.value);
+}
+await qs.audioControl.setSessionMute(sessions[0].id, true);
 const { brightness, projection } = await qs.display.now();     // brightness: [{ id, kind, level }]
 await qs.display.setBrightness(brightness[0].id, 60);          // 0–100
 await qs.display.project("extend");                            // "pc" | "duplicate" | "extend" | "second"
@@ -344,6 +353,8 @@ await qs.bluetooth.connect(devices[0].id);                     // audio devices 
 - **Wi-Fi** uses the WLAN API. Joining a new network saves a Windows profile (WPA2 / WPA3 personal or open; enterprise sign-in is not supported). Windows 11 24H2 may hide networks until location access is on: the read then says `access: "location-denied"`. Windows only refreshes the list on a scan, so call `scan()` when the panel opens.
 - **Bluetooth** lists paired devices (classic and LE) from a device watcher, so a read is instant and changes are pushed. Windows has no public call to connect a device; headphones and speakers are connected and disconnected through their audio driver (as Windows' own audio flyout does). Mice and keyboards reconnect by themselves and show their state only.
 - **Volume and mute** act on the default output; read them through `audio`. **The default output** uses the same undocumented call as Windows' sound settings and takes only ids from `outputs`.
+- **Microphone:** `setInputVolume` and `setInputMute` act on the default microphone (Windows' default recording device); read them through `audio`'s `input`. `setDefaultInput` makes a microphone from `inputs` the default for every use (as Windows' sound settings do), through the same undocumented call as the default output, and takes only ids from `inputs`.
+- **Per-app volume** is Windows' volume mixer for the default output: one entry per audio session (an app can have several). `id` is the session's instance identifier and stays the same while the session lives; a closed session drops out. `app` is the name the app gives its session, else its executable's description (`Firefox`), else the file name; `icon` is a 32×32 PNG data URL of the executable's icon, or `null`; `active` is whether it is playing now; the system sounds session (`system: true`, `app: "System sounds"`, no `exe` or `icon`) comes last. The list is read every 3 s and after each change, so a change made in Windows' mixer shows up within 3 s. **Privacy:** the list reveals which apps play or played sound; declare `audio-control` only on the piece that needs it.
 - **Brightness:** built-in panels through WMI (`kind: "internal"`), external monitors over DDC/CI (`kind: "external"`, `device` is the screen, e.g. `\\.\DISPLAY2`; slow and not every monitor answers). A screen that offers neither is missing from the list.
 - **Projection** is Win+P. `"second"` turns the built-in screen off.
 - **Night light** has no Windows API: its state is an undocumented registry value that Explorer watches. `on` is whether night light is on now (by hand or by its schedule). Switching it works like the Quick Settings tile: by hand, so a schedule takes over again at its next start or end. Versailles writes only when it can re-encode the stored value exactly; otherwise `supported: false` (and `on: null` when it cannot be read at all) and `setNightLight` rejects. Offer `versailles.shell.open("ms-settings:nightlight")` instead. Changes made elsewhere show up within the 5 s `display` read.

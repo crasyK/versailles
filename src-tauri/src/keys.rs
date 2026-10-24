@@ -12,7 +12,9 @@
 //!   own Win+E, Win+D... keep working;
 //! - mask keys sent before the Win key-up (AutoHotkey's `vkE8`, ChefKeys'
 //!   Left Alt) did not keep Start closed on Windows 11 25H2, hence the above;
-//! - replayed keys are tagged and go out from a small sender thread;
+//! - replayed keys are tagged and go out from a small sender thread; until
+//!   it has sent them, later keys queue behind them (a key-up must not
+//!   overtake its replayed key-down, or the key stays down);
 //! - the Copilot key sends LShift+LWin+F23, so `"Copilot"` is Win+Shift+F23.
 //!
 //! The hook runs on its own thread with its own message loop. Windows passes
@@ -486,7 +488,7 @@ mod hook {
     };
     use std::cell::{Cell, RefCell};
     use std::ffi::c_void;
-    use std::sync::atomic::Ordering;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{mpsc, Arc, Mutex, OnceLock};
     use std::thread::{JoinHandle, Thread};
     use windows::core::{w, BOOL, GUID};
@@ -782,9 +784,19 @@ mod hook {
         Fire { generation: u64, index: usize },
         /// Send these two key events.
         Replay([Replay; 2]),
+        /// Send this key event (one that came in behind a replay).
+        Key(Replay),
+    }
+
+    impl Cmd {
+        fn sends_keys(&self) -> bool {
+            !matches!(self, Cmd::Fire { .. })
+        }
     }
 
     static CMDS: Ring<Cmd, 64> = Ring::new();
+    /// Key-sending commands handed to the sender and not sent yet.
+    static PENDING: AtomicUsize = AtomicUsize::new(0);
 
     /// The sender thread: replays keys and toggles pieces for the hook, in
     /// order. `None` when it could not start.
@@ -797,6 +809,9 @@ mod hook {
                     .spawn(|| loop {
                         while let Some(cmd) = CMDS.pop() {
                             run_cmd(cmd);
+                            if cmd.sends_keys() {
+                                PENDING.fetch_sub(1, Ordering::SeqCst);
+                            }
                         }
                         std::thread::park();
                     })
@@ -810,16 +825,27 @@ mod hook {
     /// From the hook: hand `cmd` to the sender (run it here only if there is
     /// none or its queue is full).
     fn command(cmd: Cmd) {
-        match sender() {
-            Some(thread) if CMDS.push(cmd) => thread.unpark(),
-            _ => run_cmd(cmd),
+        if let Some(thread) = sender() {
+            let keys = cmd.sends_keys();
+            if keys {
+                PENDING.fetch_add(1, Ordering::SeqCst);
+            }
+            if CMDS.push(cmd) {
+                thread.unpark();
+                return;
+            }
+            if keys {
+                PENDING.fetch_sub(1, Ordering::SeqCst);
+            }
         }
+        run_cmd(cmd);
     }
 
     fn run_cmd(cmd: Cmd) {
         match cmd {
             Cmd::Fire { generation, index } => fire_entry(generation, index),
             Cmd::Replay(keys) => send(&keys),
+            Cmd::Key(key) => send(&[key]),
         }
     }
 
@@ -897,19 +923,22 @@ mod hook {
     /// One key event to replay: virtual key, scan code, `KEYEVENTF_*` flags.
     type Replay = (u16, u16, u32);
 
-    fn send(keys: &[Replay; 2]) {
-        let inputs = (*keys).map(|(vk, scan, flags)| INPUT {
-            r#type: INPUT_KEYBOARD,
-            Anonymous: INPUT_0 {
-                ki: KEYBDINPUT {
-                    wVk: VIRTUAL_KEY(vk),
-                    wScan: scan,
-                    dwFlags: KEYBD_EVENT_FLAGS(flags),
-                    dwExtraInfo: TAG,
-                    ..Default::default()
+    fn send(keys: &[Replay]) {
+        let inputs: Vec<INPUT> = keys
+            .iter()
+            .map(|&(vk, scan, flags)| INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT {
+                        wVk: VIRTUAL_KEY(vk),
+                        wScan: scan,
+                        dwFlags: KEYBD_EVENT_FLAGS(flags),
+                        dwExtraInfo: TAG,
+                        ..Default::default()
+                    },
                 },
-            },
-        });
+            })
+            .collect();
         unsafe {
             SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
         }
@@ -1018,7 +1047,13 @@ mod hook {
                     SEEN[i].store(k.time | 1, Ordering::Relaxed);
                 }
             }
-            let swallow = !ours && handle(vk, down, k.scanCode as u16, extended);
+            let mut swallow = !ours && handle(vk, down, k.scanCode as u16, extended);
+            if !ours && !swallow && PENDING.load(Ordering::SeqCst) > 0 {
+                // Our replays have not gone out yet: this key goes after them.
+                let flags = if extended { EXTENDED } else { 0 } | if down { 0 } else { KEYUP };
+                command(Cmd::Key((vk, k.scanCode as u16, flags)));
+                swallow = true;
+            }
             EVENTS.push(Event {
                 at,
                 late: late_ms(at, k.time),

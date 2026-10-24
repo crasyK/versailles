@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-cli-search"
+description = "Enables the cli_search command without any pre-configured scope."
+commands.allow = ["cli_search"]
+
+[[permission]]
+identifier = "deny-cli-search"
+description = "Denies the cli_search command without any pre-configured scope."
+commands.deny = ["cli_search"]

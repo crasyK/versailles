@@ -14,7 +14,7 @@ The host never grants more than that list. The catalog is fixed in [`src-tauri/s
 | `mouse` | Cursor position |
 | `layout` | The piece's own window: move, resize, re-anchor, always-on-top, click-through regions (`move_widget_cmd`, `layout_update`) |
 | `spawn` | Open/toggle another spawnable, optionally handing it data |
-| `shell` | Open a URL or path (`cli_open`); from a spawn window also run commands (`cli_exec`, `cli_exec_term`, `cli_search_files`) |
+| `shell` | Open a URL, path or installed app (`cli_open`); from a spawn window also run commands (`cli_exec`, `cli_exec_term`), search files and Settings pages (`cli_search`, `cli_search_files`) and list recently opened files (`cli_recent_files`); see [Search](#search-recent-files-and-settings) |
 | `hotkey` | Global accelerator for this spawnable (`data-hotkey` on that piece, else `#versailles` `launcher.hotkey` for the first hook piece). Win and Copilot keys, and the log lines that diagnose them: [DIALECT](DIALECT.md#overlay-vs-slide-out) |
 | `pty` | Embedded ConPTY (`pty_open` / write / resize / close) |
 | `storage` | The piece's own key-value store under `.versailles/storage/` (`storage_op`) |
@@ -50,7 +50,7 @@ Unknown hook names are rejected.
 
 - **Basics:** [SDK](#sdk) · [Enforcement](#enforcement) · [Events](#events)
 - **Reading the system:** [Push](#push) · [Notifications](#notifications) · [Windows](#windows) · [Tray](#tray) · [Posture](#posture)
-- **Acting:** [Layout](#layout) · [Power](#power) · [Quick settings](#quick-settings) · [Connections and accessibility](#connections-and-accessibility) · [Keyboard](#keyboard) · [Clipboard](#clipboard)
+- **Acting:** [Layout](#layout) · [Power](#power) · [Quick settings](#quick-settings) · [Connections and accessibility](#connections-and-accessibility) · [Keyboard](#keyboard) · [Clipboard](#clipboard) · [Search](#search-recent-files-and-settings)
 - **Between pieces:** [Storage](#storage) · [Bus](#bus) · [Piece events](#piece-events)
 
 ## SDK
@@ -96,9 +96,9 @@ That piece must list the hook in `data-hooks`. A piece that omitted `data-hooks=
 
 **Control class.** `quick_set` (`radios`, `audio-control`, `display`, `power-mode`, `wifi`, `bluetooth`, `dnd`, `notify-control`, `keyboard`, `vpn`, `hotspot`, `sharing`, `accessibility`) changes a system setting. Like exec class it is refused from the desktop wallpaper and from folder widgets; only a spawn window (bar, slide-out, overlay) whose piece declares the hook may change a setting. The SDK also asks for a click or key press first. Reading those hooks works anywhere.
 
-**Exec class.** `cli_exec`, `cli_exec_term`, `cli_search_files` (`shell`) and `pty_open` / `pty_write` / `pty_resize` / `pty_is_alive` / `pty_close` (`pty`) run code. They are refused from the desktop wallpaper entirely and only work from a spawn window whose piece declares the hook. `cli_open` (open a URL/path) is not exec class: the wallpaper may call it via `versailles.for(id).shell.open(...)`.
+**Exec class.** `cli_exec`, `cli_exec_term`, `cli_search`, `cli_search_files`, `cli_recent_files` (`shell`) and `pty_open` / `pty_write` / `pty_resize` / `pty_is_alive` / `pty_close` (`pty`) run code. They are refused from the desktop wallpaper entirely and only work from a spawn window whose piece declares the hook. `cli_open` (open a URL/path) is not exec class: the wallpaper may call it via `versailles.for(id).shell.open(...)`.
 
-`cli_open` refuses network (UNC) paths and dangerous URL handlers (`ms-msdt:`, `search-ms:`, `search:`, `ms-officecmd:`, Office `ms-word:` / `ms-excel:` / … and their `ofe|u|` forms, `file://host/…`). `http(s)`, `ms-settings:`, `shell:`, local paths and installed app names keep working.
+`cli_open` refuses network (UNC) paths and dangerous URL handlers (`ms-msdt:`, `search-ms:`, `search:`, `ms-officecmd:`, Office `ms-word:` / `ms-excel:` / … and their `ofe|u|` forms, `file://host/…`). `http(s)`, `ms-settings:`, `shell:`, local paths and installed app names keep working. `shell:AppsFolder\<AppUserModelID>` opens only an app that is in Windows' Applications folder.
 
 `layout` only ever touches the piece's own window (a wallpaper widget has none, so it is refused). From a bar's monitor copy it changes that copy's window.
 
@@ -459,6 +459,7 @@ const { ok } = await kb.set(layouts[1].id);           // false: the app did not 
 - `ok: false` when the app did not switch within 0.4 s: an app running as administrator ignores requests from Versailles (which runs as the user), and a few apps (some games, remote desktops) handle the keyboard themselves.
 - With Windows' default setting (one input method for all apps) the switch applies to every app; with "Let me use a different input method for each app window" only to that app. `current` always reads the app in front.
 - Windows has no event for another app's layout change: the host reads it every 0.5 s while a piece declares `keyboard`, and pushes only a change.
+
 ## Connections and accessibility
 
 Four more quick-settings hooks: `vpn`, `hotspot`, `sharing` and `accessibility`. They read and change like the ones above: `now()` / `onChange(fn)` / `on(hook, fn)` anywhere, changes only from a bar or overlay, inside a click or key press, logged. Windows sends none of them as events an app outside the Store can get, so the host reads them every 2–3 s while a piece declares the hook.
@@ -510,6 +511,30 @@ await qs.accessibility.set("magnifier", true);       // "magnifier" | "contrast"
 - `magnifier` and `captions` read whether the app runs; `null` where it is not installed (Live captions needs Windows 11 22H2). The shortcuts Versailles sends to close them pass its own keyboard hook untouched (also with `shell.suppress`); an elevated window in front can block them, and then the call rejects.
 - A **contrast theme** makes Windows draw pages in its own colours: CSS `forced-colors: active` applies to every page, Paper chrome included, until it is off again. Style for it with `@media (forced-colors: active)` if your page needs to.
 - **Colour filters** have no Windows API: `colorFilter` reads the filter setting (`HKCU\Software\Microsoft\ColorFiltering`, `Active`) and `set` runs Windows' colour filter shortcut (`atbroker /colorfiltershortcut`), which switches the filter Settings has chosen (greyscale by default) on or off, only when the state differs. If Windows does not switch within 3 s, `set` rejects: offer `versailles.shell.open("ms-settings:easeofaccess-colorfilter")`.
+
+## Search, recent files and settings
+
+The example command bar's Start menu: installed apps (with Store apps and icons), Settings pages, files from the Windows Search index, and recently opened files. All of it is `shell`; searching and recent files are exec class, so only a bar or overlay that declares `shell` gets them.
+
+```js
+const bar = versailles.for("action-bar");
+const r = await bar.shell.search("rechnung");
+// { query, source: "index" | "walk" | "off", ms,
+//   settings: [{ kind: "settings", title, uri, en, de, score, exact }],
+//   files: [{ kind: "file" | "folder", path, name, folder, modified, match: "name" | "contents" }] }
+await bar.shell.open(r.settings[0].uri);                       // ms-settings:…
+await bar.shell.search("bluetooth", { files: false });         // Settings pages only: instant
+await bar.shell.search("rep", { limit: 8, fallback: false });  // as you type: never the slow walk
+const recent = await bar.shell.recent(10);                     // [{ kind, path, name, folder, opened }]
+const apps = await versailles.invoke("list_catalog");          // [{ id, name, target, kind: "shortcut" | "packaged", aumid, fresh, … }]
+const icon = await versailles.invoke("catalog_icon", { id: apps[0].id }); // 32×32 PNG data URL or null
+```
+
+- **Files** come from the Windows Search index (the provider PowerToys Run uses): names first (starting with the query, then containing it), then contents, at most `limit` (default 40, up to 100). Hidden and dot folders, `AppData`, `node_modules`, `target` and the recycle bin are left out. `modified` is ms since 1970. When the index is off or does not answer within 1.5 s, the search walks Documents, Desktop, Downloads, Pictures and your profile instead (`source: "walk"`, names only, up to 2 s); `fallback: false` skips the walk (`source: "off"`). `cli_search_files` still answers a plain list of paths, index first.
+- **Settings pages** are a built-in table of about 120 `ms-settings:` pages with English and German names and keywords; case, umlauts and hyphens do not matter (`lautstarke`, `wifi`). `title` is in the Windows display language; `exact` is true when the query is a whole name or keyword.
+- **Recent files** are the shortcuts Windows keeps in `%APPDATA%\Microsoft\Windows\Recent`, newest first, at most `limit` (default 30, up to 100); missing targets and network paths are left out. The list is empty when "Show recently opened items" (Settings › Personalization › Start) is off.
+- **Store apps** (packaged apps without a Start menu shortcut) are in `list_catalog` as `kind: "packaged"` with their AppUserModelID; `target` is `shell:AppsFolder\<id>` and `cli_open` starts them. A Store app with the same name as a shortcut is listed once.
+- **Privacy:** search results and recent files reveal file names and folders. Declare `shell` only on the piece that needs it; the wallpaper and folder widgets never get these calls.
 
 ## Clipboard
 

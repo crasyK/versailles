@@ -16,10 +16,6 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 const STREAM_CAP: usize = 8 * 1024;
 /// Launcher inline runner — long jobs belong in terminal mode.
 const EXEC_TIMEOUT: Duration = Duration::from_secs(4);
-const SEARCH_BUDGET: Duration = Duration::from_secs(2);
-const SEARCH_MAX_DEPTH: usize = 6;
-const SEARCH_MAX_RESULTS: usize = 50;
-const SKIP_DIRS: &[&str] = &[".git", "node_modules", "appdata", ".cursor", "target"];
 
 #[derive(Serialize)]
 pub struct CliOutput {
@@ -332,6 +328,21 @@ pub(crate) fn open_target(target: &str) -> Result<(), String> {
                 | windows::Win32::System::Com::COINIT_DISABLE_OLE1DDE,
         )
     };
+    // A packaged app (`shell:AppsFolder\<aumid>`, already checked against
+    // the Applications folder): start it directly; the shell is the fallback.
+    if let Some(aumid) = crate::apps::apps_folder_aumid(target) {
+        if crate::apps::is_packaged_aumid(aumid) {
+            match crate::apps::activate_packaged(aumid) {
+                Ok(()) => {
+                    if com.is_ok() {
+                        unsafe { windows::Win32::System::Com::CoUninitialize() };
+                    }
+                    return Ok(());
+                }
+                Err(e) => tracing::debug!("cli_open: {e}; trying the shell"),
+            }
+        }
+    }
     // ShellExecuteW returns an HINSTANCE cast; values > 32 mean success.
     let rc = unsafe {
         ShellExecuteW(
@@ -415,81 +426,46 @@ pub async fn cli_search_files(
     app_state: State<'_, AppState>,
 ) -> Result<Vec<String>, String> {
     gate_shell(&app_state, &webview, caller.as_deref(), HookClass::Exec)?;
-    blocking(move || search_files_blocking(&query)).await
+    // Windows Search index first (ranked, names and contents), the folder walk without it.
+    blocking(move || crate::search::file_paths(&query)).await
 }
 
-fn search_files_blocking(query: &str) -> Result<Vec<String>, String> {
-    let q = query.trim().to_lowercase();
-    if q.is_empty() {
-        return Ok(Vec::new());
-    }
-    let home = dirs::home_dir().ok_or_else(|| "could not resolve home directory".to_string())?;
-    let start = Instant::now();
-    let mut results: Vec<String> = Vec::new();
+/// Settings pages and files matching `query` (#55, #56). `files: false`
+/// skips the file search (settings only, instant); `fallback: false` skips
+/// the slow folder walk when the index is not there (as-you-type search).
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn cli_search(
+    webview: Webview,
+    query: String,
+    limit: Option<usize>,
+    files: Option<bool>,
+    settings: Option<bool>,
+    fallback: Option<bool>,
+    caller: Option<String>,
+    app_state: State<'_, AppState>,
+) -> Result<crate::search::SearchResults, String> {
+    gate_shell(&app_state, &webview, caller.as_deref(), HookClass::Exec)?;
+    let opts = crate::search::SearchOptions {
+        files: files.unwrap_or(true),
+        settings: settings.unwrap_or(true),
+        fallback: fallback.unwrap_or(true),
+        limit: limit.unwrap_or(crate::search::DEFAULT_LIMIT),
+    };
+    blocking(move || Ok(crate::search::search(&query, opts))).await
+}
 
-    // Prefer user-facing folders first so the 2s budget isn't burned in deep trees.
-    let mut roots: Vec<std::path::PathBuf> = [
-        home.join("Documents"),
-        home.join("Desktop"),
-        home.join("Downloads"),
-        home.join("Pictures"),
-        home.clone(),
-    ]
-    .into_iter()
-    .filter(|p| p.is_dir())
-    .collect();
-    roots.dedup();
-
-    // BFS — shallow matches beat deep noise for launcher UX.
-    let mut queue: std::collections::VecDeque<(std::path::PathBuf, usize)> = roots
-        .into_iter()
-        .map(|p| (p, 0))
-        .collect();
-    let mut seen = std::collections::HashSet::new();
-
-    while let Some((dir, depth)) = queue.pop_front() {
-        if start.elapsed() > SEARCH_BUDGET || results.len() >= SEARCH_MAX_RESULTS {
-            break;
-        }
-        if depth > SEARCH_MAX_DEPTH {
-            continue;
-        }
-        let key = dir.to_string_lossy().to_lowercase();
-        if !seen.insert(key) {
-            continue;
-        }
-        let rd = match std::fs::read_dir(&dir) {
-            Ok(r) => r,
-            Err(_) => continue,
-        };
-        for entry in rd.flatten() {
-            if start.elapsed() > SEARCH_BUDGET || results.len() >= SEARCH_MAX_RESULTS {
-                break;
-            }
-            let name = entry.file_name().to_string_lossy().into_owned();
-            let lower = name.to_lowercase();
-            let file_type = match entry.file_type() {
-                Ok(t) => t,
-                Err(_) => continue,
-            };
-            let path = entry.path();
-            if lower.contains(&q) {
-                results.push(path.to_string_lossy().into_owned());
-            }
-            if file_type.is_dir() && !SKIP_DIRS.contains(&lower.as_str()) {
-                queue.push_back((path, depth + 1));
-            }
-        }
-    }
-
-    results.sort_by_key(|p| {
-        Path::new(p)
-            .file_name()
-            .map(|n| n.to_string_lossy().to_lowercase())
-            .unwrap_or_default()
-    });
-    results.truncate(SEARCH_MAX_RESULTS);
-    Ok(results)
+/// Recently opened files and folders, newest first (#57).
+#[tauri::command]
+pub async fn cli_recent_files(
+    webview: Webview,
+    limit: Option<usize>,
+    caller: Option<String>,
+    app_state: State<'_, AppState>,
+) -> Result<Vec<crate::recent::RecentFile>, String> {
+    gate_shell(&app_state, &webview, caller.as_deref(), HookClass::Exec)?;
+    let limit = limit.unwrap_or(crate::recent::DEFAULT_LIMIT);
+    blocking(move || crate::recent::recent_files(limit)).await
 }
 
 #[tauri::command]

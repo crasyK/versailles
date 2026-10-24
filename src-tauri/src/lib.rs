@@ -32,9 +32,12 @@ mod media;
 mod monitors;
 mod protocol;
 mod quote;
+mod recent;
 mod sdk;
+mod search;
 mod sensors;
 mod sharing;
+mod settings_pages;
 mod taskbar;
 mod pty;
 mod nightlight;
@@ -498,6 +501,7 @@ pub fn run() {
             apps::list_catalog,
             apps::ack_catalog,
             apps::hide_catalog_entry,
+            apps::catalog_icon,
             commands::toggle_slideout,
             desktop::get_desktop_layout,
             desktop::get_desktop_html,
@@ -511,6 +515,8 @@ pub fn run() {
             cli::cli_open,
             cli::cli_home,
             cli::cli_search_files,
+            cli::cli_search,
+            cli::cli_recent_files,
             cli::sys_stats,
             pty::pty_open,
             pty::pty_write,

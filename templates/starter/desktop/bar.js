@@ -161,7 +161,9 @@
     searchHf: "https://huggingface.co/models?search={q}",
     timeAwareDefaults: true,
     autoDismissLaunch: true,
-    coverMonitor: false
+    coverMonitor: false,
+    recentFiles: 5,
+    liveSearch: true
   };
   function spawnableId() {
     const w = window;
@@ -183,7 +185,9 @@
       searchHf: host?.searchHf ?? block.searchHf ?? DEFAULT_OPTS.searchHf,
       timeAwareDefaults: host?.timeAwareDefaults ?? block.timeAwareDefaults ?? DEFAULT_OPTS.timeAwareDefaults,
       autoDismissLaunch: host?.autoDismissLaunch ?? block.autoDismissLaunch ?? DEFAULT_OPTS.autoDismissLaunch,
-      coverMonitor: host?.coverMonitor ?? block.coverMonitor ?? DEFAULT_OPTS.coverMonitor
+      coverMonitor: host?.coverMonitor ?? block.coverMonitor ?? DEFAULT_OPTS.coverMonitor,
+      recentFiles: host?.recentFiles ?? block.recentFiles ?? DEFAULT_OPTS.recentFiles,
+      liveSearch: host?.liveSearch ?? block.liveSearch ?? DEFAULT_OPTS.liveSearch
     };
   }
   async function loadSpawnableEngineContext() {
@@ -2046,7 +2050,9 @@
     searchHf: "https://huggingface.co/models?search={q}",
     timeAwareDefaults: true,
     autoDismissLaunch: true,
-    coverMonitor: false
+    coverMonitor: false,
+    recentFiles: 5,
+    liveSearch: true
   };
   var ENGINE_RUNTIME = { recents: [], pins: [] };
   var lastLaunchError = null;
@@ -2063,6 +2069,12 @@
   var DISMISS_ON_BLUR = false;
   var resetGen = 0;
   var HIST_MAX = 200;
+  var RECENT = [];
+  var ICONS = /* @__PURE__ */ new Map();
+  var ICON_PENDING = /* @__PURE__ */ new Set();
+  var LIVE_DEBOUNCE_MS = 140;
+  var liveTimer = null;
+  var liveSeq = 0;
   var BATCH_STAGGER_MS = 700;
   var OVERLAY_DEDUPE_MS = 50;
   var WEB_TLDS = /* @__PURE__ */ new Set([
@@ -2224,6 +2236,7 @@
     modeLabel.classList.toggle("cli-live-badge", sessionAlive);
   }
   function rowKind(r) {
+    if (r.kind) return r.kind;
     if (r.live) return "shell";
     if (r.path) return r.c.endsWith("/") ? "folder" : "file";
     if (r.cat && isProfileName(r.cat) && r.c === r.cat) return "profile";
@@ -2233,22 +2246,56 @@
     if (c.startsWith("!")) return "shell";
     if (/^https?:\/\//i.test(c)) return "web";
     if (c.endsWith("/")) return "folder";
-    const hit = findPreset((r.cc ?? r.c).trim().split(/\s+/)[0]) ?? findPreset(c.split(/\s+/)[0]);
+    const hit = rowPreset(r);
     if (!hit) return "cmd";
     if (ENGINE_RUNTIME.pins.includes(hit.n)) return "pinned";
     if (hit.t === "web") return "link";
     if (hit.t === "term") return "shell";
     return hit.t;
   }
-  function showRows(list) {
+  function rowPreset(r) {
+    if (r.path || r.open || r.live) return void 0;
+    const c = r.c.trim();
+    return findPreset((r.cc ?? r.c).trim().split(/\s+/)[0]) ?? findPreset(c.split(/\s+/)[0]);
+  }
+  function paintIcons() {
+    sug.querySelectorAll("img.cl-ico[data-icon]").forEach((img) => {
+      const id = img.dataset.icon || "";
+      const url = ICONS.get(id);
+      if (url) {
+        img.src = url;
+        img.hidden = false;
+      } else if (url === null) {
+        img.remove();
+      } else if (!ICON_PENDING.has(id) && hostAvailable) {
+        ICON_PENDING.add(id);
+        invoke("catalog_icon", { id }).then((u) => ICONS.set(id, u || null)).catch(() => ICONS.set(id, null)).finally(() => {
+          ICON_PENDING.delete(id);
+          paintIcons();
+        });
+      }
+    });
+  }
+  function showRows(list, keepSel = false) {
+    const prevSel = rowSel;
     rows = list;
-    rowSel = -1;
+    rowSel = keepSel && prevSel < list.length ? prevSel : -1;
     sug.innerHTML = "";
+    let group;
     rows.forEach((r) => {
+      if (r.group && r.group !== group) {
+        const g = document.createElement("div");
+        g.className = "cl-g";
+        g.textContent = r.group;
+        sug.appendChild(g);
+      }
+      group = r.group;
       const d = document.createElement("div");
       d.className = r.live ? "cl-s cl-s-live" : "cl-s";
       d.dataset.kind = rowKind(r);
-      d.innerHTML = `<b>${esc(r.c)}</b> <span>${esc(r.d || "")}</span>`;
+      const app = rowPreset(r)?.catalogId;
+      const icon = app ? `<img class="cl-ico" data-icon="${esc(app)}" width="16" height="16" alt="" hidden>` : "";
+      d.innerHTML = `<b>${icon}${esc(r.c)}</b> <span>${esc(r.d || "")}</span>`;
       d.title = r.path || r.d || "";
       d.onmousedown = (e) => {
         e.preventDefault();
@@ -2257,6 +2304,8 @@
       };
       sug.appendChild(d);
     });
+    if (rowSel >= 0) markSel();
+    paintIcons();
   }
   function markSel() {
     sug.querySelectorAll(".cl-s").forEach((d, i) => d.classList.toggle("on", i === rowSel));
@@ -2275,7 +2324,7 @@
     }
   }
   function commandFromRow(r) {
-    if (r.path) return null;
+    if (r.path || r.open) return null;
     if (r.cat && isProfileName(r.cat)) return null;
     if (r.cc !== void 0 && (r.cc.endsWith(" ") || /<[^>]+>/.test(r.c))) {
       return null;
@@ -2296,6 +2345,11 @@
     run(v, background);
   }
   function activateRow(r, background = false) {
+    if (r.open) {
+      rowSel = -1;
+      openTarget(r.open, { background });
+      return;
+    }
     if (r.path) {
       rowSel = -1;
       void openPath(r.path);
@@ -2330,7 +2384,118 @@
     }
     if (root) root.classList.toggle("cli-compact", ENGINE_OPTS.compact);
     const prefix = sessionAlive ? [continueRow()] : [];
-    showRows([...prefix, ...rows2, ...verbs]);
+    const recent = ENGINE_OPTS.recentFiles > 0 ? recentRows(RECENT, ENGINE_OPTS.recentFiles) : [];
+    showRows([...prefix, ...rows2, ...verbs, ...recent]);
+  }
+  function ago(ms) {
+    const s = Math.max(0, (Date.now() - ms) / 1e3);
+    if (s < 60) return "just now";
+    if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+    if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
+    if (s < 2 * 86400) return "yesterday";
+    if (s < 7 * 86400) return `${Math.floor(s / 86400)} days ago`;
+    return new Date(ms).toLocaleDateString();
+  }
+  function settingsRows(list, max) {
+    return list.slice(0, max).map((h) => ({
+      c: h.title,
+      d: h.uri.replace(/^ms-settings:/, "settings \xB7 "),
+      open: h.uri,
+      kind: "settings",
+      group: "Settings"
+    }));
+  }
+  function fileRows(list, max) {
+    return list.slice(0, max).map((f) => ({
+      c: f.name,
+      d: f.folder,
+      open: f.path,
+      path: f.path,
+      kind: f.kind === "folder" ? "folder" : "file",
+      group: "Files"
+    }));
+  }
+  function recentRows(list, max) {
+    return list.slice(0, max).map((f) => ({
+      c: f.name,
+      d: `${ago(f.opened)} \xB7 ${f.folder}`,
+      open: f.path,
+      path: f.path,
+      kind: f.kind === "folder" ? "folder" : "file",
+      group: "Recent"
+    }));
+  }
+  async function loadRecent(force = false) {
+    if (!force && !(ENGINE_OPTS.recentFiles > 0) || !hostAvailable) {
+      RECENT = [];
+      return;
+    }
+    try {
+      RECENT = await invoke("cli_recent_files", { limit: 30 });
+    } catch {
+      RECENT = [];
+    }
+  }
+  async function showRecent(filter) {
+    await loadRecent(true);
+    const f = filter.trim().toLowerCase();
+    const list = RECENT.filter(
+      (x) => !f || x.name.toLowerCase().includes(f) || x.folder.toLowerCase().includes(f)
+    );
+    if (!list.length) {
+      setRes(
+        "out",
+        f ? `no recent files match \u201C${esc(filter)}\u201D` : "no recent files \xB7 Windows keeps them when Settings \u203A Personalization \u203A Start \u203A \u201CShow recently opened items\u201D is on"
+      );
+      return defaults();
+    }
+    setRes("out", `${list.length} recently opened`);
+    showRows(recentRows(list, 30));
+  }
+  function liveQuery(raw) {
+    if (!ENGINE_OPTS.liveSearch || !hostAvailable || mode !== "action") return null;
+    const q = raw.trim();
+    if (q.length < 2 || /^[?!=]/.test(q) || looksLikeUrl(q) || /^[a-z]+:\/\//i.test(q)) return null;
+    const words = q.split(/\s+/);
+    const verbs = ["cd", "ls", "dir", "open", "o", "presets", "shortcuts", "hf", "w", "wiki", "yt", "youtube", "gh", "hide", "pin", "unpin", "term", "shell", "ps", "recent"];
+    if (words.length > 1 && verbs.includes(words[0].toLowerCase())) return null;
+    return q;
+  }
+  function cancelLive() {
+    liveSeq += 1;
+    if (liveTimer) {
+      clearTimeout(liveTimer);
+      liveTimer = null;
+    }
+  }
+  function scheduleLive(raw) {
+    const q = liveQuery(raw);
+    if (!q) return;
+    const seq = ++liveSeq;
+    liveTimer = setTimeout(async () => {
+      liveTimer = null;
+      let r;
+      try {
+        r = await invoke("cli_search", { query: q, limit: 8, fallback: false });
+      } catch {
+        return;
+      }
+      if (seq !== liveSeq || inp.value !== raw || mode !== "action") return;
+      const extra = [...settingsRows(r.settings, 4), ...fileRows(r.files, 6)];
+      if (extra.length) showRows([...rows, ...extra], true);
+    }, LIVE_DEBOUNCE_MS);
+  }
+  async function settingsOr(c, otherwise) {
+    let top;
+    try {
+      const r = await invoke("cli_search", { query: c, files: false });
+      top = r.settings[0];
+    } catch {
+    }
+    const oneWord = !/\s/.test(c.trim());
+    const near = PRESETS.some((x) => presetMatches(x, c.trim().toLowerCase()));
+    if (top && (top.exact || oneWord && !near)) return openTarget(top.uri);
+    otherwise();
   }
   function findPreset(name) {
     return findPresetStrict(PRESETS, name);
@@ -2420,6 +2585,7 @@
         });
       }
       if ("lock".startsWith(low)) out.push({ c: "lock", d: "lock workstation" });
+      if ("recent".startsWith(low)) out.push({ c: "recent", d: "recently opened files" });
       if ("start".startsWith(low)) out.push({ c: "start", d: "Start menu \xB7 installed apps" });
       if ("showdesk".startsWith(low) || "peek".startsWith(low)) {
         out.push({ c: "showdesk", d: "show desktop" });
@@ -2434,7 +2600,7 @@
       list.slice(0, ENGINE_OPTS.suggestionLimit).forEach(
         (x) => out.push({
           c: commandForQuery(x, low),
-          d: `${x.cat} \xB7 ${x.d} \xB7 ${x.target.slice(0, 48)}`
+          d: `${x.cat} \xB7 ${x.d} \xB7 ${x.store ? "store app" : x.target.slice(0, 48)}`
         })
       );
     }
@@ -2442,6 +2608,7 @@
   }
   function refreshProposals() {
     const raw = inp.value;
+    cancelLive();
     if (!raw.trim()) return defaults();
     if (raw.endsWith(" ")) {
       const base = raw.trim().toLowerCase();
@@ -2457,6 +2624,7 @@
       const hint = needsTerminal(raw) ? "\u21B5 open terminal" : "\u21B5 run inline (pwsh)";
       showRows([{ c: raw, d: hint }]);
     }
+    scheduleLive(raw);
   }
   function firstLine(s, max = 120) {
     const line = s.trim().split(/\r?\n/, 1)[0] ?? "";
@@ -3333,13 +3501,37 @@
     setRes("out", `searching files for "${esc(q)}"\u2026`);
     await withBusy(async () => {
       try {
-        const matches = await invoke("cli_search_files", { query: q });
-        if (!matches.length) {
+        let r = null;
+        try {
+          r = await invoke("cli_search", { query: q, limit: 40 });
+        } catch {
+          r = null;
+        }
+        if (!r) {
+          const matches = await invoke("cli_search_files", { query: q });
+          r = {
+            query: q,
+            source: "walk",
+            settings: [],
+            ms: 0,
+            files: matches.map((p) => ({
+              kind: "file",
+              path: p,
+              name: p.split(/[\\/]/).pop() || p,
+              folder: p.replace(/[\\/][^\\/]*$/, ""),
+              modified: null,
+              match: "name"
+            }))
+          };
+        }
+        const n = r.files.length;
+        if (!n && !r.settings.length) {
           setRes("out", `no files match "${esc(q)}"`);
           return defaults();
         }
-        setRes("out", `${matches.length} match${matches.length > 1 ? "es" : ""} for "${esc(q)}"`);
-        showRows(matches.slice(0, 6).map((p) => ({ c: p, path: p })));
+        const via = r.source === "index" ? " \xB7 Windows Search" : r.source === "walk" ? " \xB7 folder walk" : "";
+        setRes("out", `${n} file${n === 1 ? "" : "s"} for "${esc(q)}"${via}`);
+        showRows([...settingsRows(r.settings, 4), ...fileRows(r.files, 20)]);
       } catch (e) {
         setRes("err", esc(String(e)));
       }
@@ -3539,7 +3731,9 @@
         d: e.fresh ? `new \xB7 ${e.name}` : e.name,
         target: e.target,
         cat: "apps",
-        aliases: (e.aliases || []).filter((a) => a !== e.id)
+        aliases: (e.aliases || []).filter((a) => a !== e.id),
+        catalogId: e.id,
+        store: e.kind === "packaged"
       };
       const idx = byId.get(e.id);
       if (idx !== void 0 && builtins[idx].t === "app") {
@@ -3576,7 +3770,8 @@
       setRes("err", esc(msg));
     }
     ENGINE_RUNTIME = await loadEngineRuntime(ENGINE_ID);
-    return loadCatalog();
+    const [fresh] = await Promise.all([loadCatalog(), loadRecent()]);
+    return fresh;
   }
   async function cdCmd(arg) {
     if (!arg || arg === "~") {
@@ -3772,6 +3967,8 @@
         }, { focusSteals: false });
       case "apps":
         return presetRows("apps");
+      case "recent":
+        return void showRecent(arg);
       case "start":
         if (!arg) return presetRows("apps");
         return void openPreset(arg);
@@ -3817,7 +4014,8 @@
           ...sessionAlive ? [continueRow()] : [],
           { c: "?", d: "search the web", cc: "? " },
           { c: "https://", d: "open a URL", cc: "https://" },
-          { c: "??", d: "search files", cc: "?? " },
+          { c: "??", d: "search files and settings", cc: "?? " },
+          { c: "recent", d: "recently opened files", cc: "recent" },
           { c: "!!", d: "open a terminal", cc: "!!" },
           { c: "!", d: "run pwsh inline", cc: "! " },
           { c: "=", d: "calculator", cc: "= " },
@@ -3852,17 +4050,21 @@
         const hit = findPreset(cmd);
         if (hit && !arg) return void launchPreset(hit, bg);
         if (hit && arg && hit.n === cmd) return void launchPreset(hit, bg);
-        if (!arg && !c.startsWith("!") && !c.startsWith("?") && !c.startsWith("=") && !/[\\/]/.test(c) && /^[\w.-]+$/i.test(cmd)) {
-          const near = PRESETS.filter((x) => presetMatches(x, cmd)).slice(0, 6);
-          if (near.length) {
-            setRes("err", `no shortcut '${esc(cmd)}' \u2014 did you mean?`);
-            showRows(near.map((x) => ({ c: x.n, d: `${x.cat} \xB7 ${x.d}`, cc: x.n })));
+        const fallback = () => {
+          if (!arg && !c.startsWith("!") && !c.startsWith("?") && !c.startsWith("=") && !/[\\/]/.test(c) && /^[\w.-]+$/i.test(cmd)) {
+            const near = PRESETS.filter((x) => presetMatches(x, cmd)).slice(0, 6);
+            if (near.length) {
+              setRes("err", `no shortcut '${esc(cmd)}' \u2014 did you mean?`);
+              showRows(near.map((x) => ({ c: x.n, d: `${x.cat} \xB7 ${x.d}`, cc: x.n })));
+              return;
+            }
+            setRes("err", `no shortcut '${esc(cmd)}' \u2014 try 'shortcuts'`);
             return;
           }
-          setRes("err", `no shortcut '${esc(cmd)}' \u2014 try 'shortcuts'`);
-          return;
-        }
-        return void shellExec(c);
+          void shellExec(c);
+        };
+        if (!hit && hostAvailable && !/[\\/|;&$]/.test(c)) return void settingsOr(c, fallback);
+        return fallback();
       }
     }
   }

@@ -98,6 +98,13 @@ pub struct SpawnableEngineOpts {
     /// on first open until the page marks `html[data-stage]`.
     #[serde(default)]
     pub cover_monitor: Option<bool>,
+    /// Recently opened files shown under the shortcuts while the bar is
+    /// empty (0 = none).
+    #[serde(default)]
+    pub recent_files: Option<u32>,
+    /// Search Settings pages and files while typing.
+    #[serde(default)]
+    pub live_search: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]

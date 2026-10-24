@@ -3,6 +3,12 @@
 //! Discovers Start Menu / Desktop / browser-app shortcuts, maps them to
 //! short launcher names, and resolves GUI executables so we never launch
 //! `.cmd` / `.bat` shims (those pop a console and keep it open — Cursor/VS Code).
+//!
+//! Packaged apps (Settings, Calculator, Photos, Store installs) have no
+//! shortcut file: they come from the shell's Applications folder
+//! (`shell:AppsFolder`, `FOLDERID_AppsFolder`) by their AppUserModelID, are
+//! launched through `IApplicationActivationManager` (or the shell), and get
+//! their icons from `IShellItemImageFactory` like shortcuts do (#54).
 
 use crate::config::CatalogState;
 use crate::error::AppResult;
@@ -98,20 +104,34 @@ pub struct CatalogEntry {
     pub aliases: Vec<String>,
     pub fresh: bool,
     pub hidden: bool,
+    /// `"shortcut"` (a `.lnk` / `.url` file) or `"packaged"` (a Store /
+    /// packaged app; `target` is `shell:AppsFolder\<aumid>`).
+    pub kind: &'static str,
+    /// AppUserModelID of a packaged app.
+    pub aumid: Option<String>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct RawApp {
     id: String,
     name: String,
     target: String,
     source: String,
     aliases: Vec<String>,
+    kind: &'static str,
+    aumid: Option<String>,
 }
+
+const SHORTCUT: &str = "shortcut";
+const PACKAGED: &str = "packaged";
+const APPS_FOLDER_PREFIX: &str = "shell:appsfolder\\";
 
 struct CatalogCache {
     at: Instant,
     apps: Vec<RawApp>,
+    /// Every AppUserModelID in the Applications folder (lowercase), packaged
+    /// or not: what `shell:AppsFolder\…` may open.
+    aumids: HashSet<String>,
 }
 
 static CACHE: Mutex<Option<CatalogCache>> = Mutex::new(None);
@@ -350,9 +370,76 @@ fn walk_shortcuts(root: &Path, source: &str, out: &mut Vec<RawApp>) {
                 target: path.to_string_lossy().into_owned(),
                 source: source.to_string(),
                 aliases: aliases_for(&preferred_id(&slug_name), &stem),
+                kind: SHORTCUT,
+                aumid: None,
             });
         }
     }
+}
+
+/// `Microsoft.WindowsCalculator_8wekyb3d8bbwe!App`: a package family name
+/// (`<name>_<13-character publisher hash>`), `!`, an app id. Desktop apps in
+/// the Applications folder have other ids (`Microsoft.Windows.Explorer`,
+/// `{GUID}\path\app.exe`, `Chrome`).
+pub(crate) fn is_packaged_aumid(aumid: &str) -> bool {
+    let Some((family, app)) = aumid.split_once('!') else {
+        return false;
+    };
+    let Some((name, hash)) = family.rsplit_once('_') else {
+        return false;
+    };
+    !app.is_empty()
+        && !name.is_empty()
+        && hash.len() == 13
+        && hash.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+}
+
+/// An English short name from the package name, so `calc` finds Calculator
+/// on a German Windows ("Rechner"): `Microsoft.WindowsCalculator` →
+/// `calculator`, `Microsoft.Windows.Photos` → `photos`.
+pub(crate) fn package_alias(aumid: &str) -> Option<String> {
+    let family = aumid.split_once('!')?.0;
+    let name = family.rsplit_once('_')?.0;
+    let last = name.rsplit('.').next()?.to_ascii_lowercase();
+    let short = last.strip_prefix("windows").filter(|s| s.len() >= 3).unwrap_or(&last);
+    let short: String = short.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+    (short.len() >= 3).then_some(short)
+}
+
+/// The packaged apps that are not already shortcuts: one with the same
+/// name (case, spacing and version numbers aside) or the same target is a
+/// duplicate.
+fn merge_packaged(shortcuts: &[RawApp], packaged: Vec<(String, String)>) -> Vec<RawApp> {
+    let names: HashSet<String> = shortcuts.iter().map(|a| slug(&a.name)).collect();
+    let targets: HashSet<String> = shortcuts.iter().map(|a| a.target.to_ascii_lowercase()).collect();
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for (name, aumid) in packaged {
+        if !is_packaged_aumid(&aumid) || skip_shortcut_name(&name) {
+            continue;
+        }
+        let slug_name = slug(&name);
+        let target = format!("shell:AppsFolder\\{aumid}");
+        if slug_name.len() < 2
+            || names.contains(&slug_name)
+            || targets.contains(&target.to_ascii_lowercase())
+            || !seen.insert(aumid.to_ascii_lowercase())
+        {
+            continue;
+        }
+        let id = preferred_id(&slug_name);
+        out.push(RawApp {
+            aliases: aliases_for(&id, &name),
+            id,
+            name: strip_noise(&name),
+            target,
+            source: "apps-folder".into(),
+            kind: PACKAGED,
+            aumid: Some(aumid),
+        });
+    }
+    out
 }
 
 fn dedupe(mut apps: Vec<RawApp>) -> Vec<RawApp> {
@@ -383,16 +470,28 @@ fn dedupe(mut apps: Vec<RawApp>) -> Vec<RawApp> {
             app.id = id.clone();
         }
         app.aliases = aliases_for(&app.id, &app.name);
+        if let Some(alias) = app.aumid.as_deref().and_then(package_alias) {
+            if !app.aliases.contains(&alias) {
+                app.aliases.push(alias);
+                app.aliases.sort();
+            }
+        }
         out.push(app);
     }
     out
 }
 
 fn scan_raw() -> Vec<RawApp> {
+    scan().0
+}
+
+/// The catalog and the Applications folder's AppUserModelIDs, cached for
+/// [`CACHE_TTL`].
+fn scan() -> (Vec<RawApp>, HashSet<String>) {
     if let Ok(cache) = CACHE.lock() {
         if let Some(hit) = cache.as_ref() {
             if hit.at.elapsed() < CACHE_TTL {
-                return hit.apps.clone();
+                return (hit.apps.clone(), hit.aumids.clone());
             }
         }
     }
@@ -402,14 +501,69 @@ fn scan_raw() -> Vec<RawApp> {
             walk_shortcuts(&root, source, &mut apps);
         }
     }
+    let folder = apps_folder_cached();
+    let aumids: HashSet<String> = folder.iter().map(|(_, a)| a.to_ascii_lowercase()).collect();
+    let packaged = merge_packaged(&apps, folder);
+    apps.extend(packaged);
     let apps = dedupe(apps);
     if let Ok(mut cache) = CACHE.lock() {
         *cache = Some(CatalogCache {
             at: Instant::now(),
             apps: apps.clone(),
+            aumids: aumids.clone(),
         });
     }
-    apps
+    (apps, aumids)
+}
+
+/// The Applications folder takes 0.2–0.4 s to list and changes only when
+/// apps are installed: kept longer than the shortcut scan.
+const APPS_FOLDER_TTL: Duration = Duration::from_secs(120);
+
+fn apps_folder_cached() -> Vec<(String, String)> {
+    static FOLDER: Mutex<Option<(Instant, Vec<(String, String)>)>> = Mutex::new(None);
+    if let Some((at, list)) = FOLDER.lock().unwrap().as_ref() {
+        if at.elapsed() < APPS_FOLDER_TTL {
+            return list.clone();
+        }
+    }
+    let list = imp::apps_folder().unwrap_or_else(|e| {
+        tracing::debug!("catalog: Applications folder unavailable: {e}");
+        Vec::new()
+    });
+    *FOLDER.lock().unwrap() = Some((Instant::now(), list.clone()));
+    list
+}
+
+/// The AppUserModelID in `shell:AppsFolder\<aumid>`, if `target` is one.
+pub fn apps_folder_aumid(target: &str) -> Option<&str> {
+    let t = target.trim();
+    t.get(..APPS_FOLDER_PREFIX.len())
+        .filter(|p| p.eq_ignore_ascii_case(APPS_FOLDER_PREFIX))
+        .map(|_| t[APPS_FOLDER_PREFIX.len()..].trim_matches(['\\', '/']))
+        .filter(|a| !a.is_empty())
+}
+
+/// `shell:AppsFolder\<aumid>` opens only an app that is in the Applications
+/// folder: never an arbitrary id.
+fn check_apps_folder(target: &str) -> Result<(), String> {
+    let Some(aumid) = apps_folder_aumid(target) else {
+        return Ok(());
+    };
+    if scan().1.contains(&aumid.to_ascii_lowercase()) {
+        Ok(())
+    } else {
+        Err(format!("refused to open '{target}': no installed app has that id"))
+    }
+}
+
+/// Number of items in the Applications folder and how many of them are
+/// packaged (the live test reports these).
+#[cfg(test)]
+pub(crate) fn apps_folder_counts() -> (usize, usize) {
+    let folder = imp::apps_folder().unwrap_or_default();
+    let packaged = folder.iter().filter(|(_, a)| is_packaged_aumid(a)).count();
+    (folder.len(), packaged)
 }
 
 fn invalidate_cache() {
@@ -508,6 +662,7 @@ pub fn resolve_launch_target(target: &str) -> Result<String, String> {
         return Err(format!("refused to open '{t}': {reason}"));
     }
     if is_url_or_protocol(t) {
+        check_apps_folder(t)?;
         return Ok(t.to_string());
     }
     let path = Path::new(t);
@@ -518,6 +673,9 @@ pub fn resolve_launch_target(target: &str) -> Result<String, String> {
     if let Some(hit) = find_in_raw(&apps, t) {
         if denied_target(&hit.target).is_some() {
             return Err(format!("refused to open '{t}': shortcut points to a network path"));
+        }
+        if hit.kind == PACKAGED {
+            return Ok(hit.target.clone());
         }
         let p = Path::new(&hit.target);
         if p.exists() {
@@ -537,17 +695,23 @@ fn decorate(apps: Vec<RawApp>, catalog: &CatalogState) -> Vec<CatalogEntry> {
     let seen: HashSet<String> = catalog.seen_ids.iter().cloned().collect();
     let hidden: HashSet<String> = catalog.hidden_ids.iter().cloned().collect();
     let first_run = seen.is_empty();
+    // Packaged apps joined the catalog later (0.11.1): until one of them has
+    // been seen, they are all known already, not dozens of "new" apps.
+    let packaged_first_run = !apps.iter().any(|a| a.kind == PACKAGED && seen.contains(&a.id));
     apps.into_iter()
         .map(|a| {
             let is_hidden = hidden.contains(&a.id);
+            let quiet = first_run || (a.kind == PACKAGED && packaged_first_run);
             CatalogEntry {
-                fresh: !first_run && !seen.contains(&a.id) && !is_hidden,
+                fresh: !quiet && !seen.contains(&a.id) && !is_hidden,
                 hidden: is_hidden,
                 id: a.id,
                 name: a.name,
                 target: a.target,
                 source: a.source,
                 aliases: a.aliases,
+                kind: a.kind,
+                aumid: a.aumid,
             }
         })
         .collect()
@@ -615,6 +779,197 @@ pub async fn hide_catalog_entry(
     invalidate_cache();
     let apps = scan_raw_async().await?;
     Ok(visible_entries(&state, apps))
+}
+
+/// Icons by what they were drawn from (`.lnk` path or `shell:AppsFolder\…`).
+fn icon_cache() -> &'static Mutex<std::collections::HashMap<String, Option<String>>> {
+    static CACHE: std::sync::OnceLock<Mutex<std::collections::HashMap<String, Option<String>>>> =
+        std::sync::OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+}
+
+fn icon_for_id(id: &str) -> Option<String> {
+    let id = id.trim().to_ascii_lowercase();
+    let apps = scan_raw();
+    let app = apps.iter().find(|a| a.id == id)?;
+    // Never parse a network path (the shell would reach out over SMB).
+    if denied_target(&app.target).is_some() {
+        return None;
+    }
+    let key = app.target.to_ascii_lowercase();
+    if let Some(hit) = icon_cache().lock().unwrap().get(&key) {
+        return hit.clone();
+    }
+    let url = imp::shell_icon(&app.target, ICON_PX);
+    icon_cache().lock().unwrap().insert(key, url.clone());
+    url
+}
+
+const ICON_PX: i32 = 32;
+
+/// A catalog app's icon as a 32×32 PNG data URL (`null` when it has none).
+/// Same reach as `list_catalog`: only apps in the catalog, by id.
+#[tauri::command]
+pub async fn catalog_icon(id: String) -> AppResult<Option<String>> {
+    tauri::async_runtime::spawn_blocking(move || icon_for_id(&id))
+        .await
+        .map_err(|e| crate::error::AppError::msg(format!("catalog icon failed: {e}")))
+}
+
+/// Start a packaged app by its AppUserModelID (the caller has COM up).
+#[cfg(windows)]
+pub fn activate_packaged(aumid: &str) -> Result<(), String> {
+    imp::activate(aumid)
+}
+
+#[cfg(windows)]
+mod imp {
+    use windows::core::{Interface, HSTRING, PCWSTR, PWSTR};
+    use windows::Win32::Foundation::{PROPERTYKEY, SIZE};
+    use windows::Win32::Graphics::Gdi::{
+        CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits, GetObjectW, BITMAP, BITMAPINFO,
+        BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HGDIOBJ,
+    };
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_LOCAL_SERVER,
+        COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
+    };
+    use windows::Win32::UI::Shell::{
+        ApplicationActivationManager, BHID_EnumItems, IApplicationActivationManager, IEnumShellItems,
+        IShellItem, IShellItem2, IShellItemImageFactory, SHCreateItemFromParsingName, SHGetKnownFolderItem,
+        AO_NONE, FOLDERID_AppsFolder, KF_FLAG_DEFAULT, SIGDN_NORMALDISPLAY, SIIGBF_ICONONLY,
+    };
+
+    /// `System.AppUserModel.ID`.
+    const PKEY_AUMID: PROPERTYKEY = PROPERTYKEY {
+        fmtid: windows::core::GUID::from_u128(0x9f4c2855_9f79_4b39_a8d0_e1d42de1d5f3),
+        pid: 5,
+    };
+
+    /// COM in a single-threaded apartment for shell objects, undone on drop
+    /// when this call started it.
+    struct Sta(bool);
+    impl Sta {
+        fn new() -> Self {
+            Sta(unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) }.is_ok())
+        }
+    }
+    impl Drop for Sta {
+        fn drop(&mut self) {
+            if self.0 {
+                unsafe { CoUninitialize() };
+            }
+        }
+    }
+
+    unsafe fn take(p: PWSTR) -> Option<String> {
+        if p.is_null() {
+            return None;
+        }
+        let s = p.to_string().ok();
+        CoTaskMemFree(Some(p.0 as _));
+        s.filter(|s| !s.is_empty())
+    }
+
+    /// (display name, AppUserModelID) of every app in the Applications folder.
+    pub fn apps_folder() -> Result<Vec<(String, String)>, String> {
+        let _com = Sta::new();
+        let err = |e: windows::core::Error| format!("AppsFolder: {e}");
+        unsafe {
+            let folder: IShellItem = SHGetKnownFolderItem(&FOLDERID_AppsFolder, KF_FLAG_DEFAULT, None).map_err(err)?;
+            let items: IEnumShellItems = folder.BindToHandler(None, &BHID_EnumItems).map_err(err)?;
+            let mut out = Vec::new();
+            loop {
+                let mut batch: [Option<IShellItem>; 32] = Default::default();
+                let mut got = 0u32;
+                if items.Next(&mut batch, Some(&mut got)).is_err() || got == 0 {
+                    break;
+                }
+                for item in batch.iter().take(got as usize).flatten() {
+                    let Some(name) = item.GetDisplayName(SIGDN_NORMALDISPLAY).ok().and_then(|p| take(p)) else {
+                        continue;
+                    };
+                    let Some(aumid) = item
+                        .cast::<IShellItem2>()
+                        .ok()
+                        .and_then(|i2| i2.GetString(&PKEY_AUMID).ok())
+                        .and_then(|p| take(p))
+                    else {
+                        continue;
+                    };
+                    out.push((name, aumid));
+                }
+            }
+            Ok(out)
+        }
+    }
+
+    /// The shell's icon for a path or parsing name, `px`×`px`, as a PNG data URL.
+    pub fn shell_icon(parsing: &str, px: i32) -> Option<String> {
+        use base64::Engine;
+        let _com = Sta::new();
+        unsafe {
+            let item: IShellItem = SHCreateItemFromParsingName(&HSTRING::from(parsing), None).ok()?;
+            let factory: IShellItemImageFactory = item.cast().ok()?;
+            let bitmap = factory.GetImage(SIZE { cx: px, cy: px }, SIIGBF_ICONONLY).ok()?;
+            let mut info = BITMAP::default();
+            let ok = GetObjectW(
+                HGDIOBJ(bitmap.0),
+                std::mem::size_of::<BITMAP>() as i32,
+                Some(&mut info as *mut BITMAP as *mut _),
+            ) != 0;
+            let (w, h) = (info.bmWidth, info.bmHeight.abs());
+            let mut pixels = vec![0u8; (w.max(0) * h * 4) as usize];
+            let mut got = 0;
+            if ok && w > 0 && h > 0 && w <= 256 && h <= 256 {
+                let dc = CreateCompatibleDC(None);
+                let mut bmi = BITMAPINFO {
+                    bmiHeader: BITMAPINFOHEADER {
+                        biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                        biWidth: w,
+                        biHeight: -h, // top-down
+                        biPlanes: 1,
+                        biBitCount: 32,
+                        biCompression: BI_RGB.0,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                };
+                got = GetDIBits(dc, bitmap, 0, h as u32, Some(pixels.as_mut_ptr() as *mut _), &mut bmi, DIB_RGB_COLORS);
+                let _ = DeleteDC(dc);
+            }
+            let _ = DeleteObject(HGDIOBJ(bitmap.0));
+            if got == 0 {
+                return None;
+            }
+            // Premultiplied BGRA → straight RGBA (no alpha at all: opaque).
+            let rgba = crate::app_windows::bgra_to_rgba(&pixels, None);
+            let png = crate::app_windows::png_rgba(w as u32, h as u32, &rgba);
+            Some(format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(png)))
+        }
+    }
+
+    pub fn activate(aumid: &str) -> Result<(), String> {
+        unsafe {
+            let manager: IApplicationActivationManager =
+                CoCreateInstance(&ApplicationActivationManager, None, CLSCTX_LOCAL_SERVER)
+                    .map_err(|e| format!("activation: {e}"))?;
+            manager
+                .ActivateApplication(&HSTRING::from(aumid), PCWSTR::null(), AO_NONE)
+                .map(|_| ())
+                .map_err(|e| format!("activation of {aumid}: {e}"))
+        }
+    }
+}
+
+#[cfg(not(windows))]
+mod imp {
+    pub fn apps_folder() -> Result<Vec<(String, String)>, String> {
+        Ok(Vec::new())
+    }
+    pub fn shell_icon(_: &str, _: i32) -> Option<String> {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -688,6 +1043,102 @@ mod tests {
         assert!(resolve_launch_target("https://github.com/").is_ok());
         assert!(resolve_launch_target("ms-settings:").is_ok());
         assert!(resolve_launch_target("notepad").is_ok());
+    }
+
+    fn shortcut(name: &str, target: &str) -> RawApp {
+        let id = preferred_id(&slug(name));
+        RawApp {
+            aliases: aliases_for(&id, name),
+            id,
+            name: name.into(),
+            target: target.into(),
+            source: "start-menu".into(),
+            kind: SHORTCUT,
+            aumid: None,
+        }
+    }
+
+    #[test]
+    fn recognizes_packaged_aumids() {
+        assert!(is_packaged_aumid("Microsoft.WindowsCalculator_8wekyb3d8bbwe!App"));
+        assert!(is_packaged_aumid("windows.immersivecontrolpanel_cw5n1h2txyewy!microsoft.windows.immersivecontrolpanel"));
+        assert!(!is_packaged_aumid("Microsoft.Windows.Explorer"));
+        assert!(!is_packaged_aumid(r"{6D809377-6AF0-444B-8957-A3773F02200E}\Notepad++\notepad++.exe"));
+        assert!(!is_packaged_aumid("Chrome"));
+        assert!(!is_packaged_aumid("Foo_short!App"));
+        assert!(!is_packaged_aumid("Foo_8wekyb3d8bbwe!"));
+        assert_eq!(package_alias("Microsoft.WindowsCalculator_8wekyb3d8bbwe!App").as_deref(), Some("calculator"));
+        assert_eq!(package_alias("Microsoft.Windows.Photos_8wekyb3d8bbwe!App").as_deref(), Some("photos"));
+        assert_eq!(package_alias("Microsoft.ScreenSketch_8wekyb3d8bbwe!App").as_deref(), Some("screensketch"));
+        assert_eq!(package_alias("Microsoft.WindowsTerminal_8wekyb3d8bbwe!App").as_deref(), Some("terminal"));
+        assert_eq!(package_alias("Chrome"), None);
+    }
+
+    #[test]
+    fn packaged_apps_dedupe_against_shortcuts() {
+        let shortcuts = vec![
+            shortcut("Spotify", r"C:\Start\Spotify.lnk"),
+            shortcut("Visual Studio Code", r"C:\Start\Visual Studio Code.lnk"),
+            shortcut("WhatsApp shortcut", "shell:AppsFolder\\5319275A.WhatsAppDesktop_cv1g1gvanyjgm!App"),
+        ];
+        let folder = vec![
+            ("Rechner".to_string(), "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App".to_string()),
+            // Same name as a shortcut (the Store build of an app you also have).
+            ("Spotify".to_string(), "SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify".to_string()),
+            // Same target as a shortcut.
+            ("WhatsApp".to_string(), "5319275A.WhatsAppDesktop_cv1g1gvanyjgm!App".to_string()),
+            // Desktop apps are shortcuts already.
+            ("Explorer".to_string(), "Microsoft.Windows.Explorer".to_string()),
+            // Listed twice.
+            ("Rechner".to_string(), "microsoft.windowscalculator_8wekyb3d8bbwe!App".to_string()),
+            ("Get Help".to_string(), "Microsoft.GetHelp_8wekyb3d8bbwe!App".to_string()),
+        ];
+        let merged = merge_packaged(&shortcuts, folder);
+        assert_eq!(merged.len(), 1, "{merged:?}");
+        let calc = &merged[0];
+        assert_eq!(calc.id, "rechner");
+        assert_eq!(calc.kind, PACKAGED);
+        assert_eq!(calc.target, "shell:AppsFolder\\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App");
+        assert_eq!(calc.aumid.as_deref(), Some("Microsoft.WindowsCalculator_8wekyb3d8bbwe!App"));
+        // dedupe() adds the English package alias.
+        let all = dedupe(shortcuts.into_iter().chain(merged).collect());
+        let calc = all.iter().find(|a| a.id == "rechner").unwrap();
+        assert!(calc.aliases.iter().any(|a| a == "calculator"), "{:?}", calc.aliases);
+    }
+
+    #[test]
+    fn packaged_apps_are_not_all_new_at_once() {
+        let mut calc = shortcut("Rechner", "shell:AppsFolder\\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App");
+        calc.kind = PACKAGED;
+        let mut photos = shortcut("Fotos", "shell:AppsFolder\\Microsoft.Windows.Photos_8wekyb3d8bbwe!App");
+        photos.kind = PACKAGED;
+        let code = shortcut("Visual Studio Code", r"C:\Start\Code.lnk");
+        let newer = shortcut("Blender", r"C:\Start\Blender.lnk");
+        let seen = |ids: &[&str]| CatalogState {
+            seen_ids: ids.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        };
+        let fresh = |entries: Vec<CatalogEntry>| -> Vec<String> {
+            entries.into_iter().filter(|e| e.fresh).map(|e| e.id).collect()
+        };
+        let apps = vec![calc.clone(), photos.clone(), code.clone(), newer.clone()];
+        // Upgrading: shortcuts seen before, packaged apps never seen: only the new shortcut is new.
+        assert_eq!(fresh(decorate(apps.clone(), &seen(&["code"]))), ["blender"]);
+        // Once packaged apps were acknowledged, a new one is flagged.
+        assert_eq!(fresh(decorate(apps.clone(), &seen(&["code", "blender", "rechner"]))), ["fotos"]);
+        // First run ever: nothing is new.
+        assert!(fresh(decorate(apps, &seen(&[]))).is_empty());
+    }
+
+    #[test]
+    fn apps_folder_targets_need_a_known_id() {
+        assert_eq!(apps_folder_aumid("shell:AppsFolder\\Foo_8wekyb3d8bbwe!App"), Some("Foo_8wekyb3d8bbwe!App"));
+        assert_eq!(apps_folder_aumid("SHELL:appsfolder\\X"), Some("X"));
+        assert_eq!(apps_folder_aumid("shell:Downloads"), None);
+        assert_eq!(apps_folder_aumid("shell:AppsFolder\\"), None);
+        let err = resolve_launch_target("shell:AppsFolder\\Not.A.Real.App_0123456789abc!Nope").unwrap_err();
+        assert!(err.contains("no installed app"), "{err}");
+        assert!(resolve_launch_target("shell:Downloads").is_ok());
     }
 
     #[test]

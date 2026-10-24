@@ -7,6 +7,8 @@ export type SearchPreset = {
   t: "web" | "folder" | "app" | "term";
   target: string;
   aliases?: string[];
+  /** A packaged (Store) app from the catalog. */
+  store?: boolean;
 };
 
 let fuse: Fuse<SearchPreset> | null = null;

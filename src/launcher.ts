@@ -44,6 +44,10 @@ type Preset = {
   /** Group label for presets / help browsing. */
   cat: string;
   aliases?: string[];
+  /** Catalog app id: its icon comes from `catalog_icon`. */
+  catalogId?: string;
+  /** A packaged (Store) app. */
+  store?: boolean;
 };
 
 type CatalogEntry = {
@@ -54,7 +58,30 @@ type CatalogEntry = {
   aliases: string[];
   fresh: boolean;
   hidden: boolean;
+  /** "shortcut" or "packaged" (0.11.1+). */
+  kind?: string;
+  aumid?: string | null;
 };
+
+/** `cli_search` (0.11.1+): Settings pages and files. */
+type SettingsHit = { kind: "settings"; title: string; uri: string; score: number; exact: boolean };
+type FileHit = {
+  kind: string;
+  path: string;
+  name: string;
+  folder: string;
+  modified: number | null;
+  match: string;
+};
+type SearchResults = {
+  query: string;
+  source: string;
+  settings: SettingsHit[];
+  files: FileHit[];
+  ms: number;
+};
+/** `cli_recent_files` (0.11.1+). */
+type RecentFile = { kind: string; path: string; name: string; folder: string; opened: number };
 
 type Row = {
   c: string;
@@ -64,6 +91,12 @@ type Row = {
   cat?: string;
   /** Pulsing live-session marker (background PTY). */
   live?: boolean;
+  /** Opened with `cli_open` on Enter / click (a file, folder or Settings page). */
+  open?: string;
+  /** `data-kind` for page chrome; derived from the row when absent. */
+  kind?: string;
+  /** Section header shown above the first row of a group ("Settings", "Files", "Recent"). */
+  group?: string;
 };
 
 type LauncherMode = "action" | "terminal";
@@ -178,6 +211,8 @@ let ENGINE_OPTS = {
   timeAwareDefaults: true,
   autoDismissLaunch: true,
   coverMonitor: false,
+  recentFiles: 5,
+  liveSearch: true,
 };
 let ENGINE_RUNTIME: EngineRuntimeState = { recents: [], pins: [] };
 let lastLaunchError: { preset: Preset; err: string } | null = null;
@@ -201,6 +236,15 @@ let DISMISS_ON_BLUR = false;
 /** Bumped per show/hide so a slow background refresh cannot touch a newer session. */
 let resetGen = 0;
 const HIST_MAX = 200;
+/** Recently opened files (`cli_recent_files`), refreshed on each show. */
+let RECENT: RecentFile[] = [];
+/** App icons by catalog id: data URL, or null when the app has none. */
+const ICONS = new Map<string, string | null>();
+const ICON_PENDING = new Set<string>();
+/** Search Settings pages and files this long after the last keystroke. */
+const LIVE_DEBOUNCE_MS = 140;
+let liveTimer: ReturnType<typeof setTimeout> | null = null;
+let liveSeq = 0;
 /** Host debounces cli_open at 650 ms — space explicit multi-launches past that. */
 const BATCH_STAGGER_MS = 700;
 /** Dedupe window for overlay events that carry no id (legacy host). */
@@ -350,6 +394,7 @@ function syncLiveChrome() {
 
 /** What a row launches, for page chrome (`data-kind` → icon). Mirrors run()'s routing. */
 function rowKind(r: Row): string {
+  if (r.kind) return r.kind;
   if (r.live) return "shell";
   if (r.path) return r.c.endsWith("/") ? "folder" : "file";
   if (r.cat && isProfileName(r.cat) && r.c === r.cat) return "profile";
@@ -359,7 +404,7 @@ function rowKind(r: Row): string {
   if (c.startsWith("!")) return "shell";
   if (/^https?:\/\//i.test(c)) return "web";
   if (c.endsWith("/")) return "folder";
-  const hit = findPreset((r.cc ?? r.c).trim().split(/\s+/)[0]) ?? findPreset(c.split(/\s+/)[0]);
+  const hit = rowPreset(r);
   if (!hit) return "cmd";
   if (ENGINE_RUNTIME.pins.includes(hit.n)) return "pinned";
   if (hit.t === "web") return "link";
@@ -367,15 +412,59 @@ function rowKind(r: Row): string {
   return hit.t;
 }
 
-function showRows(list: Row[]) {
+/** The shortcut a row stands for, if any. */
+function rowPreset(r: Row): Preset | undefined {
+  if (r.path || r.open || r.live) return undefined;
+  const c = r.c.trim();
+  return findPreset((r.cc ?? r.c).trim().split(/\s+/)[0]) ?? findPreset(c.split(/\s+/)[0]);
+}
+
+/** Paint app icons into rows; ask the host once per app. Older hosts have no icons. */
+function paintIcons() {
+  sug.querySelectorAll<HTMLImageElement>("img.cl-ico[data-icon]").forEach((img) => {
+    const id = img.dataset.icon || "";
+    const url = ICONS.get(id);
+    if (url) {
+      img.src = url;
+      img.hidden = false;
+    } else if (url === null) {
+      img.remove();
+    } else if (!ICON_PENDING.has(id) && hostAvailable) {
+      ICON_PENDING.add(id);
+      invoke<string | null>("catalog_icon", { id })
+        .then((u) => ICONS.set(id, u || null))
+        .catch(() => ICONS.set(id, null))
+        .finally(() => {
+          ICON_PENDING.delete(id);
+          paintIcons();
+        });
+    }
+  });
+}
+
+/** `keepSel`: rows were only appended (live search), keep the highlighted one. */
+function showRows(list: Row[], keepSel = false) {
+  const prevSel = rowSel;
   rows = list;
-  rowSel = -1;
+  rowSel = keepSel && prevSel < list.length ? prevSel : -1;
   sug.innerHTML = "";
+  let group: string | undefined;
   rows.forEach((r) => {
+    if (r.group && r.group !== group) {
+      const g = document.createElement("div");
+      g.className = "cl-g";
+      g.textContent = r.group;
+      sug.appendChild(g);
+    }
+    group = r.group;
     const d = document.createElement("div");
     d.className = r.live ? "cl-s cl-s-live" : "cl-s";
     d.dataset.kind = rowKind(r);
-    d.innerHTML = `<b>${esc(r.c)}</b> <span>${esc(r.d || "")}</span>`;
+    const app = rowPreset(r)?.catalogId;
+    const icon = app
+      ? `<img class="cl-ico" data-icon="${esc(app)}" width="16" height="16" alt="" hidden>`
+      : "";
+    d.innerHTML = `<b>${icon}${esc(r.c)}</b> <span>${esc(r.d || "")}</span>`;
     d.title = r.path || r.d || "";
     d.onmousedown = (e) => {
       e.preventDefault();
@@ -384,6 +473,8 @@ function showRows(list: Row[]) {
     };
     sug.appendChild(d);
   });
+  if (rowSel >= 0) markSel();
+  paintIcons();
 }
 function markSel() {
   sug.querySelectorAll(".cl-s").forEach((d, i) => d.classList.toggle("on", i === rowSel));
@@ -405,7 +496,7 @@ function pick(r: Row) {
 
 /** Resolve what Enter should execute from a highlighted suggestion. */
 function commandFromRow(r: Row): string | null {
-  if (r.path) return null; // handled separately
+  if (r.path || r.open) return null; // handled separately
   // Profile rows and template completions (trailing space / <placeholder>) fill, don't run.
   if (r.cat && isProfileName(r.cat)) return null;
   if (r.cc !== undefined && (r.cc.endsWith(" ") || /<[^>]+>/.test(r.c))) {
@@ -430,6 +521,11 @@ function submitCommand(raw: string, background = false) {
 
 /** Run, open, or complete a suggestion row (shared by Enter and click). */
 function activateRow(r: Row, background = false) {
+  if (r.open) {
+    rowSel = -1;
+    openTarget(r.open, { background });
+    return;
+  }
   if (r.path) {
     rowSel = -1;
     void openPath(r.path);
@@ -465,7 +561,138 @@ function defaults() {
   }
   if (root) root.classList.toggle("cli-compact", ENGINE_OPTS.compact);
   const prefix = sessionAlive ? [continueRow()] : [];
-  showRows([...prefix, ...rows, ...verbs]);
+  const recent = ENGINE_OPTS.recentFiles > 0 ? recentRows(RECENT, ENGINE_OPTS.recentFiles) : [];
+  showRows([...prefix, ...rows, ...verbs, ...recent]);
+}
+
+function ago(ms: number): string {
+  const s = Math.max(0, (Date.now() - ms) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
+  if (s < 2 * 86400) return "yesterday";
+  if (s < 7 * 86400) return `${Math.floor(s / 86400)} days ago`;
+  return new Date(ms).toLocaleDateString();
+}
+
+function settingsRows(list: SettingsHit[], max: number): Row[] {
+  return list.slice(0, max).map((h) => ({
+    c: h.title,
+    d: h.uri.replace(/^ms-settings:/, "settings · "),
+    open: h.uri,
+    kind: "settings",
+    group: "Settings",
+  }));
+}
+
+function fileRows(list: FileHit[], max: number): Row[] {
+  return list.slice(0, max).map((f) => ({
+    c: f.name,
+    d: f.folder,
+    open: f.path,
+    path: f.path,
+    kind: f.kind === "folder" ? "folder" : "file",
+    group: "Files",
+  }));
+}
+
+function recentRows(list: RecentFile[], max: number): Row[] {
+  return list.slice(0, max).map((f) => ({
+    c: f.name,
+    d: `${ago(f.opened)} · ${f.folder}`,
+    open: f.path,
+    path: f.path,
+    kind: f.kind === "folder" ? "folder" : "file",
+    group: "Recent",
+  }));
+}
+
+/** Recently opened files; `force` reads them even when `recentFiles` is 0. */
+async function loadRecent(force = false) {
+  if ((!force && !(ENGINE_OPTS.recentFiles > 0)) || !hostAvailable) {
+    RECENT = [];
+    return;
+  }
+  try {
+    RECENT = await invoke<RecentFile[]>("cli_recent_files", { limit: 30 });
+  } catch {
+    RECENT = [];
+  }
+}
+
+async function showRecent(filter: string) {
+  await loadRecent(true);
+  const f = filter.trim().toLowerCase();
+  const list = RECENT.filter(
+    (x) => !f || x.name.toLowerCase().includes(f) || x.folder.toLowerCase().includes(f),
+  );
+  if (!list.length) {
+    setRes(
+      "out",
+      f
+        ? `no recent files match “${esc(filter)}”`
+        : "no recent files · Windows keeps them when Settings › Personalization › Start › “Show recently opened items” is on",
+    );
+    return defaults();
+  }
+  setRes("out", `${list.length} recently opened`);
+  showRows(recentRows(list, 30));
+}
+
+/** Text worth searching Settings and files for while typing, or null. */
+function liveQuery(raw: string): string | null {
+  if (!ENGINE_OPTS.liveSearch || !hostAvailable || mode !== "action") return null;
+  const q = raw.trim();
+  if (q.length < 2 || /^[?!=]/.test(q) || looksLikeUrl(q) || /^[a-z]+:\/\//i.test(q)) return null;
+  const words = q.split(/\s+/);
+  const verbs = ["cd", "ls", "dir", "open", "o", "presets", "shortcuts", "hf", "w", "wiki", "yt", "youtube", "gh", "hide", "pin", "unpin", "term", "shell", "ps", "recent"];
+  if (words.length > 1 && verbs.includes(words[0].toLowerCase())) return null;
+  return q;
+}
+
+function cancelLive() {
+  liveSeq += 1;
+  if (liveTimer) {
+    clearTimeout(liveTimer);
+    liveTimer = null;
+  }
+}
+
+/** Append Settings pages and files to the proposals for `raw` (index only, never the slow walk). */
+function scheduleLive(raw: string) {
+  const q = liveQuery(raw);
+  if (!q) return;
+  const seq = ++liveSeq;
+  liveTimer = setTimeout(async () => {
+    liveTimer = null;
+    let r: SearchResults;
+    try {
+      r = await invoke<SearchResults>("cli_search", { query: q, limit: 8, fallback: false });
+    } catch {
+      return; // older host, or no shell hook
+    }
+    if (seq !== liveSeq || inp.value !== raw || mode !== "action") return;
+    const extra = [...settingsRows(r.settings, 4), ...fileRows(r.files, 6)];
+    if (extra.length) showRows([...rows, ...extra], true);
+  }, LIVE_DEBOUNCE_MS);
+}
+
+/**
+ * Not a shortcut: a Settings page by that name opens ("bluetooth", "night
+ * light"); a near shortcut still wins over a partial page name.
+ */
+async function settingsOr(c: string, otherwise: () => void) {
+  let top: SettingsHit | undefined;
+  try {
+    const r = await invoke<SearchResults>("cli_search", { query: c, files: false });
+    top = r.settings[0];
+  } catch {
+    /* older host */
+  }
+  const oneWord = !/\s/.test(c.trim());
+  const near = PRESETS.some((x) => presetMatches(x, c.trim().toLowerCase()));
+  if (top && (top.exact || (oneWord && !near))) return openTarget(top.uri);
+  otherwise();
 }
 
 function findPreset(name: string): Preset | undefined {
@@ -578,6 +805,7 @@ function suggestions(raw: string): Row[] {
       });
     }
     if ("lock".startsWith(low)) out.push({ c: "lock", d: "lock workstation" });
+    if ("recent".startsWith(low)) out.push({ c: "recent", d: "recently opened files" });
     if ("start".startsWith(low)) out.push({ c: "start", d: "Start menu · installed apps" });
     if ("showdesk".startsWith(low) || "peek".startsWith(low)) {
       out.push({ c: "showdesk", d: "show desktop" });
@@ -598,7 +826,7 @@ function suggestions(raw: string): Row[] {
       .forEach((x) =>
         out.push({
           c: commandForQuery(x, low),
-          d: `${x.cat} · ${x.d} · ${x.target.slice(0, 48)}`,
+          d: `${x.cat} · ${x.d} · ${x.store ? "store app" : x.target.slice(0, 48)}`,
         }),
       );
   }
@@ -607,6 +835,7 @@ function suggestions(raw: string): Row[] {
 
 function refreshProposals() {
   const raw = inp.value;
+  cancelLive();
   if (!raw.trim()) return defaults();
   if (raw.endsWith(" ")) {
     const base = raw.trim().toLowerCase();
@@ -623,6 +852,7 @@ function refreshProposals() {
     const hint = needsTerminal(raw) ? "↵ open terminal" : "↵ run inline (pwsh)";
     showRows([{ c: raw, d: hint }]);
   }
+  scheduleLive(raw);
 }
 
 function firstLine(s: string, max = 120): string {
@@ -1641,13 +1871,38 @@ async function fileSearch(q: string) {
   setRes("out", `searching files for "${esc(q)}"…`);
   await withBusy(async () => {
     try {
-      const matches = await invoke<string[]>("cli_search_files", { query: q });
-      if (!matches.length) {
+      let r: SearchResults | null = null;
+      try {
+        // Windows Search index (names and contents) plus Settings pages.
+        r = await invoke<SearchResults>("cli_search", { query: q, limit: 40 });
+      } catch {
+        r = null; // older host: paths only
+      }
+      if (!r) {
+        const matches = await invoke<string[]>("cli_search_files", { query: q });
+        r = {
+          query: q,
+          source: "walk",
+          settings: [],
+          ms: 0,
+          files: matches.map((p) => ({
+            kind: "file",
+            path: p,
+            name: p.split(/[\\/]/).pop() || p,
+            folder: p.replace(/[\\/][^\\/]*$/, ""),
+            modified: null,
+            match: "name",
+          })),
+        };
+      }
+      const n = r.files.length;
+      if (!n && !r.settings.length) {
         setRes("out", `no files match "${esc(q)}"`);
         return defaults();
       }
-      setRes("out", `${matches.length} match${matches.length > 1 ? "es" : ""} for "${esc(q)}"`);
-      showRows(matches.slice(0, 6).map((p) => ({ c: p, path: p })));
+      const via = r.source === "index" ? " · Windows Search" : r.source === "walk" ? " · folder walk" : "";
+      setRes("out", `${n} file${n === 1 ? "" : "s"} for "${esc(q)}"${via}`);
+      showRows([...settingsRows(r.settings, 4), ...fileRows(r.files, 20)]);
     } catch (e) {
       setRes("err", esc(String(e)));
     }
@@ -1874,6 +2129,8 @@ function applyCatalog(entries: CatalogEntry[]) {
       target: e.target,
       cat: "apps",
       aliases: (e.aliases || []).filter((a) => a !== e.id),
+      catalogId: e.id,
+      store: e.kind === "packaged",
     };
     const idx = byId.get(e.id);
     if (idx !== undefined && builtins[idx].t === "app") {
@@ -1914,7 +2171,8 @@ async function refreshPresets() {
     setRes("err", esc(msg));
   }
   ENGINE_RUNTIME = await loadEngineRuntime(ENGINE_ID);
-  return loadCatalog();
+  const [fresh] = await Promise.all([loadCatalog(), loadRecent()]);
+  return fresh;
 }
 
 async function cdCmd(arg: string) {
@@ -2123,6 +2381,8 @@ function run(c: string, background = false) {
       }, { focusSteals: false });
     case "apps":
       return presetRows("apps");
+    case "recent":
+      return void showRecent(arg);
     case "start":
       if (!arg) return presetRows("apps");
       return void openPreset(arg);
@@ -2168,7 +2428,8 @@ function run(c: string, background = false) {
         ...(sessionAlive ? [continueRow()] : []),
         { c: "?", d: "search the web", cc: "? " },
         { c: "https://", d: "open a URL", cc: "https://" },
-        { c: "??", d: "search files", cc: "?? " },
+        { c: "??", d: "search files and settings", cc: "?? " },
+        { c: "recent", d: "recently opened files", cc: "recent" },
         { c: "!!", d: "open a terminal", cc: "!!" },
         { c: "!", d: "run pwsh inline", cc: "! " },
         { c: "=", d: "calculator", cc: "= " },
@@ -2206,17 +2467,21 @@ function run(c: string, background = false) {
       const hit = findPreset(cmd);
       if (hit && !arg) return void launchPreset(hit, bg);
       if (hit && arg && hit.n === cmd) return void launchPreset(hit, bg);
-      if (!arg && !c.startsWith("!") && !c.startsWith("?") && !c.startsWith("=") && !/[\\/]/.test(c) && /^[\w.-]+$/i.test(cmd)) {
-        const near = PRESETS.filter((x) => presetMatches(x, cmd)).slice(0, 6);
-        if (near.length) {
-          setRes("err", `no shortcut '${esc(cmd)}' — did you mean?`);
-          showRows(near.map((x) => ({ c: x.n, d: `${x.cat} · ${x.d}`, cc: x.n })));
+      const fallback = () => {
+        if (!arg && !c.startsWith("!") && !c.startsWith("?") && !c.startsWith("=") && !/[\\/]/.test(c) && /^[\w.-]+$/i.test(cmd)) {
+          const near = PRESETS.filter((x) => presetMatches(x, cmd)).slice(0, 6);
+          if (near.length) {
+            setRes("err", `no shortcut '${esc(cmd)}' — did you mean?`);
+            showRows(near.map((x) => ({ c: x.n, d: `${x.cat} · ${x.d}`, cc: x.n })));
+            return;
+          }
+          setRes("err", `no shortcut '${esc(cmd)}' — try 'shortcuts'`);
           return;
         }
-        setRes("err", `no shortcut '${esc(cmd)}' — try 'shortcuts'`);
-        return;
-      }
-      return void shellExec(c);
+        void shellExec(c);
+      };
+      if (!hit && hostAvailable && !/[\\/|;&$]/.test(c)) return void settingsOr(c, fallback);
+      return fallback();
     }
   }
 }

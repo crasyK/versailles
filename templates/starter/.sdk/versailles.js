@@ -480,11 +480,15 @@
       network: sensor("network"),
       focus: sensor("focus"),
       audio: sensor("audio"),
-      /** Wi-Fi / Bluetooth radios: `{ wifi, bluetooth }` (true, false or null). */
+      /** Wi-Fi / Bluetooth radios and airplane mode: `{ wifi, bluetooth, airplane }` (true, false or null). */
       radios: Object.assign(sensor("radios"), {
         /** `set("wifi" | "bluetooth", on)`. */
         async set(radio, on) {
           return quick("radios", { kind: "radio", radio: String(radio), on: !!on });
+        },
+        /** Airplane mode on (all radios off) or off. Rejects when `airplane` reads null. */
+        async setAirplane(on) {
+          return quick("radios", { kind: "airplane", on: !!on });
         },
       }),
       /** Volume, mute and the default output. `now()`: `{ outputs: [{ id, name, default }] }`. */
@@ -500,8 +504,12 @@
           return quick("audio-control", { kind: "output", id: String(id) });
         },
       }),
-      /** `{ projection, brightness: [{ id, device, kind, level }] }`. */
+      /** `{ projection, brightness: [{ id, device, kind, level }], nightLight: { supported, on } }`. */
       display: Object.assign(sensor("display"), {
+        /** Night light on or off. Rejects when `nightLight.supported` is false. */
+        async setNightLight(on) {
+          return quick("display", { kind: "nightLight", on: !!on });
+        },
         async setBrightness(id, level) {
           return quick("display", { kind: "brightness", id: String(id), level: Number(level) });
         },

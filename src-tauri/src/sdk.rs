@@ -38,7 +38,7 @@ pub const SHIPPED: &[(&str, u64)] = &[
     // Installed from a test build of the tray (#35), marked 0.10.0.
     ("0.9.1-dev1", 0x3423_a61f_e74b_679e),
     ("0.9.1", 0xb22c_bc01_6619_66aa),
-    ("0.10.0", 0x3423_a61f_e74b_679e),
+    ("0.10.0", 0x04a6_757f_4267_edac),
 ];
 
 /// Version on the SDK's first line (`/*! versailles-sdk 0.6.0 */`). Releases

@@ -28,9 +28,9 @@ The host never grants more than that list. The catalog is fixed in [`src-tauri/s
 | `windows` | The app windows a taskbar would show, their icons, and pushed changes (`windows_list`, `windows_icon`) |
 | `windows-control` | Focus, minimize, restore, maximize, close, move / resize one of those windows (`windows_control`) |
 | `notify` | Windows toast notifications, read-only: the recent ones and each new one (see [Notifications](#notifications)) |
-| `radios` | Wi-Fi and Bluetooth on / off; switch them from a bar or overlay (see [Quick settings](#quick-settings)) |
+| `radios` | Wi-Fi, Bluetooth and airplane mode on / off; switch them from a bar or overlay (see [Quick settings](#quick-settings)) |
 | `audio-control` | The active outputs; set volume, mute and the default output from a bar or overlay |
-| `display` | Projection mode and brightness per screen; change them from a bar or overlay |
+| `display` | Projection mode, brightness per screen and night light; change them from a bar or overlay |
 | `power-mode` | Power mode (efficiency / balanced / performance), energy saver; change the mode from a bar or overlay |
 | `wifi` | Wi-Fi networks in range; scan, join (with a password for a new one), disconnect from a bar or overlay. Network names reveal where you are: declare it only where needed |
 | `bluetooth` | Paired Bluetooth devices and whether they are connected; connect / disconnect audio devices from a bar or overlay |
@@ -131,13 +131,13 @@ await hud.focus.onChange((w) => (title.textContent = w.title));
 | `windows` | 0.25 s | `{ type: "opened"\|"closed"\|"focused"\|"changed", id, window }` (see [Windows](#windows)) |
 | `notify` | 2 s | one new toast (see [Notifications](#notifications)) |
 | `tray` | on change | `{ type: "added"\|"changed"\|"removed", id, icon }` or `{ type: "active", active }` (see [Tray](#tray)) |
-| `radios` | 2 s | `{ wifi, bluetooth }` (`true`, `false`, or `null` without that radio) |
+| `radios` | 2 s | `{ wifi, bluetooth, airplane }` (`true`, `false`, or `null` without that radio; `airplane: null` where Windows offers no airplane switch) |
 | `power-mode` | 2 s | `{ supported, mode: "efficiency"\|"balanced"\|"performance"\|null, energySaver }` |
 | `audio-control` | 3 s | `{ outputs: [{ id, name, default }] }` (volume and mute are the `audio` hook) |
 | `dnd` | 2 s | `{ supported, mode: "off"\|"priority"\|"alarms"\|null }` |
 | `bluetooth` | 3 s | `{ devices: [{ id, name, connected, audio }] }` (`audio`: headphones / speakers, can be connected) |
 | `wifi` | 5 s | `{ access: "ok"\|"location-denied"\|"no-adapter", connected, networks: [{ ssid, signal, secure, known, connected }] }` |
-| `display` | 5 s | `{ projection: "pc"\|"duplicate"\|"extend"\|"second", brightness: [{ id, device, kind: "internal"\|"external", level }] }` |
+| `display` | 5 s | `{ projection: "pc"\|"duplicate"\|"extend"\|"second", brightness: [{ id, device, kind: "internal"\|"external", level }], nightLight: { supported, on } }` |
 
 A sensor is only read while some piece on the page declares its hook, and a value is pushed only when it changed. Pushes go only to the windows of pieces that declare the hook, by a script run in those windows (not a broadcast event). Sensor subscriptions also get the current value right away.
 
@@ -310,6 +310,8 @@ wifiToggle.onclick = async () => {
   const { wifi } = await qs.radios.now();
   await qs.radios.set("wifi", !wifi);                  // "wifi" | "bluetooth"
 };
+const { airplane } = await qs.radios.now();                    // null: no airplane switch here
+if (airplane !== null) planeButton.onclick = () => qs.radios.setAirplane(!airplane);
 volume.oninput = () => qs.audioControl.setVolume(volume.value);   // 0–100
 muteButton.onclick = () => qs.audioControl.setMute(true);
 const { outputs } = await qs.audioControl.now();               // [{ id, name, default }]
@@ -317,6 +319,8 @@ await qs.audioControl.setOutput(outputs[1].id);
 const { brightness, projection } = await qs.display.now();     // brightness: [{ id, kind, level }]
 await qs.display.setBrightness(brightness[0].id, 60);          // 0–100
 await qs.display.project("extend");                            // "pc" | "duplicate" | "extend" | "second"
+const { nightLight } = await qs.display.now();                 // { supported, on }
+if (nightLight.supported) await qs.display.setNightLight(!nightLight.on);
 await qs.powerMode.set("balanced");                            // "efficiency" | "balanced" | "performance"
 
 await qs.wifi.scan();                                          // no click needed; the list updates seconds later
@@ -328,12 +332,14 @@ const { devices } = await qs.bluetooth.now();                  // [{ id, name, c
 await qs.bluetooth.connect(devices[0].id);                     // audio devices only
 ```
 
-- **Radios:** Windows' radio switches. Wi-Fi and Bluetooth only; airplane mode is not covered.
+- **Radios:** Windows' radio switches. Wi-Fi and Bluetooth only.
+- **Airplane mode** is Windows' own switch (the undocumented radio manager behind the Quick Settings tile, no admin needed). `airplane` reads `null` where Windows has no radio manager or the switch cannot be changed (a hardware slider); `setAirplane` then rejects. Offer `versailles.shell.open("ms-settings:network-airplanemode")` instead.
 - **Wi-Fi** uses the WLAN API. Joining a new network saves a Windows profile (WPA2 / WPA3 personal or open; enterprise sign-in is not supported). Windows 11 24H2 may hide networks until location access is on: the read then says `access: "location-denied"`. Windows only refreshes the list on a scan, so call `scan()` when the panel opens.
 - **Bluetooth** lists paired devices (classic and LE) from a device watcher, so a read is instant and changes are pushed. Windows has no public call to connect a device; headphones and speakers are connected and disconnected through their audio driver (as Windows' own audio flyout does). Mice and keyboards reconnect by themselves and show their state only.
 - **Volume and mute** act on the default output; read them through `audio`. **The default output** uses the same undocumented call as Windows' sound settings and takes only ids from `outputs`.
 - **Brightness:** built-in panels through WMI (`kind: "internal"`), external monitors over DDC/CI (`kind: "external"`, `device` is the screen, e.g. `\\.\DISPLAY2`; slow and not every monitor answers). A screen that offers neither is missing from the list.
 - **Projection** is Win+P. `"second"` turns the built-in screen off.
+- **Night light** has no Windows API: its state is an undocumented registry value that Explorer watches. `on` is whether night light is on now (by hand or by its schedule). Switching it works like the Quick Settings tile: by hand, so a schedule takes over again at its next start or end. Versailles writes only when it can re-encode the stored value exactly; otherwise `supported: false` (and `on: null` when it cannot be read at all) and `setNightLight` rejects. Offer `versailles.shell.open("ms-settings:nightlight")` instead. Changes made elsewhere show up within the 5 s `display` read.
 - **Power mode** is the Settings slider (an undocumented Windows call). It needs the Balanced power plan; `supported: false` when Windows does not offer it. Energy saver is read-only.
 - A setting Windows refuses fails with a message (`radios: Windows refused access`, `power-mode: … the power plan must be Balanced`) instead of failing silently.
 

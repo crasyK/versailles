@@ -252,7 +252,7 @@
 
     /**
      * `fn(data)` on each push of `name`: a hook (`media`, `battery`,
-     * `network`, `focus`, `audio`, `clipboard`, `notify`, `tray`, `radios`,
+     * `network`, `focus`, `audio`, `posture`, `clipboard`, `notify`, `tray`, `radios`,
      * `audio-control`, `display`, `power-mode`, `wifi`, `bluetooth`, `dnd`; must be declared) or a piece event
      * (`shown`, `hidden`, `idle`, `active`, `theme-changed`). Sensor hooks
      * also call `fn` with the current value right away. Returns a function
@@ -497,6 +497,8 @@
       network: sensor("network"),
       focus: sensor("focus"),
       audio: sensor("audio"),
+      /** How the machine is held: `{ tablet, docked, touch: { screen, pen, maxTouches } }` (`tablet: null` off a convertible). */
+      posture: sensor("posture"),
       /** Wi-Fi / Bluetooth radios and airplane mode: `{ wifi, bluetooth, airplane }` (true, false or null). */
       radios: Object.assign(sensor("radios"), {
         /** `set("wifi" | "bluetooth", on)`. */
@@ -871,8 +873,8 @@
   }
   /** Hooks whose changes the host pushes; `on()` needs them declared. */
   const QUICK_HOOKS = ["radios", "audio-control", "display", "power-mode", "wifi", "bluetooth", "dnd"];
-  const PUSH_HOOKS = new Set(["media", "battery", "network", "focus", "audio", "clipboard", "windows", "notify", "tray"].concat(QUICK_HOOKS));
-  const SENSOR_HOOKS = new Set(["battery", "network", "focus", "audio"].concat(QUICK_HOOKS));
+  const PUSH_HOOKS = new Set(["media", "battery", "network", "focus", "audio", "posture", "clipboard", "windows", "notify", "tray"].concat(QUICK_HOOKS));
+  const SENSOR_HOOKS = new Set(["battery", "network", "focus", "audio", "posture"].concat(QUICK_HOOKS));
   // On the wallpaper this page runs in an iframe of the host shell, which
   // forwards bus messages and pushes here. Only the parent may send them.
   if (global.parent && global.parent !== global && typeof global.addEventListener === "function") {
@@ -964,6 +966,7 @@
     network: scoped.network,
     focus: scoped.focus,
     audio: scoped.audio,
+    posture: scoped.posture,
     radios: scoped.radios,
     audioControl: scoped.audioControl,
     display: scoped.display,

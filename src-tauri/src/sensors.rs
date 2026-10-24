@@ -1,4 +1,5 @@
-//! Read-only system hooks (`battery`, `network`, `focus`, `audio`) and the
+//! Read-only system hooks (`battery`, `network`, `focus`, `audio`, and
+//! `posture` from its own module) and the
 //! watcher that pushes their changes, plus new toasts for `notify` (see
 //! `toasts`) and page-wide `idle` / `active` and `theme-changed` events. A
 //! sensor is only read while some piece declares its hook, and only a
@@ -25,6 +26,8 @@ pub const SENSORS: &[(&str, Duration)] = &[
     ("display", Duration::from_millis(5000)),
     ("bluetooth", Duration::from_millis(3000)),
     ("wifi", Duration::from_millis(5000)),
+    // Read at once on Windows' broadcast too (see `posture`).
+    ("posture", Duration::from_millis(5000)),
 ];
 
 /// No input for this long sends `idle`; the next input sends `active`.
@@ -51,6 +54,7 @@ pub fn read(hook: &str) -> AppResult<Value> {
         "focus" => imp::focus(),
         "audio" => imp::audio(),
         "notify" => crate::toasts::read(),
+        "posture" => crate::posture::read(),
         "radios" | "audio-control" | "display" | "power-mode" | "wifi" | "bluetooth" | "dnd" => crate::quick::read(hook),
         _ => Err(AppError::msg(format!("'{hook}' is not a sensor hook"))),
     }
@@ -302,6 +306,12 @@ pub fn start_watcher(app: AppHandle) {
             std::thread::sleep(Duration::from_millis(250));
             let now = Instant::now();
             let declared = declared_hooks(&app);
+            if declared.contains("posture") {
+                crate::posture::listen();
+                if crate::posture::take_changed() {
+                    due.remove("posture");
+                }
+            }
             for (hook, every) in SENSORS {
                 if !declared.contains(*hook) {
                     // Next declaration starts fresh and pushes its first value.
@@ -408,5 +418,6 @@ mod tests {
         assert!(is_readable("audio"));
         assert!(!is_readable("bus"));
         assert!(is_sensor("radios") && is_sensor("display") && is_sensor("power-mode"));
+        assert!(is_sensor("posture"));
     }
 }

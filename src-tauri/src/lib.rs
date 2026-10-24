@@ -18,6 +18,7 @@ mod first_run;
 mod page;
 mod placement;
 mod power;
+mod posture;
 mod push;
 mod hotkeys;
 mod keys;

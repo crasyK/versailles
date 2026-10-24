@@ -106,7 +106,8 @@
       data-hooks           allowlist: media, mouse, layout, spawn, shell, hotkey, pty, storage,
                            clipboard, power, bus, battery, network, focus, audio,
                            windows, windows-control, notify, radios, audio-control,
-                           display, power-mode, wifi, bluetooth, dnd, notify-control, tray
+                           display, power-mode, wifi, bluetooth, dnd, notify-control, tray,
+                           posture
 
       A piece inside an HTML comment is not on the page: the examples near the
       end of <body> are commented out until you remove their comment markers.
@@ -1123,14 +1124,15 @@
          it, middle-click to close it (windows-control). On the right, the
          notification-area icons (tray): click, right-click, double-click or
          hover them as in Windows (Enter / Space and Shift+F10 when focused).
-         The tray icons only show while Versailles hides
+         When a convertible folds into tablet posture (posture), the buttons
+         grow for fingers. The tray icons only show while Versailles hides
          the Windows taskbar ("shell": { "hideTaskbar": true } in #versailles);
          otherwise this bar sits above the Windows taskbar, which keeps them.
          To try it, delete the two "try me" marker lines around the template
          below. To remove it, delete everything down to the end of the example. -->
     <!-- try me (taskbar): delete this line
     <template class="spawnable" data-id="taskbar" data-anchor="bottom" data-h="44"
-              data-monitor="all" data-hooks="windows,windows-control,tray">
+              data-monitor="all" data-hooks="windows,windows-control,tray,posture">
       <style>
         .spawn-surface.solo:has(.taskbar) { border: 0 !important; box-shadow: none !important; border-radius: 0 !important; }
         .taskbar {
@@ -1155,6 +1157,10 @@
         }
         .taskbar .tk-tray button:hover { background: var(--chip); }
         .taskbar .tk-tray img { width: 18px; height: 18px; }
+        /* Tablet posture (set from the posture hook below): finger-sized targets. */
+        .taskbar[data-posture="tablet"] .tk-win { height: 40px; padding: 0 16px 0 12px; }
+        .taskbar[data-posture="tablet"] .tk-tray button { width: 40px; height: 40px; }
+        .taskbar[data-posture="tablet"] img { width: 22px; height: 22px; }
       </style>
       <div class="taskbar"><div class="tk-wins"></div><div class="tk-tray"></div></div>
       <script>
@@ -1165,6 +1171,13 @@
           if (!bar) return;
           (function whenSdk(fn) { window.versailles && typeof window.versailles.for === 'function' ? fn(window.versailles) : setTimeout(function () { whenSdk(fn); }, 50); })(function (v) {
             var wins = v.for('taskbar').windows;
+            // A convertible folded into tablet posture: data-posture="tablet"
+            // on the bar, and the CSS above enlarges the buttons.
+            v.for('taskbar').on('posture', function (p) {
+              var box = root.querySelector('.taskbar');
+              if (p && p.tablet) box.setAttribute('data-posture', 'tablet');
+              else box.removeAttribute('data-posture');
+            }).catch(function () {});
             function render(list, here) {
               bar.replaceChildren();
               list.forEach(function (w) {

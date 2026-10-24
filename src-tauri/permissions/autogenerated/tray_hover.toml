@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-tray-hover"
+description = "Enables the tray_hover command without any pre-configured scope."
+commands.allow = ["tray_hover"]
+
+[[permission]]
+identifier = "deny-tray-hover"
+description = "Denies the tray_hover command without any pre-configured scope."
+commands.deny = ["tray_hover"]

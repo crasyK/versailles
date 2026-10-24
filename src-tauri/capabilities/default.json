@@ -64,6 +64,7 @@
     "allow-windows-control",
     "allow-tray-list",
     "allow-tray-click",
+    "allow-tray-hover",
     "allow-set-widget-always-on-top",
     "allow-set-widget-opacity",
     "allow-get-mouse-position-cmd",

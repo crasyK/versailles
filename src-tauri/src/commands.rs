@@ -468,6 +468,27 @@ pub async fn tray_click(
         .map_err(|e| crate::error::AppError::msg(e.to_string()))?
 }
 
+/// `tray` hook: the pointer entered (`over`) or left one icon, as Explorer
+/// tells the app (its own pop-up for version 4 icons). `x` / `y` are physical
+/// screen pixels; the cursor by default. Plain class, and no click needed:
+/// hovering does no more than moving the mouse over the icon in Explorer.
+#[tauri::command]
+pub async fn tray_hover(
+    webview: Webview,
+    state: State<'_, AppState>,
+    id: u32,
+    over: bool,
+    x: Option<i32>,
+    y: Option<i32>,
+    caller: Option<String>,
+) -> AppResult<()> {
+    require_hook(&state, &webview, caller.as_deref(), "tray", HookClass::Plain)?;
+    let at = x.zip(y);
+    tokio::task::spawn_blocking(move || crate::tray::hover(id, over, at))
+        .await
+        .map_err(|e| crate::error::AppError::msg(e.to_string()))?
+}
+
 /// Every monitor (logical sizes, display numbers, primary flag) and the one
 /// the calling window is on. Read-only; no hook needed.
 #[tauri::command]

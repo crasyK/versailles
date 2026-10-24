@@ -33,6 +33,8 @@ const NIF_TIP: u32 = 0x04;
 const NIF_STATE: u32 = 0x08;
 const NIF_INFO: u32 = 0x10;
 const NIF_GUID: u32 = 0x20;
+/// A version 4 icon asks for the standard tooltip (it has no pop-up of its own).
+const NIF_SHOWTIP: u32 = 0x80;
 const NIS_HIDDEN: u32 = 0x01;
 
 /// First field of every `Shell_NotifyIcon` copy (`SHELLTRAYDATA`).
@@ -46,8 +48,19 @@ const WM_RBUTTONDOWN: u32 = 0x0204;
 const WM_RBUTTONUP: u32 = 0x0205;
 const WM_MBUTTONDOWN: u32 = 0x0207;
 const WM_MBUTTONUP: u32 = 0x0208;
+const WM_MOUSEMOVE: u32 = 0x0200;
+const WM_MOUSEHOVER: u32 = 0x02A1;
+const WM_MOUSELEAVE: u32 = 0x02A3;
 /// `NIN_SELECT` (`WM_USER`): a version 3+ icon was picked with the mouse.
 const NIN_SELECT: u32 = 0x0400;
+/// `NIN_KEYSELECT`: picked with Enter or Space.
+const NIN_KEYSELECT: u32 = 0x0401;
+/// A version 4 icon may show its own pop-up instead of a tooltip.
+const NIN_POPUPOPEN: u32 = 0x0406;
+const NIN_POPUPCLOSE: u32 = 0x0407;
+/// Half the side of the square we tell apps their icon is (around the point
+/// it was last clicked or hovered at).
+const HALF: i32 = 12;
 
 /// One `Shell_NotifyIcon` call as shell32 hands it to the taskbar.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -65,6 +78,10 @@ pub struct Notify {
     /// timeout when `NIF_INFO` is set.
     pub version: u32,
     pub guid: Option<String>,
+    /// Balloon (`NIF_INFO` only): `szInfoTitle`, `szInfo`, `dwInfoFlags`.
+    pub info_title: String,
+    pub info: String,
+    pub info_flags: u32,
 }
 
 fn u32_at(b: &[u8], at: usize) -> Option<u32> {
@@ -103,6 +120,7 @@ pub fn parse(data: &[u8]) -> Option<Notify> {
     let message = u32_at(data, 4)?;
     let n = data.get(8..)?;
     let flags = u32_at(n, 12)?;
+    let info = flags & NIF_INFO != 0;
     Some(Notify {
         message,
         hwnd: handle_at(n, 4)?,
@@ -115,7 +133,21 @@ pub fn parse(data: &[u8]) -> Option<Notify> {
         state_mask: u32_at(n, 284).unwrap_or(0),
         version: u32_at(n, 800).unwrap_or(0),
         guid: if flags & NIF_GUID != 0 { guid_at(n, 936) } else { None },
+        info_title: if info { wstr_at(n, 804, 64) } else { String::new() },
+        info: if info { wstr_at(n, 288, 256) } else { String::new() },
+        info_flags: if info { u32_at(n, 932).unwrap_or(0) } else { 0 },
     })
+}
+
+/// The balloon icon a page sees (`dwInfoFlags & NIIF_ICON_MASK`).
+fn balloon_icon(flags: u32) -> &'static str {
+    match flags & 0x0F {
+        1 => "info",
+        2 => "warning",
+        3 => "error",
+        4 => "user",
+        _ => "none",
+    }
 }
 
 /// `Shell_NotifyIconGetRect`: which icon, and which corner (1 top-left,
@@ -146,6 +178,10 @@ pub struct TrayIcon {
     pub id: u32,
     /// The tooltip (may hold several lines).
     pub tip: String,
+    /// Whether Windows would show `tip` as a tooltip: always below version 4;
+    /// a version 4 icon asks with `NIF_SHOWTIP` (otherwise it draws its own
+    /// pop-up on hover, or none).
+    pub show_tip: bool,
     /// Executable name without extension of the app that owns it.
     pub app: Option<String>,
     pub exe: Option<String>,
@@ -166,10 +202,14 @@ pub struct TrayIcon {
     callback: u32,
     #[serde(skip)]
     version: u32,
+    /// `NIF_SHOWTIP` as the app last set it.
+    #[serde(skip)]
+    tip_flag: bool,
     /// `NIS_HIDDEN`: kept, but not listed.
     #[serde(skip)]
     hidden: bool,
-    /// Where it was last clicked (`Shell_NotifyIconGetRect` answers it).
+    /// Where it was last clicked or hovered (`Shell_NotifyIconGetRect`
+    /// answers a square around it).
     #[serde(skip)]
     point: Option<(i32, i32)>,
 }
@@ -178,9 +218,14 @@ impl TrayIcon {
     /// Whether anything a page sees differs.
     fn same_view(&self, other: &TrayIcon) -> bool {
         self.tip == other.tip
+            && self.show_tip == other.show_tip
             && self.icon == other.icon
             && self.guid == other.guid
             && self.clickable == other.clickable
+    }
+
+    fn update_show_tip(&mut self) {
+        self.show_tip = self.tip_flag || self.version < 4;
     }
 }
 
@@ -189,7 +234,7 @@ impl TrayIcon {
 pub enum ChangeKind {
     /// New, or shown again after being hidden.
     Added,
-    /// Tooltip, image or clickability.
+    /// Tooltip (or whether to show it), image or clickability.
     Changed,
     /// Deleted, hidden, or its app is gone.
     Removed,
@@ -261,10 +306,20 @@ impl Table {
                 if n.version > 4 {
                     return (false, Vec::new());
                 }
-                if let Some(i) = at {
-                    self.icons[i].version = n.version;
-                }
-                (true, Vec::new())
+                let Some(i) = at else {
+                    return (true, Vec::new());
+                };
+                let before = self.icons[i].clone();
+                let icon = &mut self.icons[i];
+                icon.version = n.version;
+                // Version 4 hides the standard tooltip unless it asks for it.
+                icon.update_show_tip();
+                let changes = if !icon.hidden && !before.same_view(icon) {
+                    vec![Change { kind: ChangeKind::Changed, icon: icon.clone() }]
+                } else {
+                    Vec::new()
+                };
+                (true, changes)
             }
             NIM_SETFOCUS => (at.is_some(), Vec::new()),
             _ => (false, Vec::new()),
@@ -286,6 +341,7 @@ impl Table {
                 self.icons.push(TrayIcon {
                     id: self.next_id,
                     tip: String::new(),
+                    show_tip: true,
                     app: file.and_then(|p| p.file_stem()).map(|s| s.to_string_lossy().into_owned()),
                     system: file
                         .and_then(|p| p.file_name())
@@ -299,6 +355,7 @@ impl Table {
                     uid: n.uid,
                     callback: 0,
                     version: 0,
+                    tip_flag: false,
                     hidden: false,
                     point: None,
                 });
@@ -323,6 +380,11 @@ impl Table {
         if n.flags & NIF_TIP != 0 && !n.tip.is_empty() {
             icon.tip = n.tip.clone();
         }
+        // NIF_SHOWTIP comes with the tooltip (or the add); a modify that only
+        // changes the image keeps it.
+        if n.message == NIM_ADD || n.flags & (NIF_TIP | NIF_SHOWTIP) != 0 {
+            icon.tip_flag = n.flags & NIF_SHOWTIP != 0;
+        }
         if n.flags & NIF_STATE != 0 && n.state_mask & NIS_HIDDEN != 0 {
             icon.hidden = n.state & NIS_HIDDEN != 0;
         }
@@ -332,6 +394,7 @@ impl Table {
         if n.flags & NIF_INFO == 0 && (1..=4).contains(&n.version) {
             icon.version = n.version;
         }
+        icon.update_show_tip();
         let now = icon.clone();
         let kind = match (before.filter(|b| !b.hidden), now.hidden) {
             (None, false) => Some(ChangeKind::Added),
@@ -343,6 +406,31 @@ impl Table {
         // A modify for an icon we did not have is kept but answered as failed,
         // so the app adds it again in full (its click message included).
         (at.is_some() || n.message == NIM_ADD, changes)
+    }
+
+    /// The balloon an add or modify shows, as a push: `{ type: "balloon", id,
+    /// title, text, icon }`. Call after `apply`. Explorer gets the same call
+    /// and shows it as a Windows notification (and tells the app what the
+    /// user did with it): this is for pages that show it too.
+    pub fn balloon(&self, n: &Notify) -> Option<Value> {
+        if !matches!(n.message, NIM_ADD | NIM_MODIFY) || n.flags & NIF_INFO == 0 {
+            return None;
+        }
+        // Empty title and text take a balloon down.
+        if n.info_title.is_empty() && n.info.is_empty() {
+            return None;
+        }
+        let icon = &self.icons[self.find(n.hwnd, n.uid, n.guid.as_deref())?];
+        if icon.hidden {
+            return None;
+        }
+        Some(json!({
+            "type": "balloon",
+            "id": icon.id,
+            "title": n.info_title,
+            "text": n.info,
+            "icon": balloon_icon(n.info_flags),
+        }))
     }
 
     /// Drop icons whose window is gone (the app crashed or quit without
@@ -368,6 +456,11 @@ impl Table {
 
     pub fn clear(&mut self) {
         self.icons.clear();
+    }
+
+    /// Where icon `id` was last clicked or hovered.
+    pub fn last_point(&self, id: u32) -> Option<(i32, i32)> {
+        self.icons.iter().find(|i| i.id == id).and_then(|i| i.point)
     }
 
     /// The icon to click, remembering where (for `Shell_NotifyIconGetRect`).
@@ -396,9 +489,10 @@ impl Table {
     }
 }
 
-/// Mouse buttons a page can send. They map to browser events one to one:
-/// `click` → `left`, `contextmenu` → `right`, `dblclick` → `double` (the
-/// second half of a double click: the browser already sent the first click).
+/// Mouse buttons and keys a page can send. They map to browser events one to
+/// one: `click` → `left`, `contextmenu` → `right`, `dblclick` → `double` (the
+/// second half of a double click: the browser already sent the first click);
+/// Enter / Space on a focused icon → `key`, the menu key / Shift+F10 → `menu`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Button {
@@ -406,11 +500,23 @@ pub enum Button {
     Right,
     Double,
     Middle,
+    Key,
+    Menu,
 }
 
-/// The callback messages Explorer sends for a click, in order. Version 3+
-/// icons also get `NIN_SELECT` / `WM_CONTEXTMENU` (documented for version 4;
-/// Explorer sends them to 3 as well).
+impl Button {
+    /// From the keyboard: the app is told where the icon is, not the cursor.
+    pub fn keyboard(self) -> bool {
+        matches!(self, Button::Key | Button::Menu)
+    }
+}
+
+/// The callback messages Explorer sends for a click or key, in order.
+/// Version 3+ icons also get `NIN_SELECT` / `WM_CONTEXTMENU` (documented for
+/// version 4; Explorer sends them to 3 as well), and from the keyboard
+/// `NIN_KEYSELECT` / `WM_CONTEXTMENU` alone (the "version 5.0 Shell"
+/// behaviour, which `NOTIFYICON_VERSION` 3 opts into); older icons get a
+/// left or right click instead.
 pub fn click_messages(button: Button, version: u32) -> Vec<u32> {
     let v3 = version >= 3;
     let mut out = match button {
@@ -418,6 +524,10 @@ pub fn click_messages(button: Button, version: u32) -> Vec<u32> {
         Button::Right => vec![WM_RBUTTONDOWN, WM_RBUTTONUP],
         Button::Double => vec![WM_LBUTTONDBLCLK, WM_LBUTTONUP],
         Button::Middle => vec![WM_MBUTTONDOWN, WM_MBUTTONUP],
+        Button::Key if v3 => vec![NIN_KEYSELECT],
+        Button::Menu if v3 => vec![WM_CONTEXTMENU],
+        Button::Key => vec![WM_LBUTTONDOWN, WM_LBUTTONUP],
+        Button::Menu => vec![WM_RBUTTONDOWN, WM_RBUTTONUP],
     };
     match button {
         Button::Left if v3 => out.push(NIN_SELECT),
@@ -425,6 +535,29 @@ pub fn click_messages(button: Button, version: u32) -> Vec<u32> {
         _ => {}
     }
     out
+}
+
+/// The callback messages for the pointer entering or leaving an icon, as
+/// ManagedShell sends them: a move and a hover on entry, a leave on exit,
+/// and for version 4 icons `NIN_POPUPOPEN` / `NIN_POPUPCLOSE` (their own
+/// pop-up instead of a tooltip).
+pub fn hover_messages(over: bool, version: u32) -> Vec<u32> {
+    let v4 = version >= 4;
+    let mut out = if over { vec![WM_MOUSEMOVE, WM_MOUSEHOVER] } else { vec![WM_MOUSELEAVE] };
+    if v4 {
+        out.push(if over { NIN_POPUPOPEN } else { NIN_POPUPCLOSE });
+    }
+    out
+}
+
+/// The point a callback message carries: where the pointer is, or for the
+/// keyboard the icon's top-left corner (the square we report around `at`).
+pub fn message_point(button: Button, at: (i32, i32)) -> (i32, i32) {
+    if button.keyboard() {
+        (at.0 - HALF, at.1 - HALF)
+    } else {
+        at
+    }
 }
 
 /// `wParam` / `lParam` of a callback message. Version 4: the point in
@@ -468,6 +601,12 @@ pub fn state() -> Value {
 /// Click icon `id` at `at` (physical screen pixels; the cursor by default).
 pub fn click(id: u32, button: Button, at: Option<(i32, i32)>) -> AppResult<()> {
     imp::click(id, button, at)
+}
+
+/// The pointer entered (`over`) or left icon `id` at `at` (physical screen
+/// pixels; the cursor by default).
+pub fn hover(id: u32, over: bool, at: Option<(i32, i32)>) -> AppResult<()> {
+    imp::hover(id, over, at)
 }
 
 /// Whether some piece on the page declares `tray`.
@@ -528,6 +667,9 @@ mod imp {
     const SWEEP: Duration = Duration::from_secs(2);
     /// Pushes within this long go out together (animated icons).
     const BATCH: Duration = Duration::from_millis(100);
+    /// A second `TaskbarCreated` this long after the first, for apps that
+    /// were too busy to answer it.
+    const REBROADCAST: Duration = Duration::from_secs(3);
     /// Explorer's message for the taskbar to reposition itself; it must be
     /// posted, not sent (ManagedShell).
     const WM_TRAY_POST: u32 = WM_USER + 372;
@@ -664,7 +806,11 @@ mod imp {
         let Some(n) = parse(data) else {
             return false;
         };
-        let (ok, changes) = table().lock().unwrap().apply(&n, &mut Win);
+        let (ok, changes, balloon) = {
+            let mut t = table().lock().unwrap();
+            let (ok, changes) = t.apply(&n, &mut Win);
+            (ok, changes, t.balloon(&n))
+        };
         for c in &changes {
             match c.kind {
                 ChangeKind::Added | ChangeKind::Removed => tracing::info!(
@@ -676,6 +822,10 @@ mod imp {
                 ChangeKind::Changed => {}
             }
             emit(change_json(c));
+        }
+        // Never answered with NIN_BALLOON*: Explorer shows it and does that.
+        if let Some(b) = balloon {
+            emit(b);
         }
         ok
     }
@@ -690,12 +840,11 @@ mod imp {
     }
 
     /// Answer an app placing its pop-up next to its icon: a small square
-    /// around where the icon was last clicked (or the cursor).
+    /// around where the icon was last clicked or hovered (or the cursor).
     fn on_rect_query(data: &[u8]) -> Option<isize> {
         let q = parse_rect_query(data)?;
         let point = table().lock().unwrap().point_of(&q)?;
         let (x, y) = point.or_else(cursor)?;
-        const HALF: i32 = 12;
         match q.corner {
             1 => Some(make_long(x - HALF, y - HALF)),
             2 => Some(make_long(x + HALF, y + HALF)),
@@ -855,8 +1004,14 @@ mod imp {
         broadcast_taskbar_created();
         tracing::info!("tray: holding the notification icons");
 
+        let started = Instant::now();
+        let mut rebroadcast = true;
         let mut swept = Instant::now();
         while !stop.load(Ordering::SeqCst) {
+            if rebroadcast && started.elapsed() >= REBROADCAST {
+                rebroadcast = false;
+                broadcast_taskbar_created();
+            }
             // Explorer's taskbar can come back in front (shown for Start, or
             // restarted): apps must keep finding ours first.
             if unsafe { FindWindowW(w!("Shell_TrayWnd"), None) }.ok() != Some(tray) {
@@ -890,28 +1045,63 @@ mod imp {
         tracing::info!("tray: stopped; {held} icons back with Explorer");
     }
 
-    pub fn click(id: u32, button: Button, at: Option<(i32, i32)>) -> AppResult<()> {
-        if !active() {
-            return Err(AppError::msg(
-                "tray: Explorer holds the icons (Versailles lists them only while it hides the taskbar)",
-            ));
+    fn ensure_active() -> AppResult<()> {
+        if active() {
+            return Ok(());
         }
-        let point = at.or_else(cursor).unwrap_or((0, 0));
-        let t = table().lock().unwrap().target(id, point)?;
+        Err(AppError::msg(
+            "tray: Explorer holds the icons (Versailles lists them only while it hides the taskbar)",
+        ))
+    }
+
+    /// Send callback messages to the icon's app, all with the same point.
+    fn send(id: u32, t: &Target, messages: &[u32], (x, y): (i32, i32)) -> AppResult<()> {
         let owner = hwnd(t.hwnd);
         unsafe {
             if !IsWindow(Some(owner)).as_bool() {
                 return Err(AppError::msg(format!("tray: the app of icon {id} is gone")));
             }
-            // Lets the app bring its menu or window to the front.
-            let _ = AllowSetForegroundWindow(t.pid);
-            for m in click_messages(button, t.version) {
-                let (wp, lp) = callback_params(t.version, t.uid, m, point.0, point.1);
+            for &m in messages {
+                let (wp, lp) = callback_params(t.version, t.uid, m, x, y);
                 SendNotifyMessageW(owner, t.callback, WPARAM(wp), LPARAM(lp))
-                    .map_err(|e| AppError::msg(format!("tray: click failed: {e}")))?;
+                    .map_err(|e| AppError::msg(format!("tray: message to icon {id} failed: {e}")))?;
             }
         }
         Ok(())
+    }
+
+    pub fn click(id: u32, button: Button, at: Option<(i32, i32)>) -> AppResult<()> {
+        ensure_active()?;
+        // The keyboard has no pointer: use where the icon was last clicked or
+        // hovered, as the page knows nothing better.
+        let remembered = if button.keyboard() && at.is_none() {
+            table().lock().unwrap().last_point(id)
+        } else {
+            None
+        };
+        let point = at.or(remembered).or_else(cursor).unwrap_or((0, 0));
+        let t = table().lock().unwrap().target(id, point)?;
+        // Lets the app bring its menu or window to the front.
+        unsafe {
+            let _ = AllowSetForegroundWindow(t.pid);
+        }
+        send(id, &t, &click_messages(button, t.version), message_point(button, point))
+    }
+
+    pub fn hover(id: u32, over: bool, at: Option<(i32, i32)>) -> AppResult<()> {
+        ensure_active()?;
+        let point = at.or_else(cursor).unwrap_or((0, 0));
+        let t = {
+            let mut table = table().lock().unwrap();
+            if over {
+                table.target(id, point)?
+            } else {
+                // Leaving keeps the point the pop-up was placed by.
+                let kept = table.last_point(id).unwrap_or(point);
+                table.target(id, kept)?
+            }
+        };
+        send(id, &t, &hover_messages(over, t.version), point)
     }
 }
 
@@ -927,6 +1117,9 @@ mod imp {
     pub fn start(_push: Box<dyn Fn(Value) + Send>) {}
     pub fn stop() {}
     pub fn click(_id: u32, _button: Button, _at: Option<(i32, i32)>) -> AppResult<()> {
+        Err(AppError::msg("the tray hook is only available on Windows"))
+    }
+    pub fn hover(_id: u32, _over: bool, _at: Option<(i32, i32)>) -> AppResult<()> {
         Err(AppError::msg("the tray hook is only available on Windows"))
     }
 }
@@ -967,6 +1160,14 @@ mod tests {
         put(&mut b, 8 + 280, n.state);
         put(&mut b, 8 + 284, n.state_mask);
         put(&mut b, 8 + 800, n.version);
+        let text = |b: &mut Vec<u8>, at: usize, s: &str| {
+            for (i, u) in s.encode_utf16().enumerate() {
+                b[8 + at + i * 2..8 + at + i * 2 + 2].copy_from_slice(&u.to_le_bytes());
+            }
+        };
+        text(&mut b, 288, &n.info);
+        text(&mut b, 804, &n.info_title);
+        put(&mut b, 8 + 932, n.info_flags);
         if let Some(g) = &n.guid {
             let g = uuid::Uuid::parse_str(g).unwrap();
             b[8 + 936..8 + 952].copy_from_slice(&g.to_bytes_le());
@@ -1016,6 +1217,81 @@ mod tests {
         // A short copy still gives the fields that are there.
         let short = parse(&bytes(&n)[..8 + 40]).unwrap();
         assert_eq!((short.hwnd, short.tip.as_str(), short.version), (0x1067a, "Tailscal", 0));
+
+        // A balloon: szInfo at 288, szInfoTitle at 804, dwInfoFlags at 932,
+        // read only with NIF_INFO.
+        let balloon = Notify {
+            info_title: "Tailscale".into(),
+            info: "Connected to office".into(),
+            info_flags: 2 | 0x10, // NIIF_WARNING | NIIF_NOSOUND
+            version: 10_000,      // the timeout, with NIF_INFO
+            ..note(NIM_MODIFY, 0x1067a, 0, NIF_INFO)
+        };
+        assert_eq!(parse(&bytes(&balloon)), Some(balloon.clone()));
+        let plain = parse(&bytes(&Notify { flags: NIF_TIP, ..balloon.clone() })).unwrap();
+        assert_eq!((plain.info.as_str(), plain.info_title.as_str(), plain.info_flags), ("", "", 0));
+    }
+
+    #[test]
+    fn pushes_balloons_for_known_icons() {
+        let mut t = Table::default();
+        t.apply(&add(0x20, "Tailscale"), &mut Fake);
+        let info = |title: &str, text: &str, flags: u32| Notify {
+            info_title: title.into(),
+            info: text.into(),
+            info_flags: flags,
+            ..note(NIM_MODIFY, 0x20, 0, NIF_INFO)
+        };
+        let n = info("Tailscale", "Connected", 1);
+        // The balloon is not a change of the icon.
+        assert_eq!(t.apply(&n, &mut Fake), (true, vec![]));
+        assert_eq!(
+            t.balloon(&n),
+            Some(json!({ "type": "balloon", "id": 1, "title": "Tailscale", "text": "Connected", "icon": "info" }))
+        );
+        // A title or a text is enough; icons by NIIF_ICON_MASK.
+        assert_eq!(t.balloon(&info("", "Text only", 3 | 0x20)).unwrap()["icon"], "error");
+        assert_eq!(t.balloon(&info("Title only", "", 4)).unwrap()["icon"], "user");
+        assert_eq!(t.balloon(&info("x", "", 0)).unwrap()["icon"], "none");
+        assert_eq!(t.balloon(&info("x", "", 2)).unwrap()["icon"], "warning");
+        // Empty title and text take a balloon down: nothing to push.
+        assert_eq!(t.balloon(&info("", "", 1)), None);
+        // Without NIF_INFO, for an unknown or hidden icon, or on a delete: none.
+        assert_eq!(t.balloon(&Notify { flags: NIF_TIP, ..n.clone() }), None);
+        assert_eq!(t.balloon(&Notify { hwnd: 0x99, ..n.clone() }), None);
+        assert_eq!(t.balloon(&Notify { message: NIM_DELETE, ..n.clone() }), None);
+        t.apply(&Notify { state: 1, state_mask: 1, ..note(NIM_MODIFY, 0x20, 0, NIF_STATE) }, &mut Fake);
+        assert_eq!(t.balloon(&n), None);
+        // An add that carries a balloon pushes it too.
+        let mut t = Table::default();
+        let first = Notify { flags: add(0, "").flags | NIF_INFO, info: "Hi".into(), ..add(0x30, "App") };
+        t.apply(&first, &mut Fake);
+        assert_eq!(t.balloon(&first).unwrap()["text"], "Hi");
+    }
+
+    #[test]
+    fn show_tip_follows_version_and_flag() {
+        let mut t = Table::default();
+        // Below version 4 Windows always shows the tooltip.
+        let (_, ch) = t.apply(&add(0x20, "Tailscale"), &mut Fake);
+        assert!(ch[0].icon.show_tip);
+        assert_eq!(change_json(&ch[0])["icon"]["showTip"], true);
+        // Version 4 without NIF_SHOWTIP: the app draws its own pop-up.
+        let v4 = Notify { version: 4, ..note(NIM_SETVERSION, 0x20, 0, 0) };
+        let (ok, ch) = t.apply(&v4, &mut Fake);
+        assert!(ok);
+        assert_eq!(kinds(&ch), vec![(ChangeKind::Changed, 1)]);
+        assert!(!ch[0].icon.show_tip);
+        // Asking for it with the tooltip shows it; an image-only modify keeps it.
+        let tip = Notify { tip: "Tailscale: Connected".into(), ..note(NIM_MODIFY, 0x20, 0, NIF_TIP | NIF_SHOWTIP) };
+        assert!(t.apply(&tip, &mut Fake).1[0].icon.show_tip);
+        let image = Notify { hicon: 9, ..note(NIM_MODIFY, 0x20, 0, NIF_ICON) };
+        assert!(t.apply(&image, &mut Fake).1[0].icon.show_tip);
+        // A tooltip without the flag drops it again.
+        let plain = Notify { tip: "Tailscale".into(), ..note(NIM_MODIFY, 0x20, 0, NIF_TIP) };
+        assert!(!t.apply(&plain, &mut Fake).1[0].icon.show_tip);
+        // The same version again: nothing to push.
+        assert_eq!(t.apply(&v4, &mut Fake), (true, vec![]));
     }
 
     #[test]
@@ -1143,9 +1419,20 @@ mod tests {
         assert_eq!(click_messages(Button::Right, 0), vec![WM_RBUTTONDOWN, WM_RBUTTONUP]);
         assert_eq!(click_messages(Button::Double, 4), vec![WM_LBUTTONDBLCLK, WM_LBUTTONUP]);
         assert_eq!(click_messages(Button::Middle, 4), vec![WM_MBUTTONDOWN, WM_MBUTTONUP]);
+        // Keyboard: Enter / Space and the menu key / Shift+F10.
+        assert_eq!(click_messages(Button::Key, 4), vec![NIN_KEYSELECT]);
+        assert_eq!(click_messages(Button::Key, 3), vec![NIN_KEYSELECT]);
+        assert_eq!(click_messages(Button::Menu, 4), vec![WM_CONTEXTMENU]);
+        assert_eq!(click_messages(Button::Key, 0), vec![WM_LBUTTONDOWN, WM_LBUTTONUP]);
+        assert_eq!(click_messages(Button::Menu, 0), vec![WM_RBUTTONDOWN, WM_RBUTTONUP]);
         let b: Button = serde_json::from_str(r#""double""#).unwrap();
         assert_eq!(b, Button::Double);
+        assert_eq!(serde_json::from_str::<Button>(r#""menu""#).unwrap(), Button::Menu);
         assert!(serde_json::from_str::<Button>(r#""hover""#).is_err());
+        // The keyboard gives the icon's top-left corner, the mouse its point.
+        assert_eq!(message_point(Button::Key, (1500, 1180)), (1500 - HALF, 1180 - HALF));
+        assert_eq!(message_point(Button::Menu, (-1200, 10)), (-1200 - HALF, 10 - HALF));
+        assert_eq!(message_point(Button::Right, (1500, 1180)), (1500, 1180));
 
         // Version 4: point in wParam (16-bit each, negative on a left monitor),
         // message and icon number in lParam.
@@ -1154,6 +1441,22 @@ mod tests {
         assert_eq!(wp >> 16, 1180);
         assert_eq!(lp, (WM_CONTEXTMENU | (3 << 16)) as isize);
         assert_eq!(callback_params(0, 3, WM_LBUTTONUP, 10, 20), (3, WM_LBUTTONUP as isize));
+    }
+
+    #[test]
+    fn hover_messages_follow_the_icon_version() {
+        assert_eq!(hover_messages(true, 0), vec![WM_MOUSEMOVE, WM_MOUSEHOVER]);
+        assert_eq!(hover_messages(true, 3), vec![WM_MOUSEMOVE, WM_MOUSEHOVER]);
+        assert_eq!(hover_messages(true, 4), vec![WM_MOUSEMOVE, WM_MOUSEHOVER, NIN_POPUPOPEN]);
+        assert_eq!(hover_messages(false, 3), vec![WM_MOUSELEAVE]);
+        assert_eq!(hover_messages(false, 4), vec![WM_MOUSELEAVE, NIN_POPUPCLOSE]);
+        // Hovering remembers where, for Shell_NotifyIconGetRect.
+        let mut t = Table::default();
+        t.apply(&add(0x20, "Tailscale"), &mut Fake);
+        assert_eq!(t.last_point(1), None);
+        t.target(1, (40, 50)).unwrap();
+        assert_eq!(t.last_point(1), Some((40, 50)));
+        assert_eq!(t.last_point(2), None);
     }
 
     #[test]

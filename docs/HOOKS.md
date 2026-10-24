@@ -36,6 +36,10 @@ The host never grants more than that list. The catalog is fixed in [`src-tauri/s
 | `bluetooth` | Paired Bluetooth devices and whether they are connected; connect / disconnect audio devices from a bar or overlay |
 | `dnd` | Do Not Disturb: off, priority only, alarms only; change it from a bar or overlay |
 | `notify-control` | Dismiss one notification, clear all, open the app that raised one, turn an app's own banners on / off (from a bar or overlay; read them with `notify`) |
+| `vpn` | Windows' own VPN profiles and whether they are connected; connect / disconnect from a bar or overlay (see [Connections and accessibility](#connections-and-accessibility)) |
+| `hotspot` | Mobile hotspot on / off and its client count; switch it from a bar or overlay |
+| `sharing` | Whether the screen is cast (Miracast) and the nearby sharing mode; open Windows' Cast panel, change nearby sharing from a bar or overlay |
+| `accessibility` | Magnifier, contrast theme, live captions, colour filters, sticky keys; switch them from a bar or overlay |
 | `tray` | The notification-area icons (tooltip, app, icon), pushed changes and balloons, and clicking, hovering or pressing a key on one, while Versailles hides the Windows taskbar (see [Tray](#tray)). Tooltips and balloons can be private |
 | `posture` | Whether a convertible is folded into tablet posture, whether it is docked, and its touch screen and pen (see [Posture](#posture)) |
 | `keyboard` | The installed keyboard layouts and the one the app in front uses (pushed on change); switch that app's layout from a bar or overlay (see [Keyboard](#keyboard)) |
@@ -46,7 +50,7 @@ Unknown hook names are rejected.
 
 - **Basics:** [SDK](#sdk) · [Enforcement](#enforcement) · [Events](#events)
 - **Reading the system:** [Push](#push) · [Notifications](#notifications) · [Windows](#windows) · [Tray](#tray) · [Posture](#posture)
-- **Acting:** [Layout](#layout) · [Power](#power) · [Quick settings](#quick-settings) · [Keyboard](#keyboard) · [Clipboard](#clipboard)
+- **Acting:** [Layout](#layout) · [Power](#power) · [Quick settings](#quick-settings) · [Connections and accessibility](#connections-and-accessibility) · [Keyboard](#keyboard) · [Clipboard](#clipboard)
 - **Between pieces:** [Storage](#storage) · [Bus](#bus) · [Piece events](#piece-events)
 
 ## SDK
@@ -90,7 +94,7 @@ Identity comes from the **calling window**, never from an IPC argument:
 
 That piece must list the hook in `data-hooks`. A piece that omitted `data-hooks="media"` cannot call `media_now` even if the JS tries.
 
-**Control class.** `quick_set` (`radios`, `audio-control`, `display`, `power-mode`, `wifi`, `bluetooth`, `dnd`, `notify-control`, `keyboard`) changes a system setting. Like exec class it is refused from the desktop wallpaper and from folder widgets; only a spawn window (bar, slide-out, overlay) whose piece declares the hook may change a setting. The SDK also asks for a click or key press first. Reading those hooks works anywhere.
+**Control class.** `quick_set` (`radios`, `audio-control`, `display`, `power-mode`, `wifi`, `bluetooth`, `dnd`, `notify-control`, `keyboard`, `vpn`, `hotspot`, `sharing`, `accessibility`) changes a system setting. Like exec class it is refused from the desktop wallpaper and from folder widgets; only a spawn window (bar, slide-out, overlay) whose piece declares the hook may change a setting. The SDK also asks for a click or key press first. Reading those hooks works anywhere.
 
 **Exec class.** `cli_exec`, `cli_exec_term`, `cli_search_files` (`shell`) and `pty_open` / `pty_write` / `pty_resize` / `pty_is_alive` / `pty_close` (`pty`) run code. They are refused from the desktop wallpaper entirely and only work from a spawn window whose piece declares the hook. `cli_open` (open a URL/path) is not exec class: the wallpaper may call it via `versailles.for(id).shell.open(...)`.
 
@@ -142,6 +146,10 @@ await hud.focus.onChange((w) => (title.textContent = w.title));
 | `display` | 5 s | `{ projection: "pc"\|"duplicate"\|"extend"\|"second", brightness: [{ id, device, kind: "internal"\|"external", level }], nightLight: { supported, on } }` |
 | `posture` | on change (5 s fallback) | `{ tablet, docked, touch: { screen, pen, maxTouches } }` (`tablet: null` on a PC that is not a convertible; see [Posture](#posture)) |
 | `keyboard` | 0.5 s | `{ layouts: [{ id, name, short, lang, layout }], current }` (see [Keyboard](#keyboard)) |
+| `vpn` | 2 s | `{ profiles: [{ name, connected, connecting }] }` |
+| `hotspot` | 3 s | `{ supported, on, busy, clients, maxClients, reason }` |
+| `sharing` | 3 s | `{ casting, nearby: "off"\|"my-devices"\|"everyone"\|null }` |
+| `accessibility` | 2 s | `{ magnifier, contrast, captions, colorFilter, stickyKeys }` (`true`, `false`, or `null` when unknown) |
 
 A sensor is only read while some piece on the page declares its hook, and a value is pushed only when it changed. Pushes go only to the windows of pieces that declare the hook, by a script run in those windows (not a broadcast event). Sensor subscriptions also get the current value right away.
 
@@ -451,6 +459,57 @@ const { ok } = await kb.set(layouts[1].id);           // false: the app did not 
 - `ok: false` when the app did not switch within 0.4 s: an app running as administrator ignores requests from Versailles (which runs as the user), and a few apps (some games, remote desktops) handle the keyboard themselves.
 - With Windows' default setting (one input method for all apps) the switch applies to every app; with "Let me use a different input method for each app window" only to that app. `current` always reads the app in front.
 - Windows has no event for another app's layout change: the host reads it every 0.5 s while a piece declares `keyboard`, and pushes only a change.
+## Connections and accessibility
+
+Four more quick-settings hooks: `vpn`, `hotspot`, `sharing` and `accessibility`. They read and change like the ones above: `now()` / `onChange(fn)` / `on(hook, fn)` anywhere, changes only from a bar or overlay, inside a click or key press, logged. Windows sends none of them as events an app outside the Store can get, so the host reads them every 2–3 s while a piece declares the hook.
+
+A change answers the hook's new state, except where Windows' own window opened instead. Then it answers `{ ok: true, dialog: true }` (Windows' dialog) or `{ ok: true, settings: true }` (a Settings page), and the new state follows by push once the user is done.
+
+```html
+<template class="spawnable" data-id="qs" data-anchor="tr" data-w="340" data-h="600"
+          data-hooks="vpn,hotspot,sharing,accessibility"> … </template>
+```
+
+```js
+const qs = versailles.for("qs");
+
+const { profiles } = await qs.vpn.now();             // [{ name, connected, connecting }]
+const r = await qs.vpn.connect(profiles[0].name);    // the new state, or { ok, dialog: true }
+await qs.vpn.disconnect(profiles[0].name);
+
+const h = await qs.hotspot.now();                    // { supported, on, busy, clients, maxClients, reason }
+if (h.supported) await qs.hotspot.set(!h.on);
+
+const { casting, nearby } = await qs.sharing.now();  // nearby: "off" | "my-devices" | "everyone" | null
+castButton.onclick = () => qs.sharing.openCast();    // Windows' Cast panel (Win+K)
+await qs.sharing.setNearby("my-devices");
+
+const a = await qs.accessibility.now();              // { magnifier, contrast, captions, colorFilter, stickyKeys }
+await qs.accessibility.set("stickyKeys", !a.stickyKeys);
+await qs.accessibility.set("magnifier", true);       // "magnifier" | "contrast" | "captions" | "colorFilter" | "stickyKeys"
+```
+
+**VPN** lists the VPN connections Windows itself manages (Settings > Network & internet > VPN: IKEv2, SSTP, L2TP, PPTP), through the documented RAS API. `connect(name)` dials with the sign-in Windows saved for the profile. Without a saved sign-in, for EAP (smart card, certificate) profiles, and when Windows rejects the saved one, Windows' own VPN dialog opens and asks (`{ ok: true, dialog: true }`). A profile a VPN app added to Windows, or a name Windows' phone book does not know, opens Settings > VPN instead (`settings: true`). A dial takes a few seconds; the promise waits for it. VPN apps with their own client (Tailscale, ProtonVPN, WireGuard, OpenVPN, company clients) are not Windows VPN profiles: they are not listed and keep their own tray icons (see [Tray](#tray)). Privacy: pages get profile names and their state only, never user names, passwords or servers, and the host never logs credentials. Profile names can say where you work: declare `vpn` only where needed.
+
+**Mobile hotspot** is Settings > Mobile hotspot (`NetworkOperatorTetheringManager`, documented, no admin needed). It shares the connection the PC is online with: offline, or where Windows does not offer it, `supported` is false and `reason` says why (`"no-internet"`, `"hardware"`, `"group-policy"`, `"system"`, …); offer `versailles.shell.open("ms-settings:network-mobilehotspot")` instead. `on` is null and `busy` true while Windows switches it. A start Windows refuses rejects with its reason (Wi-Fi off, the adapter cannot share on this band, …). Windows turns the hotspot off by itself 5 minutes after the last device leaves, unless that is switched off in Settings. Privacy: the hotspot's network name and password are never read.
+
+**Cast.** No Windows API lets an app start casting the screen, so `openCast()` opens Windows' own Cast panel (what Win+K opens), where the user picks a screen or disconnects. `casting` is true while a wireless display (Miracast) shows this PC's screen. Where the panel appears while Versailles hides Explorer's taskbar is up to Windows.
+
+**Nearby sharing** (Settings > System > Nearby sharing) has no Windows API either: `nearby` reads and `setNearby(mode)` writes the undocumented value Settings uses (`HKCU\Software\Microsoft\Windows\CurrentVersion\CDP`, `NearShareChannelUserAuthzPolicy`). `null` (and `setNearby` rejecting) means this PC has not set nearby sharing up: offer `versailles.shell.open("ms-settings:crossdevice")`. Nearby sharing also needs Bluetooth on (`radios`).
+
+**Accessibility:**
+
+| Toggle | On | Off |
+| ------ | -- | --- |
+| `stickyKeys` | Windows' setting (documented, immediate) | the same |
+| `contrast` | Windows applies the contrast theme last used (documented; takes a few seconds, Windows shows "Please wait") | opens Settings > Accessibility > Contrast themes (`{ ok: true, settings: true }`), where turning it off brings back your own theme |
+| `magnifier` | starts Magnifier | Win+Esc, Magnifier's own shortcut |
+| `captions` | starts Live captions (the first start asks to download a speech model) | Win+Ctrl+L, Live captions' own shortcut |
+| `colorFilter` | Windows' colour filter shortcut (undocumented) | the same |
+
+- `magnifier` and `captions` read whether the app runs; `null` where it is not installed (Live captions needs Windows 11 22H2). The shortcuts Versailles sends to close them pass its own keyboard hook untouched (also with `shell.suppress`); an elevated window in front can block them, and then the call rejects.
+- A **contrast theme** makes Windows draw pages in its own colours: CSS `forced-colors: active` applies to every page, Paper chrome included, until it is off again. Style for it with `@media (forced-colors: active)` if your page needs to.
+- **Colour filters** have no Windows API: `colorFilter` reads the filter setting (`HKCU\Software\Microsoft\ColorFiltering`, `Active`) and `set` runs Windows' colour filter shortcut (`atbroker /colorfiltershortcut`), which switches the filter Settings has chosen (greyscale by default) on or off, only when the state differs. If Windows does not switch within 3 s, `set` rejects: offer `versailles.shell.open("ms-settings:easeofaccess-colorfilter")`.
 
 ## Clipboard
 

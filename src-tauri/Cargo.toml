@@ -99,6 +99,12 @@ windows = { version = "0.61", features = [
   "ApplicationModel",
   "UI_Notifications",
   "UI_Notifications_Management",
+  # vpn.rs (RAS; RasGetConnectStatusW / RASENTRYW need WinSock types),
+  # hotspot.rs, accessibility.rs (is Magnifier running).
+  "Win32_NetworkManagement_Rras",
+  "Win32_Networking_WinSock",
+  "Networking_NetworkOperators",
+  "Win32_System_Diagnostics_ToolHelp",
 ] }
 
 [profile.release]

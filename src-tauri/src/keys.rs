@@ -480,6 +480,17 @@ fn debug() -> bool {
     *ON.get_or_init(|| std::env::var("VERSAILLES_KEYS_DEBUG").is_ok_and(|v| v == "1"))
 }
 
+/// Send key events `(virtual key, key up)` tagged as Versailles' own, so the
+/// keyboard hook passes them on untouched (a Win combo it would otherwise
+/// hold back or swallow). For Windows' own shortcuts, e.g. Win+Esc.
+#[cfg(windows)]
+pub fn send_tagged(keys: &[(u16, bool)]) {
+    hook::send_tagged(keys)
+}
+
+#[cfg(not(windows))]
+pub fn send_tagged(_keys: &[(u16, bool)]) {}
+
 #[cfg(windows)]
 mod hook {
     use super::{
@@ -946,6 +957,18 @@ mod hook {
 
     const EXTENDED: u32 = 0x1; // KEYEVENTF_EXTENDEDKEY
     const KEYUP: u32 = 0x2; // KEYEVENTF_KEYUP
+
+    /// See `keys::send_tagged`. The Win keys are extended keys.
+    pub fn send_tagged(keys: &[(u16, bool)]) {
+        let events: Vec<Replay> = keys
+            .iter()
+            .map(|&(vk, up)| {
+                let ext = if vk == VK_LWIN.0 || vk == VK_RWIN.0 { EXTENDED } else { 0 };
+                (vk, 0, ext | if up { KEYUP } else { 0 })
+            })
+            .collect();
+        send(&events);
+    }
 
     /// `true`: swallow this event. `scan` / `extended` describe it for a replay.
     ///

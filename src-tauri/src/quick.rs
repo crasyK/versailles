@@ -1,5 +1,7 @@
 //! Quick settings (#32): the `radios`, `audio-control`, `display` and
-//! `power-mode` hooks.
+//! `power-mode` hooks. Changes for `wifi` / `bluetooth` (`wireless`), `vpn`,
+//! `hotspot`, `sharing` and `accessibility` (their own modules) go through
+//! here too.
 //!
 //! Reads are sensors (`sensors::SENSORS`): `now()` answers, changes are
 //! pushed. Changes go through one command, `quick_set`, in the control class:
@@ -68,6 +70,19 @@ pub enum QuickAction {
     NotifyBanners { aumid: String, on: bool },
     /// Switch the app in front to this layout (an `id` from `keyboard`'s `layouts`).
     Keyboard { id: String },
+    // ── connections and accessibility (#63–#66, see `vpn`, `hotspot`,
+    // `sharing`, `accessibility`) ──
+    /// Connect a Windows VPN profile (a `name` from `vpn`'s `profiles`).
+    VpnConnect { name: String },
+    VpnDisconnect { name: String },
+    /// Mobile hotspot on or off.
+    Hotspot { on: bool },
+    /// Open Windows' Cast panel (Win+K).
+    CastPanel,
+    /// Nearby sharing: `"off"`, `"my-devices"` or `"everyone"`.
+    Nearby { mode: String },
+    /// `name`: `"magnifier"`, `"contrast"`, `"captions"`, `"colorFilter"`, `"stickyKeys"`.
+    Accessibility { name: String, on: bool },
 }
 
 impl QuickAction {
@@ -103,8 +118,42 @@ impl QuickAction {
             | QuickAction::NotifyOpen { .. }
             | QuickAction::NotifyBanners { .. } => "notify-control",
             QuickAction::Keyboard { .. } => "keyboard",
+            QuickAction::VpnConnect { .. } | QuickAction::VpnDisconnect { .. } => "vpn",
+            QuickAction::Hotspot { .. } => "hotspot",
+            QuickAction::CastPanel | QuickAction::Nearby { .. } => "sharing",
+            QuickAction::Accessibility { .. } => "accessibility",
         }
     }
+}
+
+/// Apply a change and answer: the hook's new state, or `{ ok: true,
+/// dialog: true }` / `{ ok: true, settings: true }` when Windows' own dialog
+/// or Settings page opened instead (a VPN that needs credentials, turning a
+/// contrast theme off). Blocking: call off the main thread.
+pub fn answer(action: &QuickAction) -> AppResult<Value> {
+    let opened = match action {
+        QuickAction::VpnConnect { name } => crate::vpn::connect(name)?,
+        QuickAction::Accessibility { name, on } => crate::accessibility::set(name, *on)?,
+        other => {
+            apply(other)?;
+            None
+        }
+    };
+    match opened {
+        Some(value) => Ok(value),
+        None => read(action.hook()),
+    }
+}
+
+/// Open a URI or program the way Explorer does (`ShellExecute`), on a thread
+/// of its own: quick settings run on multithreaded COM threads, and the shell
+/// wants a single-threaded apartment.
+pub fn shell_open(target: &str) -> AppResult<()> {
+    let target = target.to_string();
+    std::thread::spawn(move || crate::cli::open_target(&target))
+        .join()
+        .map_err(|_| AppError::msg("shell: open failed"))?
+        .map_err(AppError::msg)
 }
 
 /// Current value of a quick-settings sensor.
@@ -141,6 +190,10 @@ pub fn read(hook: &str) -> AppResult<Value> {
         // Answered after a change: the notifications as `notify` reads them.
         "notify-control" => crate::toasts::read(),
         "keyboard" => crate::keyboard::read(),
+        "vpn" => crate::vpn::read(),
+        "hotspot" => crate::hotspot::read(),
+        "sharing" => crate::sharing::read(),
+        "accessibility" => crate::accessibility::read(),
         _ => Err(AppError::msg(format!("'{hook}' is not a quick-settings hook"))),
     }
 }
@@ -173,6 +226,12 @@ pub fn apply(action: &QuickAction) -> AppResult<()> {
         QuickAction::NotifyOpen { aumid } => crate::toasts::open_app(aumid),
         QuickAction::NotifyBanners { aumid, on } => crate::toasts::banners(aumid, *on),
         QuickAction::Keyboard { id } => crate::keyboard::set(id),
+        QuickAction::VpnConnect { name } => crate::vpn::connect(name).map(drop),
+        QuickAction::VpnDisconnect { name } => crate::vpn::disconnect(name),
+        QuickAction::Hotspot { on } => crate::hotspot::set(*on),
+        QuickAction::CastPanel => crate::sharing::open_cast(),
+        QuickAction::Nearby { mode } => crate::sharing::set_nearby(mode),
+        QuickAction::Accessibility { name, on } => crate::accessibility::set(name, *on).map(drop),
     }
 }
 
@@ -986,6 +1045,28 @@ mod tests {
         assert_eq!(a.describe(), r#"SessionMute { id: "s", on: true }"#);
         assert!(serde_json::from_str::<QuickAction>(r#"{ "kind": "sessionVolume", "level": 5 }"#).is_err());
         assert!(serde_json::from_str::<QuickAction>(r#"{ "kind": "inputMute" }"#).is_err());
+    }
+
+    #[test]
+    fn connection_and_accessibility_actions() {
+        let a: QuickAction = serde_json::from_str(r#"{ "kind": "vpnConnect", "name": "Work" }"#).unwrap();
+        assert_eq!(a.hook(), "vpn");
+        let a: QuickAction = serde_json::from_str(r#"{ "kind": "vpnDisconnect", "name": "Work" }"#).unwrap();
+        assert_eq!(a.hook(), "vpn");
+        let a: QuickAction = serde_json::from_str(r#"{ "kind": "hotspot", "on": true }"#).unwrap();
+        assert_eq!(a.hook(), "hotspot");
+        let a: QuickAction = serde_json::from_str(r#"{ "kind": "castPanel" }"#).unwrap();
+        assert_eq!(a.hook(), "sharing");
+        let a: QuickAction = serde_json::from_str(r#"{ "kind": "nearby", "mode": "everyone" }"#).unwrap();
+        assert_eq!(a.hook(), "sharing");
+        let a: QuickAction = serde_json::from_str(r#"{ "kind": "accessibility", "name": "stickyKeys", "on": true }"#).unwrap();
+        assert_eq!(a.hook(), "accessibility");
+        assert!(serde_json::from_str::<QuickAction>(r#"{ "kind": "hotspot" }"#).is_err());
+        // Every hook a change names is readable, so `answer` can read it back.
+        for hook in ["vpn", "hotspot", "sharing", "accessibility"] {
+            assert!(crate::sensors::is_sensor(hook), "{hook}");
+            assert!(crate::page::KNOWN_HOOKS.contains(&hook), "{hook}");
+        }
     }
 
     /// `cargo test live_reads -- --ignored --nocapture`: what this PC answers.

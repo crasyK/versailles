@@ -35,7 +35,7 @@ The host is a small windowing + hooks layer. Pieces on the page are the product.
 | `data-dock` | no | Docked bars only. `reserve` (default): reserves its strip like the taskbar, so maximized apps stop at its edge. `float`: always on top, no space reserved. `auto-hide`: tucked at the edge, slides out when the mouse touches it. |
 | `data-peek` | no | `auto-hide` bars: logical px left showing while tucked away. Default 4. |
 | `data-hotkey` | no | Global accelerator for this spawnable when `data-hooks` includes `hotkey`. Format: Tauri accelerators (`Alt+Space`, `Ctrl+Shift+D`, `CommandOrControl+K`), plus `Win`, `Copilot` and `Win+` combos (see [Overlay vs slide-out](#overlay-vs-slide-out)). Several combos, comma-separated: `"Alt+Space, Win"`. Duplicate combos: first piece on the page wins. A hook piece with no `data-hotkey` uses `#versailles` `launcher.hotkey` (once). |
-| `data-hooks` | no | Comma-separated allowlist. See [`HOOKS.md`](HOOKS.md). |
+| `data-hooks` | no | Comma-separated allowlist of hook names (`media`, `shell`, `radios`, `vpn`, `accessibility`, …). The full list: [`HOOKS.md`](HOOKS.md). |
 | `data-dismiss-on-blur` | no | Overlays only. `true` / `false`: hide the overlay when its window loses focus. Wins over `#versailles` `spawnables.<id>.overlay.dismissOnBlur`. Default `true`, except pieces with the `pty` hook default to `false` (a terminal survives focus flicker). |
 
 Duplicate `data-id` values are ignored after the first. A piece inside an HTML comment (`<!-- … -->`) is not on the page.

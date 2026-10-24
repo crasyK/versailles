@@ -363,7 +363,8 @@ pub async fn sense_now(
 
 /// Quick settings (`radios`, `audio-control`, `display`, `power-mode`):
 /// change one. Control class: only a spawn window of a piece that declares
-/// the action's hook. Answers the hook's new state.
+/// the action's hook. Answers the hook's new state (or what Windows opened
+/// instead, see `quick::answer`).
 #[tauri::command]
 pub async fn quick_set(
     webview: Webview,
@@ -374,10 +375,7 @@ pub async fn quick_set(
     let hook = action.hook();
     let acting = require_hook(&state, &webview, caller.as_deref(), hook, HookClass::Control)?;
     tracing::info!("quick settings: '{acting}' requested {}", action.describe());
-    tokio::task::spawn_blocking(move || {
-        crate::quick::apply(&action)?;
-        crate::quick::read(hook)
-    })
+    tokio::task::spawn_blocking(move || crate::quick::answer(&action))
     .await
     .map_err(|e| crate::error::AppError::msg(e.to_string()))?
 }

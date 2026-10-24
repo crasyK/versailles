@@ -107,7 +107,7 @@
                            clipboard, power, bus, battery, network, focus, audio,
                            windows, windows-control, notify, radios, audio-control,
                            display, power-mode, wifi, bluetooth, dnd, notify-control, tray,
-                           posture
+                           posture, vpn, hotspot, sharing, accessibility
 
       A piece inside an HTML comment is not on the page: the examples near the
       end of <body> are commented out until you remove their comment markers.
@@ -1347,7 +1347,8 @@
     <!-- ===== Example: quick settings =====
          A slide-out with Wi-Fi networks, Bluetooth devices, airplane mode, volume,
          the output, the microphone, per-app volume, brightness, night light,
-         projection, Do Not Disturb, recent notifications and power mode, opened
+         projection, Do Not Disturb, recent notifications, power mode, VPN,
+         mobile hotspot, cast, nearby sharing and accessibility toggles, opened
          with Ctrl+Alt+Q. Settings change only
          from a slide-out, bar or overlay and only on a click or key press: the
          wallpaper can show them but never change them. Values arrive by push,
@@ -1356,7 +1357,7 @@
          To remove it, delete everything down to the end of the example. -->
     <!-- try me (quick settings): delete this line
     <template class="spawnable" data-id="quick" data-anchor="tr" data-w="340" data-h="760"
-              data-hotkey="Ctrl+Alt+Q" data-hooks="hotkey,radios,wifi,bluetooth,audio,audio-control,display,power-mode,dnd,notify,notify-control">
+              data-hotkey="Ctrl+Alt+Q" data-hooks="hotkey,radios,wifi,bluetooth,audio,audio-control,display,power-mode,dnd,notify,notify-control,vpn,hotspot,sharing,accessibility">
       <style>
         .qs { height: 100%; padding: 16px; display: flex; flex-direction: column; gap: 12px; color: var(--ink);
               font: 13px/1.3 var(--font-sans); overflow: auto; box-sizing: border-box; }
@@ -1391,6 +1392,10 @@
         .qs .mix .name { flex: 0 1 96px; }
         .qs .mix input[type=range] { min-width: 0; }
         /* data-no-drag on .qs: a slide-out drags from any plain element, which would swallow clicks on the rows. */
+        /* connections and accessibility */
+        .qs .qs-conn { display: contents; }
+        .qs .note:empty { display: none; }
+        /* end of connections and accessibility */
       </style>
       <div class="qs" data-no-drag>
         <h3>wi-fi <button class="q-wifi">on</button></h3>
@@ -1424,6 +1429,24 @@
         <div class="row q-power">
           <button data-mode="efficiency">efficiency</button><button data-mode="balanced">balanced</button>
           <button data-mode="performance">performance</button>
+        </div>
+        <div class="qs-conn">
+          <h3>vpn</h3>
+          <div class="list q-vpn"></div>
+          <h3>mobile hotspot <button class="q-hotspot">off</button></h3>
+          <div class="note q-hotspot-note"></div>
+          <h3>cast to a screen <button class="q-cast">open</button></h3>
+          <h3>nearby sharing</h3>
+          <div class="row q-nearby">
+            <button data-mode="off">off</button><button data-mode="my-devices">my devices</button>
+            <button data-mode="everyone">everyone</button>
+          </div>
+          <h3>accessibility</h3>
+          <div class="row q-a11y">
+            <button data-name="magnifier">magnifier</button><button data-name="contrast">contrast</button>
+            <button data-name="captions">live captions</button><button data-name="colorFilter">colour filters</button>
+            <button data-name="stickyKeys">sticky keys</button>
+          </div>
         </div>
         <div class="err"></div>
       </div>
@@ -1731,6 +1754,81 @@
             root.querySelectorAll('.q-power button').forEach(function (b) {
               b.onclick = function () { act(me.powerMode.set(b.dataset.mode)); };
             });
+
+            // ── connections and accessibility (vpn, hotspot, sharing, accessibility) ──
+            // VPN: Windows' own profiles. Without a saved sign-in Windows' dialog
+            // opens and asks; the state then arrives by push.
+            var vpnBusy = null, lastVpn = null;
+            function renderVpn(s) {
+              if (s) lastVpn = s; else s = lastVpn;
+              var box = $('.q-vpn');
+              box.innerHTML = '';
+              var list = (s && s.profiles) || [];
+              list.forEach(function (p) {
+                var row = el('div', 'item static' + (p.connected ? ' current' : ''));
+                row.appendChild(el('span', 'name', p.name));
+                if (vpnBusy === p.name || p.connecting) {
+                  row.appendChild(el('span', 'meta', p.connected ? 'disconnecting…' : 'connecting…'));
+                } else {
+                  var btn = el('button', p.connected ? 'on' : null, p.connected ? 'disconnect' : 'connect');
+                  btn.onclick = function () {
+                    vpnBusy = p.name;
+                    renderVpn();
+                    act(p.connected ? me.vpn.disconnect(p.name) : me.vpn.connect(p.name)).then(function (r) {
+                      vpnBusy = null;
+                      renderVpn(r && r.profiles ? r : null); // { ok, dialog }: Windows asks first
+                    });
+                  };
+                  row.appendChild(btn);
+                }
+                box.appendChild(row);
+              });
+              if (!list.length) box.appendChild(el('div', 'note', 'no VPN profiles (Settings > Network & internet > VPN)'));
+            }
+            me.on('vpn', renderVpn).catch(function () {});
+
+            var hotspot = null;
+            me.on('hotspot', function (h) {
+              hotspot = h || null;
+              var b = $('.q-hotspot');
+              b.classList.toggle('on', !!(h && h.on));
+              b.textContent = h && h.busy ? '…' : (h && h.on ? 'on' : 'off');
+              b.disabled = !(h && h.supported) || !!(h && h.busy);
+              $('.q-hotspot-note').textContent = !h ? ''
+                : !h.supported ? (h.reason === 'no-internet' ? 'no internet connection to share' : 'not available on this PC')
+                : h.on ? (h.clients || 0) + ' of ' + (h.maxClients || '?') + ' devices connected' : '';
+            }).catch(function () {});
+            $('.q-hotspot').onclick = function () { act(me.hotspot.set(!(hotspot && hotspot.on))); };
+
+            // Cast: no API starts it; Windows' Cast panel (Win+K) does.
+            me.on('sharing', function (s) {
+              if (!s) return;
+              $('.q-cast').classList.toggle('on', s.casting === true);
+              $('.q-cast').textContent = s.casting ? 'casting' : 'open';
+              root.querySelectorAll('.q-nearby button').forEach(function (b) {
+                b.classList.toggle('on', b.dataset.mode === s.nearby);
+                b.disabled = s.nearby == null; // not set up on this PC
+              });
+            }).catch(function () {});
+            $('.q-cast').onclick = function () { act(me.sharing.openCast()); };
+            root.querySelectorAll('.q-nearby button').forEach(function (b) {
+              b.onclick = function () { act(me.sharing.setNearby(b.dataset.mode)); };
+            });
+
+            // Turning a contrast theme off opens Settings ({ ok, settings }).
+            var a11y = {};
+            me.on('accessibility', function (a) {
+              a11y = a || {};
+              root.querySelectorAll('.q-a11y button').forEach(function (b) {
+                var on = a11y[b.dataset.name];
+                b.classList.toggle('on', on === true);
+                b.disabled = on == null; // not installed or unknown
+              });
+            }).catch(function () {});
+            root.querySelectorAll('.q-a11y button').forEach(function (b) {
+              b.onclick = function () { act(me.accessibility.set(b.dataset.name, !a11y[b.dataset.name])); };
+            });
+            // ── end of connections and accessibility ──
           });
         })();
       </script>

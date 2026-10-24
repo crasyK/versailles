@@ -253,7 +253,8 @@
     /**
      * `fn(data)` on each push of `name`: a hook (`media`, `battery`,
      * `network`, `focus`, `audio`, `posture`, `clipboard`, `notify`, `tray`, `radios`,
-     * `audio-control`, `display`, `power-mode`, `wifi`, `bluetooth`, `dnd`, `keyboard`; must be declared) or a piece event
+     * `audio-control`, `display`, `power-mode`, `wifi`, `bluetooth`, `dnd`, `keyboard`, `vpn`, `hotspot`, `sharing`,
+     * `accessibility`; must be declared) or a piece event
      * (`shown`, `hidden`, `idle`, `active`, `theme-changed`). Sensor hooks
      * also call `fn` with the current value right away. Returns a function
      * that unsubscribes.
@@ -670,6 +671,53 @@
           return quick("power-mode", { kind: "powerMode", mode: String(mode) });
         },
       }),
+      // ── connections and accessibility (#63–#66) ──
+      /**
+       * Windows' own VPN profiles: `{ profiles: [{ name, connected, connecting }] }`.
+       * VPN apps (Tailscale, ProtonVPN...) are not listed.
+       */
+      vpn: Object.assign(sensor("vpn"), {
+        /**
+         * Connect with the saved sign-in. Answers the new state, or
+         * `{ ok: true, dialog: true }` when Windows' own dialog opened to ask
+         * for credentials (`settings: true`: Settings opened, for a VPN app's profile).
+         */
+        async connect(name) {
+          return quick("vpn", { kind: "vpnConnect", name: String(name) });
+        },
+        async disconnect(name) {
+          return quick("vpn", { kind: "vpnDisconnect", name: String(name) });
+        },
+      }),
+      /** Mobile hotspot: `{ supported, on, busy, clients, maxClients, reason }`. */
+      hotspot: Object.assign(sensor("hotspot"), {
+        async set(on) {
+          return quick("hotspot", { kind: "hotspot", on: !!on });
+        },
+      }),
+      /**
+       * Cast and nearby sharing: `{ casting, nearby }`; `nearby`: `"off"`,
+       * `"my-devices"`, `"everyone"` or null.
+       */
+      sharing: Object.assign(sensor("sharing"), {
+        /** Open Windows' Cast panel (as Win+K): pick a screen there, or disconnect. */
+        async openCast() {
+          return quick("sharing", { kind: "castPanel" });
+        },
+        async setNearby(mode) {
+          return quick("sharing", { kind: "nearby", mode: String(mode) });
+        },
+      }),
+      /**
+       * `{ magnifier, contrast, captions, colorFilter, stickyKeys }` (true, false or null).
+       * `set(name, on)` answers the new state, or `{ ok: true, settings: true }`
+       * when Settings opened instead (turning a contrast theme off).
+       */
+      accessibility: Object.assign(sensor("accessibility"), {
+        async set(name, on) {
+          return quick("accessibility", { kind: "accessibility", name: String(name), on: !!on });
+        },
+      }),
       /** Windows toast notifications, read-only. See docs/HOOKS.md. */
       notify: {
         /** `{ access, items }`: the recent toasts, newest first. */
@@ -920,7 +968,8 @@
     return () => pushSubscribers.delete(sub);
   }
   /** Hooks whose changes the host pushes; `on()` needs them declared. */
-  const QUICK_HOOKS = ["radios", "audio-control", "display", "power-mode", "wifi", "bluetooth", "dnd", "keyboard"];
+  const QUICK_HOOKS = ["radios", "audio-control", "display", "power-mode", "wifi", "bluetooth", "dnd", "keyboard",
+    "vpn", "hotspot", "sharing", "accessibility"];
   const PUSH_HOOKS = new Set(["media", "battery", "network", "focus", "audio", "posture", "clipboard", "windows", "notify", "tray"].concat(QUICK_HOOKS));
   const SENSOR_HOOKS = new Set(["battery", "network", "focus", "audio", "posture"].concat(QUICK_HOOKS));
   // On the wallpaper this page runs in an iframe of the host shell, which

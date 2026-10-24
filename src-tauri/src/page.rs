@@ -11,6 +11,7 @@ pub const KNOWN_HOOKS: &[&str] = &[
     "battery", "network", "focus", "audio", "windows", "windows-control", "notify",
     "radios", "audio-control", "display", "power-mode", "wifi", "bluetooth",
     "dnd", "notify-control", "tray", "posture", "keyboard",
+    "vpn", "hotspot", "sharing", "accessibility",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

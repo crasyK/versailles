@@ -30,6 +30,12 @@ pub const SENSORS: &[(&str, Duration)] = &[
     ("posture", Duration::from_millis(5000)),
     // The app in front's keyboard layout: no event for another process.
     ("keyboard", Duration::from_millis(500)),
+    // Connections and accessibility (#63–#66): Windows sends none of these
+    // as events an unpackaged app can get, so they are polled.
+    ("vpn", Duration::from_millis(2000)),
+    ("hotspot", Duration::from_millis(3000)),
+    ("sharing", Duration::from_millis(3000)),
+    ("accessibility", Duration::from_millis(2000)),
 ];
 
 /// No input for this long sends `idle`; the next input sends `active`.
@@ -60,6 +66,7 @@ pub fn read(hook: &str) -> AppResult<Value> {
         "radios" | "audio-control" | "display" | "power-mode" | "wifi" | "bluetooth" | "dnd" | "keyboard" => {
             crate::quick::read(hook)
         }
+        "vpn" | "hotspot" | "sharing" | "accessibility" => crate::quick::read(hook),
         _ => Err(AppError::msg(format!("'{hook}' is not a sensor hook"))),
     }
 }

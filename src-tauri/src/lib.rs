@@ -1,6 +1,7 @@
 mod api;
 mod app_windows;
 mod apps;
+mod attention;
 mod audio;
 mod boot;
 mod bus;
@@ -18,8 +19,10 @@ mod first_run;
 mod page;
 mod placement;
 mod power;
+mod preview;
 mod push;
 mod hotkeys;
+mod keyboard;
 mod keys;
 mod layout;
 mod media;
@@ -459,6 +462,7 @@ pub fn run() {
             commands::windows_list,
             commands::windows_icon,
             commands::windows_control,
+            commands::windows_preview,
             commands::tray_list,
             commands::tray_click,
             commands::tray_hover,

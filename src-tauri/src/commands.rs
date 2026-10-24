@@ -432,6 +432,48 @@ pub async fn windows_control(
         .map_err(|e| crate::error::AppError::msg(e.to_string()))?
 }
 
+/// `windows` hook: show the host's preview card (a live thumbnail and the
+/// title) for window `id` next to `rect`, the hovered element in the
+/// calling page's CSS px; no `id` hides it. Display only, but a topmost
+/// window placed from the caller's own position: bars and overlays only,
+/// never the wallpaper.
+#[tauri::command]
+pub async fn windows_preview(
+    webview: Webview,
+    state: State<'_, AppState>,
+    id: Option<i64>,
+    rect: Option<crate::preview::CssRect>,
+    caller: Option<String>,
+) -> AppResult<()> {
+    let acting = require_hook(&state, &webview, caller.as_deref(), "windows", HookClass::Plain)?;
+    let cat = crate::desktop::page_catalog(&state);
+    let spawn_window = crate::page::label_piece_id(webview.label())
+        .is_some_and(|p| cat.spawnable(p).is_some() && crate::page::same_piece(&cat, &acting, p));
+    if !spawn_window {
+        return Err(crate::error::AppError::msg(
+            "windows.preview: only from a bar or overlay, not the wallpaper",
+        ));
+    }
+    let Some(id) = id else {
+        crate::preview::hide();
+        return Ok(());
+    };
+    let rect = rect.ok_or_else(|| crate::error::AppError::msg("windows.preview: needs the hovered element's rect"))?;
+    let err = |e: tauri::Error| crate::error::AppError::msg(e.to_string());
+    let window = webview.window();
+    let origin = window.inner_position().map_err(err)?;
+    let scale = window.scale_factor().map_err(err)?;
+    let at = window.outer_position().map_err(err)?;
+    let size = window.outer_size().map_err(err)?;
+    let anchor = crate::preview::to_screen(rect, (origin.x, origin.y), scale)?;
+    let caller_rect = Rect { x: at.x, y: at.y, width: size.width as i32, height: size.height as i32 };
+    tokio::task::spawn_blocking(move || {
+        crate::preview::show(crate::preview::Request { id, anchor, caller: caller_rect })
+    })
+    .await
+    .map_err(|e| crate::error::AppError::msg(e.to_string()))?
+}
+
 /// `tray` hook: the notification-area icons, `{ active, icons }`. Versailles
 /// holds them only while it hides the Windows taskbar (`active`); changes
 /// are pushed (see `tray`).

@@ -31,7 +31,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "REPLACE_WITH_UPDATER_PUBLIC_KEY (npx tauri signer generate; see CONTRIBUTING, Release)",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc2NTlEQUQxMzQ3QzExOUUKUldTZUVYdzAwZHBaZGc3WEQrUUZIQ3BxVGp2RGxEOEhUSW1UVkpLYWNRSENDT0pLQTFWVjMyWC8K",
       "endpoints": ["https://github.com/crasyK/versailles/releases/latest/download/latest.json"],
       "windows": {
         "installMode": "passive"

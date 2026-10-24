@@ -22,6 +22,7 @@ fn main() {
                 "windows_control",
                 "tray_list",
                 "tray_click",
+                "tray_hover",
                 "set_widget_always_on_top",
                 "set_widget_opacity",
                 "get_mouse_position_cmd",

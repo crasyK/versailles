@@ -394,7 +394,7 @@
      * Notification-area icons (`tray` hook). Versailles holds them only
      * while it hides the Windows taskbar (`shell.hideTaskbar`); otherwise
      * Explorer's tray has them and `active` is false. An icon: { id, tip,
-     * app, exe, pid, guid, system, clickable, icon }.
+     * showTip, app, exe, pid, guid, system, clickable, icon }.
      */
     const tray = {
       /** `{ active, icons }`. */
@@ -405,7 +405,10 @@
       async list() {
         return (await tray.state()).icons;
       },
-      /** `fn({ type: "added"|"changed"|"removed", id, icon })` per change, `{ type: "active", active }` when Versailles starts or stops holding them. */
+      /**
+       * `fn({ type: "added"|"changed"|"removed", id, icon })` per change, `{ type: "active", active }` when Versailles starts or stops holding them,
+       * `{ type: "balloon", id, title, text, icon: "info"|"warning"|"error"|"none"|"user" }` when an app shows a balloon (Windows shows it as a notification too).
+       */
       async onChange(fn) {
         return on("tray", fn);
       },
@@ -440,6 +443,8 @@
           }
         };
         const off = await on("tray", (ev) => {
+          // Balloons change no icon (their `icon` is a kind, not an icon).
+          if (!ev || ev.type === "balloon") return;
           if (!list) {
             pending.push(ev);
             return;
@@ -457,9 +462,11 @@
       /**
        * Click an icon as Explorer would: `"left"` (click), `"right"`
        * (contextmenu), `"double"` (dblclick: the second half of a double
-       * click, so skip the second `click`, whose `detail` is 2) or `"middle"`. The app opens its menu at `x`, `y`
-       * (physical screen px), by default where the cursor is. Only inside a
-       * click or key press.
+       * click, so skip the second `click`, whose `detail` is 2) or `"middle"`;
+       * from the keyboard `"key"` (Enter / Space) or `"menu"` (menu key /
+       * Shift+F10). The app opens its menu at `x`, `y` (physical screen px),
+       * by default where the cursor is (for keys, where the icon was last
+       * clicked or hovered). Only inside a click or key press.
        */
       async click(id, button, x, y) {
         const activation = global.navigator && global.navigator.userActivation;
@@ -469,6 +476,16 @@
         const args = { id: Number(id), button: String(button || "left") };
         if (Number.isFinite(x) && Number.isFinite(y)) Object.assign(args, { x: Math.round(x), y: Math.round(y) });
         return hostInvoke("tray", "tray_click", args);
+      },
+      /**
+       * The pointer entered (`over` true) or left an icon: the app may show
+       * its own pop-up (version 4 icons) or update its tooltip. `x`, `y` as
+       * for `click`. No click needed.
+       */
+      async hover(id, over, x, y) {
+        const args = { id: Number(id), over: !!over };
+        if (Number.isFinite(x) && Number.isFinite(y)) Object.assign(args, { x: Math.round(x), y: Math.round(y) });
+        return hostInvoke("tray", "tray_hover", args);
       },
     };
 

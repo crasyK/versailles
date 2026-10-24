@@ -429,6 +429,7 @@ pub fn run() {
             commands::windows_control,
             commands::tray_list,
             commands::tray_click,
+            commands::tray_hover,
             commands::set_widget_always_on_top,
             commands::set_widget_opacity,
             commands::get_mouse_position_cmd,

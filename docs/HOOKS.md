@@ -37,13 +37,14 @@ The host never grants more than that list. The catalog is fixed in [`src-tauri/s
 | `dnd` | Do Not Disturb: off, priority only, alarms only; change it from a bar or overlay |
 | `notify-control` | Dismiss one notification, clear all, open the app that raised one, turn an app's own banners on / off (from a bar or overlay; read them with `notify`) |
 | `tray` | The notification-area icons (tooltip, app, icon), pushed changes and balloons, and clicking, hovering or pressing a key on one, while Versailles hides the Windows taskbar (see [Tray](#tray)). Tooltips and balloons can be private |
+| `posture` | Whether a convertible is folded into tablet posture, whether it is docked, and its touch screen and pen (see [Posture](#posture)) |
 
 Unknown hook names are rejected.
 
 ## Contents
 
 - **Basics:** [SDK](#sdk) · [Enforcement](#enforcement) · [Events](#events)
-- **Reading the system:** [Push](#push) · [Notifications](#notifications) · [Windows](#windows) · [Tray](#tray)
+- **Reading the system:** [Push](#push) · [Notifications](#notifications) · [Windows](#windows) · [Tray](#tray) · [Posture](#posture)
 - **Acting:** [Layout](#layout) · [Power](#power) · [Quick settings](#quick-settings) · [Clipboard](#clipboard)
 - **Between pieces:** [Storage](#storage) · [Bus](#bus) · [Piece events](#piece-events)
 
@@ -138,6 +139,7 @@ await hud.focus.onChange((w) => (title.textContent = w.title));
 | `bluetooth` | 3 s | `{ devices: [{ id, name, connected, audio }] }` (`audio`: headphones / speakers, can be connected) |
 | `wifi` | 5 s | `{ access: "ok"\|"location-denied"\|"no-adapter", connected, networks: [{ ssid, signal, secure, known, connected }] }` |
 | `display` | 5 s | `{ projection: "pc"\|"duplicate"\|"extend"\|"second", brightness: [{ id, device, kind: "internal"\|"external", level }], nightLight: { supported, on } }` |
+| `posture` | on change (5 s fallback) | `{ tablet, docked, touch: { screen, pen, maxTouches } }` (`tablet: null` on a PC that is not a convertible; see [Posture](#posture)) |
 
 A sensor is only read while some piece on the page declares its hook, and a value is pushed only when it changed. Pushes go only to the windows of pieces that declare the hook, by a script run in those windows (not a broadcast event). Sensor subscriptions also get the current value right away.
 
@@ -264,6 +266,39 @@ An icon:
 - `tray.hover(id, over, x, y)`: the pointer entered (`over` true) or left the icon. The app gets the mouse messages Explorer's tray sends (move and hover, then leave) and, for version 4 icons, `NIN_POPUPOPEN` / `NIN_POPUPCLOSE`, so apps with their own pop-up show it next to the icon; others may refresh their tooltip (a `changed` push follows when they do). Call it on `mouseenter` / `mouseleave`, once each. No click needed: hovering does no more than moving the mouse over the icon in Explorer.
 
 Icons arrive within about a second of the tray starting: apps add theirs again when Versailles tells them a taskbar was created (told twice, the second time 3 s later, for apps that were busy). An app that ignores that message shows up the next time it changes its icon. Versailles does not read the icons Explorer already has: on Windows 11 22H2 and later Explorer's tray is drawn with XAML (there is no `ToolbarWindow32` with buttons to read), and the only ways in are reading Explorer's memory or injecting into it, which Versailles does not do. An icon whose app quits without removing it is dropped within 2 s. Tooltips can be private (message counts, account names, VPN state): declare `tray` only on pieces that show them.
+
+## Posture
+
+`posture` tells a page how the machine is held, so it can reshape before the first tap: bigger taskbar buttons, a touch-first command bar. Read-only; any piece can declare it.
+
+```html
+<template class="spawnable" data-id="taskbar" data-anchor="bottom" data-h="44"
+          data-monitor="all" data-hooks="windows,windows-control,posture"> … </template>
+```
+
+```js
+const bar = versailles.for("taskbar");
+await bar.on("posture", ({ tablet }) => {        // now, then on each change
+  document.body.dataset.posture = tablet ? "tablet" : "laptop";
+});
+const { touch } = await bar.posture.now();       // one-off read
+```
+
+```css
+body[data-posture="tablet"] .task { min-width: 56px; min-height: 48px; }
+```
+
+| Field | |
+| ----- | - |
+| `tablet` | `true` when a convertible is folded (or its keyboard detached) into tablet posture, `false` in laptop posture, `null` on a PC that does not report a posture (a desktop, a plain laptop) |
+| `docked` | Windows reports the machine as docked |
+| `touch.screen` | A touch screen (built-in or external) |
+| `touch.pen` | A pen digitizer |
+| `touch.maxTouches` | How many fingers the touch screen tracks at once (0 without one) |
+
+A change is pushed as soon as Windows announces it (it broadcasts `ConvertibleSlateMode` / `SystemDockMode`), and the host reads again every 5 s in case a broadcast is missed. Windows' own "tablet mode" switch is gone on Windows 11; the posture comes from the hinge or keyboard sensor. `tablet` is `null` unless Windows keeps a convertible posture for this machine (`HKLM\SYSTEM\CurrentControlSet\Control\PriorityControl\ConvertibleSlateMode`).
+
+`posture` says how the machine is held, not how the user is pointing right now. For that, a page can read each event's `pointerType` (`"touch"`, `"pen"`, `"mouse"`) or use the media queries `(any-pointer: coarse)` and `(pointer: coarse)`; neither needs a hook.
 
 ## Layout
 

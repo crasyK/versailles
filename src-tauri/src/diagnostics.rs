@@ -463,12 +463,24 @@ fn windows_version() -> Value {
     }
     .is_ok()
     .then_some(ubr);
+    let build = text(w!("CurrentBuild"));
     json!({
-        "productName": text(w!("ProductName")),
+        "productName": text(w!("ProductName")).map(|name| product_name(&name, build.as_deref())),
         "displayVersion": text(w!("DisplayVersion")),
-        "currentBuild": text(w!("CurrentBuild")),
+        "currentBuild": build,
         "ubr": ubr,
     })
+}
+
+/// `ProductName` still says "Windows 10" on Windows 11 (build 22000 and
+/// later): name it as the user sees it.
+fn product_name(name: &str, build: Option<&str>) -> String {
+    let eleven = build.and_then(|b| b.parse::<u32>().ok()).is_some_and(|b| b >= 22000);
+    if eleven {
+        name.replacen("Windows 10", "Windows 11", 1)
+    } else {
+        name.to_string()
+    }
 }
 
 #[cfg(not(windows))]
@@ -529,6 +541,13 @@ fn monitors() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn names_windows_11() {
+        assert_eq!(product_name("Windows 10 Home", Some("26200")), "Windows 11 Home");
+        assert_eq!(product_name("Windows 10 Pro", Some("19045")), "Windows 10 Pro");
+        assert_eq!(product_name("Windows 10 Pro", None), "Windows 10 Pro");
+    }
 
     #[test]
     fn redacts_secret_keys_at_any_depth() {

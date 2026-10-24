@@ -407,7 +407,7 @@
       },
       /**
        * `fn({ type: "added"|"changed"|"removed", id, icon })` per change, `{ type: "active", active }` when Versailles starts or stops holding them,
-       * `{ type: "balloon", id, title, text, icon: "info"|"warning"|"error"|"none"|"user" }` when an app shows a balloon (Windows shows it as a notification too).
+       * `{ type: "balloon", id, title, text, kind: "info"|"warning"|"error"|"none"|"user" }` when an app shows a balloon (Windows shows it as a notification too).
        */
       async onChange(fn) {
         return on("tray", fn);

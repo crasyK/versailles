@@ -409,7 +409,7 @@ impl Table {
     }
 
     /// The balloon an add or modify shows, as a push: `{ type: "balloon", id,
-    /// title, text, icon }`. Call after `apply`. Explorer gets the same call
+    /// title, text, kind }`. Call after `apply`. Explorer gets the same call
     /// and shows it as a Windows notification (and tells the app what the
     /// user did with it): this is for pages that show it too.
     pub fn balloon(&self, n: &Notify) -> Option<Value> {
@@ -429,7 +429,7 @@ impl Table {
             "id": icon.id,
             "title": n.info_title,
             "text": n.info,
-            "icon": balloon_icon(n.info_flags),
+            "kind": balloon_icon(n.info_flags),
         }))
     }
 
@@ -1247,13 +1247,13 @@ mod tests {
         assert_eq!(t.apply(&n, &mut Fake), (true, vec![]));
         assert_eq!(
             t.balloon(&n),
-            Some(json!({ "type": "balloon", "id": 1, "title": "Tailscale", "text": "Connected", "icon": "info" }))
+            Some(json!({ "type": "balloon", "id": 1, "title": "Tailscale", "text": "Connected", "kind": "info" }))
         );
         // A title or a text is enough; icons by NIIF_ICON_MASK.
-        assert_eq!(t.balloon(&info("", "Text only", 3 | 0x20)).unwrap()["icon"], "error");
-        assert_eq!(t.balloon(&info("Title only", "", 4)).unwrap()["icon"], "user");
-        assert_eq!(t.balloon(&info("x", "", 0)).unwrap()["icon"], "none");
-        assert_eq!(t.balloon(&info("x", "", 2)).unwrap()["icon"], "warning");
+        assert_eq!(t.balloon(&info("", "Text only", 3 | 0x20)).unwrap()["kind"], "error");
+        assert_eq!(t.balloon(&info("Title only", "", 4)).unwrap()["kind"], "user");
+        assert_eq!(t.balloon(&info("x", "", 0)).unwrap()["kind"], "none");
+        assert_eq!(t.balloon(&info("x", "", 2)).unwrap()["kind"], "warning");
         // Empty title and text take a balloon down: nothing to push.
         assert_eq!(t.balloon(&info("", "", 1)), None);
         // Without NIF_INFO, for an unknown or hidden icon, or on a delete: none.

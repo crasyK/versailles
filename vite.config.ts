@@ -26,6 +26,7 @@ export default defineConfig({
         "launcher-dim": resolve(__dirname, "launcher-dim.html"),
         desktop: resolve(__dirname, "desktop.html"),
         guides: resolve(__dirname, "guides.html"),
+        welcome: resolve(__dirname, "welcome.html"),
       },
     },
   },

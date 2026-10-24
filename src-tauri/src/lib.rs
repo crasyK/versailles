@@ -13,6 +13,7 @@ mod diagnostics;
 mod docks;
 mod engine_runtime;
 mod error;
+mod first_run;
 mod page;
 mod placement;
 mod power;
@@ -329,6 +330,14 @@ pub fn run() {
             });
             }
 
+            // No page yet: offer the starter desktop (once, with consent).
+            let welcome_app = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+                let app = welcome_app.clone();
+                let _ = welcome_app.run_on_main_thread(move || first_run::offer_if_needed(&app));
+            });
+
             // Plugin creates a visible 15×15 WS_POPUP at (0,0); hide with retries.
             single_instance_fixup::schedule_hide_helpers();
 
@@ -498,6 +507,8 @@ pub fn run() {
             pty::pty_resize,
             pty::pty_is_alive,
             pty::pty_close,
+            first_run::welcome_setup,
+            first_run::welcome_skip,
         ])
         .build(tauri::generate_context!());
     match app {

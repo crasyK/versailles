@@ -14,7 +14,7 @@
     "windows": [],
     "security": {
       "csp": null,
-      "capabilities": ["default"]
+      "capabilities": ["default", "welcome"]
     }
   },
   "bundle": {

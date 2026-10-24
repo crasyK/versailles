@@ -13,7 +13,7 @@ Edit tiles, spawnables, and action-bar chrome in `Documents\Widgets\desktop\inde
 
 Use a **multi-root workspace** (host repo + `Documents\Widgets`) so you can see both trees. Do not commit `*.code-workspace` files.
 
-First-time user setup: copy [`templates/starter/`](templates/starter) onto `Documents\Widgets`. The host does not seed HTML automatically.
+First-time user setup: the host offers to set up the starter on first run, with consent (a welcome window when `desktop/index.html` is missing; `src-tauri/src/first_run.rs` embeds [`templates/starter/`](templates/starter) and never overwrites a file). By hand: copy `templates/starter/` onto `Documents\Widgets`.
 
 ## Product rules
 

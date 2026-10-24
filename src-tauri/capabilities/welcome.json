@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "welcome",
+  "description": "First-run window: set up the starter desktop or skip. Nothing else.",
+  "windows": ["welcome"],
+  "permissions": ["allow-welcome-setup", "allow-welcome-skip"]
+}

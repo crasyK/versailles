@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light" />
+    <title>Welcome to Versailles</title>
+    <link rel="stylesheet" href="/src/welcome.css" />
+  </head>
+  <body>
+    <main class="card">
+      <p class="label">Versailles</p>
+      <h1>Your desktop is one HTML page.</h1>
+      <p class="body">
+        There is no page in <code>Documents\Widgets</code> yet. Versailles can copy its example desktop
+        there: a few widgets, an Alt+Space command bar and the page SDK. Nothing that already exists is
+        overwritten.
+      </p>
+      <div class="actions">
+        <button type="button" class="pill active" id="setup">Set up the example desktop</button>
+        <button type="button" class="pill idle" id="skip">I'll bring my own</button>
+      </div>
+      <p class="status" id="status" role="status" aria-live="polite"></p>
+    </main>
+    <script type="module" src="/src/welcome.ts"></script>
+  </body>
+</html>

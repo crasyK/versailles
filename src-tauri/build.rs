@@ -1,4 +1,7 @@
 fn main() {
+    // first_run.rs embeds the starter with include_dir!, which tracks the
+    // files it saw but not files added later.
+    println!("cargo:rerun-if-changed=../templates/starter");
     // Keep in sync with lib.rs invoke_handler — `npm run verify:acl` fails the build if not.
     tauri_build::try_build(
         tauri_build::Attributes::new().app_manifest(
@@ -69,6 +72,9 @@ fn main() {
                 "show_launcher_seeded",
                 "toggle_slideout",
                 "shell_show_desktop",
+                // Only the first-run window (capabilities/welcome.json).
+                "welcome_setup",
+                "welcome_skip",
             ]),
         ),
     )

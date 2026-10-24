@@ -12,7 +12,7 @@ On Unix-like shells:
 cp -R templates/starter/. "$HOME/Documents/Widgets/"
 ```
 
-Do not overwrite an existing `desktop/index.html` unless you mean to. The host does not seed this tree automatically.
+Versailles offers to copy this starter for you on its first start when there is no `desktop/index.html` yet (it never overwrites a file; this README stays here). By hand: do not overwrite an existing `desktop/index.html` unless you mean to.
 
 | File | Purpose |
 | ---- | ------- |
@@ -25,4 +25,4 @@ Host knobs and shortcuts live in `<script type="application/json" id="versailles
 
 ## Third-party
 
-- [pixelarticons](https://github.com/halfmage/pixelarticons) by Gerrit Halfmann, MIT License. Icons in the desktop and action bar; copy lives at `.sdk/icons/pixelarticons/` with its `LICENSE`.
+- [xterm.js](https://github.com/xtermjs/xterm.js) and its fit, search and web-links addons (`.sdk/xterm*.js`, `.sdk/xterm.css`), MIT License, Copyright (c) The xterm.js authors.

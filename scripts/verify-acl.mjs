@@ -1,8 +1,12 @@
 /**
  * Guard against the recurring "cli_exec not allowed" regression.
- * Every command in lib.rs invoke_handler must appear in build.rs AND capabilities.
+ * Every command in lib.rs invoke_handler must appear in build.rs AND in a
+ * capability. Pages get `capabilities/default.json`; a host window with a
+ * capability of its own (`welcome.json`: the first-run window) keeps its
+ * commands to itself: default.json must not grant them too. Every
+ * capability file must be listed in tauri.conf.json.
  */
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -11,23 +15,48 @@ const read = (rel) => readFileSync(join(root, rel), "utf8");
 
 const lib = read("src-tauri/src/lib.rs");
 const build = read("src-tauri/build.rs");
-const caps = JSON.parse(read("src-tauri/capabilities/default.json"));
+const conf = JSON.parse(read("src-tauri/tauri.conf.json"));
+const capDir = "src-tauri/capabilities";
+const caps = readdirSync(join(root, capDir))
+  .filter((f) => f.endsWith(".json"))
+  .map((f) => ({ file: f, ...JSON.parse(read(`${capDir}/${f}`)) }));
+const byId = Object.fromEntries(caps.map((c) => [c.identifier, c]));
 
 const handlerBlock = lib.match(/generate_handler!\[\s*([\s\S]*?)\]/)?.[1] ?? "";
-const registered = [...handlerBlock.matchAll(/(?:commands|cli|pty|apps|desktop|engine_runtime)::(\w+)/g)].map((m) => m[1]);
+const registered = [...handlerBlock.matchAll(/\b\w+::(\w+)/g)].map((m) => m[1]);
 
 const buildBlock = build.match(/\.commands\(\&\[([\s\S]*?)\]\)/)?.[1] ?? "";
 const manifest = [...buildBlock.matchAll(/"(\w+)"/g)].map((m) => m[1]);
 
-const permissions = caps.permissions.filter((p) => p.startsWith("allow-"));
-
 const toKebab = (s) => s.replace(/_/g, "-");
 const permFor = (cmd) => `allow-${toKebab(cmd)}`;
+const grants = (cap, cmd) => (cap?.permissions ?? []).includes(permFor(cmd));
 
 const missing = [];
+
+const listed = conf.app?.security?.capabilities ?? [];
+for (const cap of caps) {
+  if (!listed.includes(cap.identifier)) {
+    missing.push(`tauri.conf.json app.security.capabilities missing "${cap.identifier}" (${cap.file})`);
+  }
+}
+for (const id of listed) {
+  if (typeof id === "string" && !byId[id]) missing.push(`tauri.conf.json lists unknown capability "${id}"`);
+}
+
+const pages = byId.default;
+if (!pages) missing.push(`${capDir}/default.json missing`);
+const own = caps.filter((c) => c.identifier !== "default");
+
 for (const cmd of registered) {
   if (!manifest.includes(cmd)) missing.push(`build.rs missing "${cmd}"`);
-  if (!permissions.includes(permFor(cmd))) {
+  const holders = own.filter((c) => grants(c, cmd));
+  if (holders.length && grants(pages, cmd)) {
+    missing.push(
+      `capabilities/default.json must not grant "${permFor(cmd)}" (it belongs to ${holders.map((c) => c.file).join(", ")})`,
+    );
+  }
+  if (!holders.length && !grants(pages, cmd)) {
     missing.push(`capabilities/default.json missing "${permFor(cmd)}"`);
   }
 }
@@ -42,4 +71,4 @@ if (missing.length) {
   process.exit(1);
 }
 
-console.log(`ACL OK (${registered.length} commands)`);
+console.log(`ACL OK (${registered.length} commands, ${caps.length} capabilities)`);

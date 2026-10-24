@@ -56,6 +56,8 @@ User folder (`Documents\Widgets`):
 
 Sidecar `versailles.json` / `shortcuts.json` are fallback if `#versailles` is missing. The host does not rewrite `index.html`. `desktop.enabled` lives in `.versailles/config.json`.
 
+**First run.** When `desktop/index.html` does not exist (under `VERSAILLES_ROOT` if set), a small welcome window offers **Set up the example desktop** or **I'll bring my own**. Setting up copies the starter shipped inside the app (`desktop/`, `.sdk/`), creating each file only if it does not exist yet, and shows the desktop. Either answer is remembered in `%LOCALAPPDATA%\com.versailles.widgets\first-run-offered` (delete it to be asked again); closing the window without answering asks again at the next start. Bench and e2e runs never show it. The window's capability (`capabilities/welcome.json`) allows only its two commands.
+
 ## Crash recovery
 
 Release builds start as a small **supervisor** that runs the app in a child process (same exe, `VERSAILLES_SUPERVISED=1`) inside a kill-on-close Job Object. Exit code 0 (Quit, or a second launch that handed off to the running instance) ends both. Any other exit restarts the app after 1s, 2s, 5s, 10s, 30s; a sixth crash within 10 minutes gives up. Session restore brings back the wallpaper and floating widgets. Apps launched from the action bar are not in the job and survive a restart.
@@ -84,4 +86,4 @@ A minute after start and then once a day, Versailles fetches `latest.json` from 
 
 ## ACL
 
-`npm run verify:acl` must stay green. Adding a Tauri command means `src-tauri/src/lib.rs`, `src-tauri/build.rs`, and `src-tauri/capabilities/default.json` together.
+`npm run verify:acl` must stay green. Adding a Tauri command means `src-tauri/src/lib.rs`, `src-tauri/build.rs`, and `src-tauri/capabilities/default.json` together. A host window with a capability of its own (`welcome.json`) keeps its commands out of `default.json`; every capability file is listed in `tauri.conf.json`, and the script checks both.

@@ -44,6 +44,8 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "nat
 # pure-Rust miniz_oxide backend (zip leaves the backend choice to us).
 zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+# The starter desktop, embedded for the first-run offer (first_run.rs).
+include_dir = "0.7"
 
 [target.'cfg(windows)'.dependencies]
 # `#[interface]` for undocumented COM interfaces (quick.rs); same version as `windows`.

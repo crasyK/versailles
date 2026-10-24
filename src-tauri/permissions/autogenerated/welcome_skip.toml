@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-welcome-skip"
+description = "Enables the welcome_skip command without any pre-configured scope."
+commands.allow = ["welcome_skip"]
+
+[[permission]]
+identifier = "deny-welcome-skip"
+description = "Denies the welcome_skip command without any pre-configured scope."
+commands.deny = ["welcome_skip"]

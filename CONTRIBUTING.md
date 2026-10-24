@@ -6,7 +6,7 @@ Versailles is the HTML desktop runtime. User tiles live under `Documents\Widgets
 
 1. Paper is the look of the host's own chrome and the starter template ([`design/PAPER-THEME.md`](design/PAPER-THEME.md), [`.cursor/rules/paper-theme.mdc`](.cursor/rules/paper-theme.mdc)). User pages can look like anything; the host never styles them.
 2. Single-file dialect. Read [`docs/DIALECT.md`](docs/DIALECT.md). Do not iframe widgets.
-3. Keep `scripts/verify-acl.mjs` green. A new Tauri command needs `lib.rs`, `build.rs`, and `capabilities/default.json` together.
+3. Keep `scripts/verify-acl.mjs` green. A new Tauri command needs `lib.rs`, `build.rs`, and `capabilities/default.json` together (or a capability file of its own for a host window, listed in `tauri.conf.json`, like `welcome.json`).
 4. Do not add a settings UI to the action bar. Config is `#versailles` in `desktop/index.html` plus `.versailles/` runtime.
 5. Do not ship a second built-in theme.
 

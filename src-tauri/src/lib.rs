@@ -1,6 +1,7 @@
 mod api;
 mod app_windows;
 mod apps;
+mod audio;
 mod boot;
 mod bus;
 mod cli;

@@ -205,6 +205,12 @@ pub fn process_path(pid: u32) -> Option<String> {
     imp::process_path(pid)
 }
 
+/// An executable's first icon as a 32×32 PNG data URL (the audio mixer).
+#[cfg(windows)]
+pub fn exe_icon_url(path: &str) -> Option<String> {
+    imp::exe_icon_url(path)
+}
+
 /// Run a control action on a listed window (never one of Versailles').
 pub fn control(id: i64, action: Action, to: Option<MoveTo>) -> AppResult<()> {
     let to = match action {
@@ -644,20 +650,29 @@ mod imp {
         }
         let url = match owned {
             Some(icon) => icon_png(icon),
-            None => exe.and_then(|path| unsafe {
-                let wide: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
-                let mut large = HICON::default();
-                if ExtractIconExW(PCWSTR(wide.as_ptr()), 0, Some(&mut large as *mut HICON), None, 1) == 0 || large.is_invalid() {
-                    return None;
-                }
-                let png = icon_png(large);
-                let _ = DestroyIcon(large);
-                png
-            }),
+            None => exe.and_then(exe_icon_png),
         }
         .map(|png| data_url(&png));
         icon_cache().lock().unwrap().insert(key, url.clone());
         url
+    }
+
+    /// An executable's first large icon as a PNG.
+    fn exe_icon_png(path: &str) -> Option<Vec<u8>> {
+        unsafe {
+            let wide: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
+            let mut large = HICON::default();
+            if ExtractIconExW(PCWSTR(wide.as_ptr()), 0, Some(&mut large as *mut HICON), None, 1) == 0 || large.is_invalid() {
+                return None;
+            }
+            let png = icon_png(large);
+            let _ = DestroyIcon(large);
+            png
+        }
+    }
+
+    pub fn exe_icon_url(path: &str) -> Option<String> {
+        exe_icon_png(path).map(|png| data_url(&png))
     }
 
     fn data_url(png: &[u8]) -> String {

@@ -89,6 +89,13 @@ No `hotkey` piece → those shortcuts stay idle. Saving `desktop/index.html` reb
 
 To stop a Windows shortcut without binding it, list it in `#versailles`: `"shell": { "suppress": ["Win+A", "Win+N", "Copilot"] }`. Limits: Win+L and Ctrl+Alt+Del cannot be taken over, and while a program running as administrator has focus the hook does not see keys. The Copilot key sends Shift+Win+F23, so `"Copilot"` is that combo.
 
+**When a Win or Copilot press still reaches Windows.** Windows passes a key on (and may drop the hook) when the hook answers later than `LowLevelHooksTimeout` (about 300 ms unless set under `HKCU\Control Panel\Desktop`; at most 1000 ms). Versailles runs the hook on a time-critical thread that power saving does not slow down, installs it again after the session is unlocked, after resume, when the display turns on, and after 30 s without keys, and writes two kinds of warnings to its log (`%LOCALAPPDATA%\com.versailles.widgets\logs\Versailles.log`):
+
+- `keys: 3 key events reached the hook late (max 412 ms; 0x5b, 2 other)`: the hook thread was slow to run. Win, Shift / Ctrl / Alt and F-keys are named by virtual-key code (`0x5b` LWin, `0x5c` RWin, `0x86` F23 = Copilot); other keys are only counted. When the delay passed `LowLevelHooksTimeout`, the line says the shell probably got the key: that is a Start menu opening late.
+- `keys: missed by hook: LWin (foreground: Code)`: raw input saw a Win or Copilot press the hook had not seen 150 ms later, so Versailles installs the hook again (at most every 5 s). Either the hook had been dropped, or it was more than 150 ms late (a slow-keys line follows), or another program's keyboard hook ahead of it swallowed the key. `injected` means a program sent the key, not the keyboard.
+
+`VERSAILLES_KEYS_DEBUG=1` in Versailles' environment also logs every key the hook sees to `keys.log` in the same folder: time, virtual key, scan code, flags, what the hook did, how late it arrived and how long it took. It records what you type: delete the file after use. To watch raw input, the hook takes the process' keyboard raw-input registration from the window event loop (which uses it only for device events Versailles ignores) and gives it back when the hook ends.
+
 ## Overlay placement
 
 **First open.** The host opens an overlay on the monitor under the cursor at `data-w` × `data-h`, placed at its `data-anchor` with `data-offset` (both logical px). `tc` with no offset rests centered, 120 px from the top. An overlay that covers its monitor (`data-dim="page"`, or the example bar's `coverMonitor`) is built hidden at the monitor's size and position instead, so its first frame is already full-size.

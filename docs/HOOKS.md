@@ -15,7 +15,7 @@ The host never grants more than that list. The catalog is fixed in [`src-tauri/s
 | `layout` | The piece's own window: move, resize, re-anchor, always-on-top, click-through regions (`move_widget_cmd`, `layout_update`) |
 | `spawn` | Open/toggle another spawnable, optionally handing it data |
 | `shell` | Open a URL or path (`cli_open`); from a spawn window also run commands (`cli_exec`, `cli_exec_term`, `cli_search_files`) |
-| `hotkey` | Global accelerator for this spawnable (`data-hotkey` on that piece, else `#versailles` `launcher.hotkey` for the first hook piece) |
+| `hotkey` | Global accelerator for this spawnable (`data-hotkey` on that piece, else `#versailles` `launcher.hotkey` for the first hook piece). Win and Copilot keys, and the log lines that diagnose them: [DIALECT](DIALECT.md#overlay-vs-slide-out) |
 | `pty` | Embedded ConPTY (`pty_open` / write / resize / close) |
 | `storage` | The piece's own key-value store under `.versailles/storage/` (`storage_op`) |
 | `clipboard` | Read / write plain text, change notice (`clipboard_read`, `clipboard_write`, `clipboard://changed`) |

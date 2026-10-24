@@ -8,9 +8,11 @@
 //! click or key press first. Every change is logged.
 //!
 //! Wi-Fi / Bluetooth radios, volume, mute, projection mode and brightness use
-//! documented APIs. The default output (`IPolicyConfig`) and the power mode
-//! overlay (`PowerSetActiveOverlayScheme`) are undocumented: they are feature
-//! checked and fail with a message instead of crashing.
+//! documented APIs. The default output (`IPolicyConfig`), the power mode
+//! overlay (`PowerSetActiveOverlayScheme`), airplane mode (`IRadioManager`)
+//! and night light (a CloudStore registry blob, `nightlight`) are
+//! undocumented: they are feature checked, read as unsupported and fail with
+//! a message instead of crashing.
 
 use crate::error::{AppError, AppResult};
 use serde::Deserialize;
@@ -23,6 +25,8 @@ pub enum QuickAction {
     /// `radio`: `"wifi"` or `"bluetooth"`.
     #[serde(rename_all = "camelCase")]
     Radio { radio: String, on: bool },
+    /// Airplane mode: all radios off (`on: true`) or back on.
+    Airplane { on: bool },
     /// Default output volume, 0–100.
     Volume { level: f64 },
     Mute { on: bool },
@@ -32,6 +36,7 @@ pub enum QuickAction {
     Brightness { id: String, level: f64 },
     /// Win+P: `"pc"`, `"duplicate"`, `"extend"` or `"second"`.
     Project { mode: String },
+    NightLight { on: bool },
     /// `"efficiency"`, `"balanced"` or `"performance"`.
     PowerMode { mode: String },
     /// Look for Wi-Fi networks now (the list updates a few seconds later).
@@ -68,9 +73,9 @@ impl QuickAction {
     /// The hook a piece must declare for this change.
     pub fn hook(&self) -> &'static str {
         match self {
-            QuickAction::Radio { .. } => "radios",
+            QuickAction::Radio { .. } | QuickAction::Airplane { .. } => "radios",
             QuickAction::Volume { .. } | QuickAction::Mute { .. } | QuickAction::Output { .. } => "audio-control",
-            QuickAction::Brightness { .. } | QuickAction::Project { .. } => "display",
+            QuickAction::Brightness { .. } | QuickAction::Project { .. } | QuickAction::NightLight { .. } => "display",
             QuickAction::PowerMode { .. } => "power-mode",
             QuickAction::WifiScan | QuickAction::WifiConnect { .. } | QuickAction::WifiDisconnect => "wifi",
             QuickAction::BluetoothConnect { .. } | QuickAction::BluetoothDisconnect { .. } => "bluetooth",
@@ -84,6 +89,13 @@ impl QuickAction {
 }
 
 /// Current value of a quick-settings sensor.
+/// Pin COM's multithreaded apartment for the life of the process (see
+/// `imp::keep_mta_alive`). Called at start; quick settings call it too.
+pub fn keep_com_alive() {
+    #[cfg(windows)]
+    imp::keep_mta_alive();
+}
+
 pub fn read(hook: &str) -> AppResult<Value> {
     match hook {
         "radios" => imp::radios(),
@@ -102,11 +114,13 @@ pub fn read(hook: &str) -> AppResult<Value> {
 pub fn apply(action: &QuickAction) -> AppResult<()> {
     match action {
         QuickAction::Radio { radio, on } => imp::set_radio(radio, *on),
+        QuickAction::Airplane { on } => imp::set_airplane(*on),
         QuickAction::Volume { level } => imp::set_volume(level.clamp(0.0, 100.0)),
         QuickAction::Mute { on } => imp::set_mute(*on),
         QuickAction::Output { id } => imp::set_output(id),
         QuickAction::Brightness { id, level } => imp::set_brightness(id, level.clamp(0.0, 100.0).round() as u32),
         QuickAction::Project { mode } => imp::project(mode),
+        QuickAction::NightLight { on } => crate::nightlight::set(*on),
         QuickAction::PowerMode { mode } => imp::set_power_mode(mode),
         QuickAction::WifiScan => crate::wireless::wifi_scan(),
         QuickAction::WifiConnect { ssid, password } => crate::wireless::wifi_connect(ssid, password.as_deref()),
@@ -144,15 +158,31 @@ mod imp {
     use super::*;
     use serde_json::json;
     use windows::core::{GUID, PCWSTR};
-    use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED};
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoIncrementMTAUsage, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED,
+    };
 
     fn err(e: windows::core::Error) -> AppError {
         AppError::msg(e.to_string())
     }
 
     fn com() {
+        keep_mta_alive();
         // Already initialised on this thread is fine.
         let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+    }
+
+    /// Keep the process's multithreaded apartment alive for good. Quick
+    /// settings run on short-lived blocking threads: when the last of them
+    /// left the MTA, COM tore it down and the WinRT factories windows-rs
+    /// caches (`Radio`) pointed at nothing, so the next call crashed.
+    pub fn keep_mta_alive() {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            if let Err(e) = unsafe { CoIncrementMTAUsage() } {
+                tracing::warn!("quick settings: could not pin the COM apartment: {e}");
+            }
+        });
     }
 
     // ── radios ─────────────────────────────────────────────────────────
@@ -188,6 +218,7 @@ mod imp {
                 out.insert(name.into(), json!(state == RadioState::On));
             }
         }
+        out.insert("airplane".into(), json!(airplane()));
         Ok(Value::Object(out))
     }
 
@@ -208,6 +239,86 @@ mod imp {
             return Err(AppError::msg(format!("radios: Windows refused the change ({status:?})")));
         }
         Ok(())
+    }
+
+    /// Windows' own airplane mode switch (undocumented; what the Quick
+    /// Settings tile uses, served by RmSvc). Signatures checked against
+    /// yori's `lib/airplane.c` and Lenovo Legion Toolkit's `AirplaneMode.cs`.
+    mod radio_manager {
+        #![allow(non_snake_case)]
+        use windows::core::{BOOL, HRESULT};
+        #[windows_core::interface("db3afbfb-08e6-46c6-aa70-bf9a34c30ab7")]
+        pub unsafe trait IRadioManager: windows::core::IUnknown {
+            fn IsRMSupported(&self, supported: *mut u32) -> HRESULT;
+            fn GetUIRadioInstances(&self, list: *mut *mut core::ffi::c_void) -> HRESULT;
+            fn GetSystemRadioState(&self, radios_on: *mut BOOL, changeable: *mut BOOL, reason: *mut u32) -> HRESULT;
+            fn SetSystemRadioState(&self, radios_on: BOOL) -> HRESULT;
+        }
+
+        /// `IsRMSupported`'s answer. The generated methods are private to this module.
+        pub unsafe fn supported(m: &IRadioManager) -> windows::core::Result<u32> {
+            let mut out = 0u32;
+            m.IsRMSupported(&mut out).ok()?;
+            Ok(out)
+        }
+
+        /// `(radios on, changeable, reason)`.
+        pub unsafe fn state(m: &IRadioManager) -> windows::core::Result<(bool, bool, u32)> {
+            let (mut on, mut changeable, mut reason) = (BOOL(1), BOOL(1), 0u32);
+            m.GetSystemRadioState(&mut on, &mut changeable, &mut reason).ok()?;
+            Ok((on.as_bool(), changeable.as_bool(), reason))
+        }
+
+        pub unsafe fn set(m: &IRadioManager, radios_on: bool) -> windows::core::Result<()> {
+            m.SetSystemRadioState(radios_on.into()).ok()
+        }
+    }
+
+    const RADIO_MANAGEMENT: GUID = GUID::from_u128(0x581333f6_28db_41be_bc7a_ff201f12f3f6);
+
+    fn radio_manager() -> Option<radio_manager::IRadioManager> {
+        use windows::Win32::System::Com::CLSCTX_LOCAL_SERVER;
+        com();
+        let m: radio_manager::IRadioManager = unsafe { CoCreateInstance(&RADIO_MANAGEMENT, None, CLSCTX_LOCAL_SERVER) }.ok()?;
+        (unsafe { radio_manager::supported(&m) }.ok()? != 0).then_some(m)
+    }
+
+    /// Whether airplane mode is on; `None` when Windows does not offer it or
+    /// it cannot be changed.
+    fn airplane() -> Option<bool> {
+        let m = radio_manager()?;
+        let (radios_on, changeable, _) = unsafe { radio_manager::state(&m) }.ok()?;
+        changeable.then_some(!radios_on)
+    }
+
+    pub fn set_airplane(on: bool) -> AppResult<()> {
+        let m = radio_manager().ok_or_else(|| AppError::msg("radios: airplane mode is not supported on this PC"))?;
+        let (radios_on, changeable, _) =
+            unsafe { radio_manager::state(&m) }.map_err(|e| AppError::msg(format!("radios: airplane mode ({e})")))?;
+        if !changeable {
+            return Err(AppError::msg("radios: airplane mode cannot be changed on this PC"));
+        }
+        if radios_on != on {
+            return Ok(()); // already as asked
+        }
+        unsafe { radio_manager::set(&m, !on) }.map_err(|e| AppError::msg(format!("radios: Windows refused airplane mode ({e})")))
+    }
+
+    /// For `live_airplane`: the raw answers, read-only.
+    #[cfg(test)]
+    pub fn airplane_raw() -> String {
+        use windows::Win32::System::Com::CLSCTX_LOCAL_SERVER;
+        com();
+        let m: windows::core::Result<radio_manager::IRadioManager> =
+            unsafe { CoCreateInstance(&RADIO_MANAGEMENT, None, CLSCTX_LOCAL_SERVER) };
+        match m {
+            Err(e) => format!("CoCreateInstance failed: {e}"),
+            Ok(m) => format!(
+                "IsRMSupported: {:?}, GetSystemRadioState (radios on, changeable, reason): {:?}",
+                unsafe { radio_manager::supported(&m) },
+                unsafe { radio_manager::state(&m) }
+            ),
+        }
     }
 
     // ── audio-control ──────────────────────────────────────────────────
@@ -602,7 +713,7 @@ mod imp {
     pub fn display() -> AppResult<Value> {
         let mut brightness = internal_brightness();
         brightness.extend(ddc_brightness());
-        Ok(json!({ "projection": projection(), "brightness": brightness }))
+        Ok(json!({ "projection": projection(), "brightness": brightness, "nightLight": crate::nightlight::read() }))
     }
 
     pub fn set_brightness(id: &str, level: u32) -> AppResult<()> {
@@ -735,6 +846,9 @@ mod imp {
     pub fn set_radio(_: &str, _: bool) -> AppResult<()> {
         unavailable()
     }
+    pub fn set_airplane(_: bool) -> AppResult<()> {
+        unavailable()
+    }
     pub fn outputs() -> AppResult<Value> {
         unavailable()
     }
@@ -782,6 +896,13 @@ mod tests {
         assert_eq!(a.hook(), "audio-control");
         let a: QuickAction = serde_json::from_str(r#"{ "kind": "project", "mode": "extend" }"#).unwrap();
         assert_eq!(a.hook(), "display");
+        let a: QuickAction = serde_json::from_str(r#"{ "kind": "nightLight", "on": true }"#).unwrap();
+        assert_eq!(a.hook(), "display");
+        assert_eq!(a.describe(), "NightLight { on: true }");
+        let a: QuickAction = serde_json::from_str(r#"{ "kind": "airplane", "on": false }"#).unwrap();
+        assert_eq!(a.hook(), "radios");
+        assert_eq!(a.describe(), "Airplane { on: false }");
+        assert!(serde_json::from_str::<QuickAction>(r#"{ "kind": "airplane" }"#).is_err());
         let a: QuickAction = serde_json::from_str(r#"{ "kind": "powerMode", "mode": "balanced" }"#).unwrap();
         assert_eq!(a.hook(), "power-mode");
         let a: QuickAction = serde_json::from_str(r#"{ "kind": "wifiConnect", "ssid": "Home" }"#).unwrap();
@@ -806,6 +927,16 @@ mod tests {
             let value = read(hook).map(|v| v.to_string());
             println!("{hook} ({} ms): {value:?}", t.elapsed().as_millis());
         }
+    }
+
+    /// `cargo test live_airplane -- --ignored --nocapture`: read-only, what
+    /// `IRadioManager` answers here. Never switches airplane mode.
+    #[cfg(windows)]
+    #[test]
+    #[ignore]
+    fn live_airplane() {
+        println!("{}", imp::airplane_raw());
+        println!("radios: {:?}", read("radios").map(|v| v.to_string()));
     }
 
     /// `cargo test live_dnd -- --ignored --nocapture`: switch to priority

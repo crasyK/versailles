@@ -1268,9 +1268,9 @@
     <!-- ===== end of the taskbar example ===== -->
 
     <!-- ===== Example: quick settings =====
-         A slide-out with Wi-Fi networks, Bluetooth devices, volume, the output,
-         brightness, projection, Do Not Disturb, recent notifications and power
-         mode, opened with Ctrl+Alt+Q. Settings change only
+         A slide-out with Wi-Fi networks, Bluetooth devices, airplane mode, volume,
+         the output, brightness, night light, projection, Do Not Disturb, recent
+         notifications and power mode, opened with Ctrl+Alt+Q. Settings change only
          from a slide-out, bar or overlay and only on a click or key press: the
          wallpaper can show them but never change them. Values arrive by push,
          so changes made in Windows show up here too.
@@ -1320,7 +1320,8 @@
         <h3>sound</h3>
         <div class="row"><input class="q-vol" type="range" min="0" max="100"><button class="q-mute">mute</button></div>
         <div class="row"><select class="q-out"></select></div>
-        <h3>display</h3>
+        <h3>airplane mode <button class="q-plane">off</button></h3>
+        <h3>display <button class="q-night">night light</button></h3>
         <div class="q-bright"></div>
         <div class="row q-proj">
           <button data-mode="pc">pc</button><button data-mode="duplicate">duplicate</button>
@@ -1361,7 +1362,13 @@
                 b.textContent = radios[p[1]] === false ? 'off' : 'on';
                 b.disabled = radios[p[1]] == null;
               });
+              // null: Windows offers no airplane switch here.
+              var plane = $('.q-plane');
+              plane.classList.toggle('on', radios.airplane === true);
+              plane.textContent = radios.airplane === true ? 'on' : 'off';
+              plane.disabled = radios.airplane == null;
             }).catch(function () {});
+            $('.q-plane').onclick = function () { act(me.radios.setAirplane(!radios.airplane)); };
             $('.q-wifi').onclick = function () { act(me.radios.set('wifi', !radios.wifi)); };
             $('.q-bt').onclick = function () { act(me.radios.set('bluetooth', !radios.bluetooth)); };
 
@@ -1501,9 +1508,13 @@
             }).catch(function () {});
             $('.q-out').onchange = function () { act(me.audioControl.setOutput(this.value)); };
 
+            var night = null;
             me.on('display', function (d) {
               if (!d) return;
               root.querySelectorAll('.q-proj button').forEach(function (b) { b.classList.toggle('on', b.dataset.mode === d.projection); });
+              night = d.nightLight || null;
+              $('.q-night').classList.toggle('on', !!(night && night.on));
+              $('.q-night').disabled = !(night && night.supported);
               var box = $('.q-bright');
               if (box.contains(document.activeElement)) return;
               box.innerHTML = '';
@@ -1523,6 +1534,7 @@
             root.querySelectorAll('.q-proj button').forEach(function (b) {
               b.onclick = function () { act(me.display.project(b.dataset.mode)); };
             });
+            $('.q-night').onclick = function () { act(me.display.setNightLight(!(night && night.on))); };
 
             me.on('dnd', function (d) {
               if (!d) return;

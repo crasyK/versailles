@@ -27,6 +27,7 @@ mod sdk;
 mod sensors;
 mod taskbar;
 mod pty;
+mod nightlight;
 mod quick;
 mod registry;
 mod single_instance_fixup;
@@ -320,6 +321,8 @@ pub fn run() {
             watcher::start_widget_watcher(app.handle().clone());
             crash::start_hang_watchdog(app.handle());
             clipboard::start_change_watcher(app.handle().clone());
+            // Before any sensor or quick setting touches WinRT on a short-lived thread.
+            quick::keep_com_alive();
             sensors::start_watcher(app.handle().clone());
             app_windows::start_watcher(app.handle().clone());
             tray::start_watcher(app.handle().clone());

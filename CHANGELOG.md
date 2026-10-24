@@ -2,6 +2,14 @@
 
 What changed in each release of Versailles, newest first. Full notes and installers: [GitHub releases](https://github.com/crasyK/versailles/releases). Each release commit updates this file.
 
+## 0.11.0 — 2026-10-24
+
+- **Updates from the tray.** A minute after start and then once a day, Versailles looks for a newer release on GitHub and offers **Update to x.y.z** at the top of the tray menu. Nothing downloads before you click it. The download is checked against a key built into the app, then Versailles gives back the taskbar, the tray icons and the bars' screen space, runs the installer (a progress bar, no questions) and starts the new version. `"updates": { "check": false }` in `#versailles` turns the check off; pages get no access to it. This release is installed by hand; later ones arrive this way. (#41)
+- **Diagnostics for bug reports:** tray menu **Copy diagnostics** (or `versailles.exe --diagnostics` when the app will not start) saves a zip to Downloads with versions, monitors, the page's pieces and hooks, the config and the logs. Values that look like passwords, tokens or keys are replaced, and your user name in paths becomes `%USERPROFILE%`. Nothing is sent anywhere. (#43)
+- **First run:** without a `Documents\Widgets\desktop\index.html`, a welcome window offers to set up the example desktop or to let you bring your own page. It asks once, copies only on your click, and never overwrites a file. (#42)
+- Code signing is prepared but off: releases stay unsigned until the project has a certificate, so Windows still shows "unknown publisher". (#40)
+- Fixed: quitting could stall while the tray was being handed back to Explorer (it was started again in between).
+
 ## 0.10.0 — 2026-10-24
 
 - **Win and Copilot hotkeys are reliable.** While one of Versailles' own windows had the focus (the desktop, an overlay, a bar), Windows skipped the keyboard hook and a bound Win press opened Start. The hook now runs in a small helper process (`versailles.exe --keys-hook`) and sees every press. Missed presses are logged ("missed by hook"), and the hook re-installs itself after unlock, resume and display-on. A fast key-up no longer leaves a replayed key stuck (Win+R). (#37)

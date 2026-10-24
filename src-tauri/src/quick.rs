@@ -7,8 +7,9 @@
 //! (bar, slide-out, overlay) may change a setting, and the SDK asks for a
 //! click or key press first. Every change is logged.
 //!
-//! Wi-Fi / Bluetooth radios, volume, mute, projection mode and brightness use
-//! documented APIs. The default output (`IPolicyConfig`), the power mode
+//! Wi-Fi / Bluetooth radios, volume, mute, per-app volume, projection mode and
+//! brightness use documented APIs. The default output and input
+//! (`IPolicyConfig`), the power mode
 //! overlay (`PowerSetActiveOverlayScheme`), airplane mode (`IRadioManager`)
 //! and night light (a CloudStore registry blob, `nightlight`) are
 //! undocumented: they are feature checked, read as unsupported and fail with
@@ -32,6 +33,14 @@ pub enum QuickAction {
     Mute { on: bool },
     /// Make this output (an `id` from `audio-control`'s `outputs`) the default.
     Output { id: String },
+    /// Default microphone volume, 0–100.
+    InputVolume { level: f64 },
+    InputMute { on: bool },
+    /// Make this input (an `id` from `audio-control`'s `inputs`) the default.
+    Input { id: String },
+    /// One app's volume (an `id` from `audio-control`'s `sessions`), 0–100.
+    SessionVolume { id: String, level: f64 },
+    SessionMute { id: String, on: bool },
     /// `id` from `display`'s `brightness` list; `level` 0–100.
     Brightness { id: String, level: f64 },
     /// Win+P: `"pc"`, `"duplicate"`, `"extend"` or `"second"`.
@@ -74,7 +83,14 @@ impl QuickAction {
     pub fn hook(&self) -> &'static str {
         match self {
             QuickAction::Radio { .. } | QuickAction::Airplane { .. } => "radios",
-            QuickAction::Volume { .. } | QuickAction::Mute { .. } | QuickAction::Output { .. } => "audio-control",
+            QuickAction::Volume { .. }
+            | QuickAction::Mute { .. }
+            | QuickAction::Output { .. }
+            | QuickAction::InputVolume { .. }
+            | QuickAction::InputMute { .. }
+            | QuickAction::Input { .. }
+            | QuickAction::SessionVolume { .. }
+            | QuickAction::SessionMute { .. } => "audio-control",
             QuickAction::Brightness { .. } | QuickAction::Project { .. } | QuickAction::NightLight { .. } => "display",
             QuickAction::PowerMode { .. } => "power-mode",
             QuickAction::WifiScan | QuickAction::WifiConnect { .. } | QuickAction::WifiDisconnect => "wifi",
@@ -96,10 +112,25 @@ pub fn keep_com_alive() {
     imp::keep_mta_alive();
 }
 
+/// Make an audio endpoint (output or input) the default for every role,
+/// through the undocumented `IPolicyConfig`. Callers pass only listed ids.
+pub fn set_default_endpoint(id: &str) -> AppResult<()> {
+    imp::set_default_endpoint(id)
+}
+
+/// `audio-control`: outputs, plus inputs and app sessions (see `audio`).
+/// Inputs and sessions read as empty lists when Windows does not answer.
+fn audio_control() -> AppResult<Value> {
+    let mut value = imp::outputs()?;
+    value["inputs"] = crate::audio::inputs();
+    value["sessions"] = crate::audio::sessions();
+    Ok(value)
+}
+
 pub fn read(hook: &str) -> AppResult<Value> {
     match hook {
         "radios" => imp::radios(),
-        "audio-control" => imp::outputs(),
+        "audio-control" => audio_control(),
         "display" => imp::display(),
         "power-mode" => imp::power_mode(),
         "wifi" | "bluetooth" => crate::wireless::read(hook),
@@ -118,6 +149,11 @@ pub fn apply(action: &QuickAction) -> AppResult<()> {
         QuickAction::Volume { level } => imp::set_volume(level.clamp(0.0, 100.0)),
         QuickAction::Mute { on } => imp::set_mute(*on),
         QuickAction::Output { id } => imp::set_output(id),
+        QuickAction::InputVolume { level } => crate::audio::set_input_volume(*level),
+        QuickAction::InputMute { on } => crate::audio::set_input_mute(*on),
+        QuickAction::Input { id } => crate::audio::set_default_input(id),
+        QuickAction::SessionVolume { id, level } => crate::audio::set_session_volume(id, *level),
+        QuickAction::SessionMute { id, on } => crate::audio::set_session_mute(id, *on),
         QuickAction::Brightness { id, level } => imp::set_brightness(id, level.clamp(0.0, 100.0).round() as u32),
         QuickAction::Project { mode } => imp::project(mode),
         QuickAction::NightLight { on } => crate::nightlight::set(*on),
@@ -429,9 +465,14 @@ mod imp {
         if !listed {
             return Err(AppError::msg(format!("audio-control: no active output '{id}'")));
         }
+        set_default_endpoint(id)
+    }
+
+    /// Output or input: the role-less `IPolicyConfig` call takes either.
+    pub fn set_default_endpoint(id: &str) -> AppResult<()> {
         com();
         let policy: IPolicyConfig = unsafe { CoCreateInstance(&POLICY_CONFIG_CLIENT, None, CLSCTX_ALL) }
-            .map_err(|e| AppError::msg(format!("audio-control: default output not supported here ({e})")))?;
+            .map_err(|e| AppError::msg(format!("audio-control: default device not supported here ({e})")))?;
         let wide: Vec<u16> = id.encode_utf16().chain([0]).collect();
         for role in [eConsole, eMultimedia, eCommunications] {
             unsafe { policy::set_default(&policy, PCWSTR(wide.as_ptr()), role.0) }.ok().map_err(err)?;
@@ -861,6 +902,9 @@ mod imp {
     pub fn set_output(_: &str) -> AppResult<()> {
         unavailable()
     }
+    pub fn set_default_endpoint(_: &str) -> AppResult<()> {
+        unavailable()
+    }
     pub fn display() -> AppResult<Value> {
         unavailable()
     }
@@ -916,6 +960,24 @@ mod tests {
         let a: QuickAction = serde_json::from_str(r#"{ "kind": "notifyClear" }"#).unwrap();
         assert_eq!(a.hook(), "notify-control");
         assert!(serde_json::from_str::<QuickAction>(r#"{ "kind": "reboot" }"#).is_err());
+    }
+
+    #[test]
+    fn microphone_and_mixer_actions_are_audio_control() {
+        for json in [
+            r#"{ "kind": "inputVolume", "level": 30 }"#,
+            r#"{ "kind": "inputMute", "on": true }"#,
+            r#"{ "kind": "input", "id": "{0.0.1.00000000}.{x}" }"#,
+            r#"{ "kind": "sessionVolume", "id": "{0.0.0.00000000}.{x}|1", "level": 55.5 }"#,
+            r#"{ "kind": "sessionMute", "id": "{0.0.0.00000000}.{x}|1", "on": false }"#,
+        ] {
+            let a: QuickAction = serde_json::from_str(json).unwrap();
+            assert_eq!(a.hook(), "audio-control", "{json}");
+        }
+        let a: QuickAction = serde_json::from_str(r#"{ "kind": "sessionMute", "id": "s", "on": true }"#).unwrap();
+        assert_eq!(a.describe(), r#"SessionMute { id: "s", on: true }"#);
+        assert!(serde_json::from_str::<QuickAction>(r#"{ "kind": "sessionVolume", "level": 5 }"#).is_err());
+        assert!(serde_json::from_str::<QuickAction>(r#"{ "kind": "inputMute" }"#).is_err());
     }
 
     /// `cargo test live_reads -- --ignored --nocapture`: what this PC answers.

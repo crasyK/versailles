@@ -189,7 +189,7 @@ mod imp {
             let devices: IMMDeviceEnumerator =
                 CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).map_err(err)?;
             let Ok(device) = devices.GetDefaultAudioEndpoint(eRender, eConsole) else {
-                return Ok(json!({ "device": null, "volume": null, "muted": null }));
+                return Ok(json!({ "device": null, "volume": null, "muted": null, "input": crate::audio::input() }));
             };
             let volume: IAudioEndpointVolume = device.Activate(CLSCTX_ALL, None).map_err(err)?;
             let level = volume.GetMasterVolumeLevelScalar().map_err(err)?;
@@ -204,6 +204,8 @@ mod imp {
                 "device": name,
                 "volume": (level * 100.0).round() as u32,
                 "muted": muted,
+                // The default microphone (`null` without one).
+                "input": crate::audio::input(),
             }))
         }
     }

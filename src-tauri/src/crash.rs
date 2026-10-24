@@ -105,6 +105,11 @@ pub fn note_exiting() {
     EXITING.store(true, Ordering::SeqCst);
 }
 
+/// A shutdown was requested (and not cancelled).
+pub fn exiting() -> bool {
+    EXITING.load(Ordering::SeqCst)
+}
+
 fn terminate_now(code: u32) -> ! {
     // TerminateProcess, not exit(): a hung main thread may hold the loader lock,
     // and ExitProcess would then hang too.

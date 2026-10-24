@@ -655,7 +655,9 @@ fn declared(app: &AppHandle) -> bool {
 pub fn start_watcher(app: AppHandle) {
     std::thread::spawn(move || loop {
         std::thread::sleep(Duration::from_secs(1));
-        let want = crate::taskbar::hiding() && declared(&app);
+        // Not on the way out: the exit stops the tray before the taskbar,
+        // and starting it again in between kept the exit waiting.
+        let want = !crate::crash::exiting() && crate::taskbar::hiding() && declared(&app);
         if want && !imp::running() {
             let push_app = app.clone();
             imp::start(Box::new(move |push| crate::push::to_hook(&push_app, "tray", &push)));

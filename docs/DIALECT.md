@@ -205,7 +205,9 @@ The widget/spawnable parser ignores this. The JSON must not contain the literal 
       "searchHf": "https://huggingface.co/models?search={q}",
       "timeAwareDefaults": true,
       "autoDismissLaunch": true,
-      "coverMonitor": false
+      "coverMonitor": false,
+      "recentFiles": 5,
+      "liveSearch": true
     }
   }
 }
@@ -258,4 +260,6 @@ The starter ships a command bar as page JS (`desktop/bar.js`), not a host featur
 `bar.js` is generated. Its source is [`src/launcher.ts`](../src/launcher.ts) (+ `src/engine/*`) in this repo; `npm run build:bar` bundles it into `templates/starter/desktop/bar.js`. `npm run build:bar -- --install` also copies it to `%USERPROFILE%\Documents\Widgets\desktop\bar.js`. Do not hand-edit `bar.js`.
 
 The bar sizes itself from its tag (`data-w` / `data-h` / `data-anchor`) when it leaves terminal mode, shows its own `data-hotkey` in the footer, and honours `data-dismiss-on-blur`. The command line is a plain visible `<input id="cli-in">` after the `#cli-ps` prompt; `#cli-echo` / `.cli-caret` from older pages are optional and ignored.
+
+**Start menu.** Installed apps include Store / packaged apps (Settings, Calculator, Photos), each with its icon (`<img class="cl-ico">` inside the row's `<b>`). While you type, Settings pages and files from the Windows Search index appear below the shortcuts in their own groups (a `.cl-g` header above each group; rows carry `data-kind="settings"`, `"file"` or `"folder"`); `opts.liveSearch: false` turns that off. Enter on a word that is no shortcut opens the matching Settings page (`bluetooth`, `nachtmodus`, `night light`). `?? <query>` searches the index (names and contents) with the Settings group on top, and walks your folders when the index is off. With an empty line the bar lists the last `opts.recentFiles` (default 5, `0` = none) recently opened files under **Recent**; `recent [filter]` lists up to 30. The bar needs `data-hooks="shell"` for all of it (see [HOOKS](HOOKS.md#search-recent-files-and-settings)).
 

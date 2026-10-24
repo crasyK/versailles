@@ -759,6 +759,17 @@
         async open(target) {
           return hostInvoke("shell", "cli_open", { target });
         },
+        /**
+         * Settings pages and files (Windows Search index) matching `query`.
+         * `opts`: `{ limit, files, settings, fallback }`. Bars and overlays only.
+         */
+        async search(query, opts) {
+          return hostInvoke("shell", "cli_search", Object.assign({}, opts || {}, { query: String(query) }));
+        },
+        /** Recently opened files and folders, newest first. Bars and overlays only. */
+        async recent(limit) {
+          return hostInvoke("shell", "cli_recent_files", limit == null ? {} : { limit });
+        },
       },
       /** The piece's own key-value store (JSON values, ~1 MB per piece). */
       storage: {

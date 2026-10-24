@@ -12,6 +12,10 @@ export type SpawnableEngineOpts = {
   autoDismissLaunch?: boolean;
   /** `tc` pieces: the window covers the monitor and the chrome is laid out inside it. */
   coverMonitor?: boolean;
+  /** Recently opened files under the shortcuts while the bar is empty (0 = none). */
+  recentFiles?: number;
+  /** Search Settings pages and files while typing. */
+  liveSearch?: boolean;
 };
 
 export type SpawnableEngineContext = {
@@ -37,6 +41,8 @@ const DEFAULT_OPTS: Required<SpawnableEngineOpts> = {
   timeAwareDefaults: true,
   autoDismissLaunch: true,
   coverMonitor: false,
+  recentFiles: 5,
+  liveSearch: true,
 };
 
 export function spawnableId(): string {
@@ -76,6 +82,8 @@ export function mergeOpts(
     autoDismissLaunch:
       host?.autoDismissLaunch ?? block.autoDismissLaunch ?? DEFAULT_OPTS.autoDismissLaunch,
     coverMonitor: host?.coverMonitor ?? block.coverMonitor ?? DEFAULT_OPTS.coverMonitor,
+    recentFiles: host?.recentFiles ?? block.recentFiles ?? DEFAULT_OPTS.recentFiles,
+    liveSearch: host?.liveSearch ?? block.liveSearch ?? DEFAULT_OPTS.liveSearch,
   };
 }
 

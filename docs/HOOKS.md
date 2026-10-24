@@ -14,7 +14,7 @@ The host never grants more than that list. The catalog is fixed in [`src-tauri/s
 | `mouse` | Cursor position |
 | `layout` | The piece's own window: move, resize, re-anchor, always-on-top, click-through regions (`move_widget_cmd`, `layout_update`) |
 | `spawn` | Open/toggle another spawnable, optionally handing it data |
-| `shell` | Open a URL or path (`cli_open`); from a spawn window also run commands (`cli_exec`, `cli_exec_term`, `cli_search_files`) |
+| `shell` | Open a URL, path or installed app (`cli_open`); from a spawn window also run commands (`cli_exec`, `cli_exec_term`), search files and Settings pages (`cli_search`, `cli_search_files`) and list recently opened files (`cli_recent_files`); see [Search](#search-recent-files-and-settings) |
 | `hotkey` | Global accelerator for this spawnable (`data-hotkey` on that piece, else `#versailles` `launcher.hotkey` for the first hook piece). Win and Copilot keys, and the log lines that diagnose them: [DIALECT](DIALECT.md#overlay-vs-slide-out) |
 | `pty` | Embedded ConPTY (`pty_open` / write / resize / close) |
 | `storage` | The piece's own key-value store under `.versailles/storage/` (`storage_op`) |
@@ -44,7 +44,7 @@ Unknown hook names are rejected.
 
 - **Basics:** [SDK](#sdk) · [Enforcement](#enforcement) · [Events](#events)
 - **Reading the system:** [Push](#push) · [Notifications](#notifications) · [Windows](#windows) · [Tray](#tray)
-- **Acting:** [Layout](#layout) · [Power](#power) · [Quick settings](#quick-settings) · [Clipboard](#clipboard)
+- **Acting:** [Layout](#layout) · [Power](#power) · [Quick settings](#quick-settings) · [Clipboard](#clipboard) · [Search](#search-recent-files-and-settings)
 - **Between pieces:** [Storage](#storage) · [Bus](#bus) · [Piece events](#piece-events)
 
 ## SDK
@@ -90,9 +90,9 @@ That piece must list the hook in `data-hooks`. A piece that omitted `data-hooks=
 
 **Control class.** `quick_set` (`radios`, `audio-control`, `display`, `power-mode`, `wifi`, `bluetooth`, `dnd`, `notify-control`) changes a system setting. Like exec class it is refused from the desktop wallpaper and from folder widgets; only a spawn window (bar, slide-out, overlay) whose piece declares the hook may change a setting. The SDK also asks for a click or key press first. Reading those hooks works anywhere.
 
-**Exec class.** `cli_exec`, `cli_exec_term`, `cli_search_files` (`shell`) and `pty_open` / `pty_write` / `pty_resize` / `pty_is_alive` / `pty_close` (`pty`) run code. They are refused from the desktop wallpaper entirely and only work from a spawn window whose piece declares the hook. `cli_open` (open a URL/path) is not exec class: the wallpaper may call it via `versailles.for(id).shell.open(...)`.
+**Exec class.** `cli_exec`, `cli_exec_term`, `cli_search`, `cli_search_files`, `cli_recent_files` (`shell`) and `pty_open` / `pty_write` / `pty_resize` / `pty_is_alive` / `pty_close` (`pty`) run code. They are refused from the desktop wallpaper entirely and only work from a spawn window whose piece declares the hook. `cli_open` (open a URL/path) is not exec class: the wallpaper may call it via `versailles.for(id).shell.open(...)`.
 
-`cli_open` refuses network (UNC) paths and dangerous URL handlers (`ms-msdt:`, `search-ms:`, `search:`, `ms-officecmd:`, Office `ms-word:` / `ms-excel:` / … and their `ofe|u|` forms, `file://host/…`). `http(s)`, `ms-settings:`, `shell:`, local paths and installed app names keep working.
+`cli_open` refuses network (UNC) paths and dangerous URL handlers (`ms-msdt:`, `search-ms:`, `search:`, `ms-officecmd:`, Office `ms-word:` / `ms-excel:` / … and their `ofe|u|` forms, `file://host/…`). `http(s)`, `ms-settings:`, `shell:`, local paths and installed app names keep working. `shell:AppsFolder\<AppUserModelID>` opens only an app that is in Windows' Applications folder.
 
 `layout` only ever touches the piece's own window (a wallpaper widget has none, so it is refused). From a bar's monitor copy it changes that copy's window.
 
@@ -360,6 +360,30 @@ await qs.bluetooth.connect(devices[0].id);                     // audio devices 
 - **Night light** has no Windows API: its state is an undocumented registry value that Explorer watches. `on` is whether night light is on now (by hand or by its schedule). Switching it works like the Quick Settings tile: by hand, so a schedule takes over again at its next start or end. Versailles writes only when it can re-encode the stored value exactly; otherwise `supported: false` (and `on: null` when it cannot be read at all) and `setNightLight` rejects. Offer `versailles.shell.open("ms-settings:nightlight")` instead. Changes made elsewhere show up within the 5 s `display` read.
 - **Power mode** is the Settings slider (an undocumented Windows call). It needs the Balanced power plan; `supported: false` when Windows does not offer it. Energy saver is read-only.
 - A setting Windows refuses fails with a message (`radios: Windows refused access`, `power-mode: … the power plan must be Balanced`) instead of failing silently.
+
+## Search, recent files and settings
+
+The example command bar's Start menu: installed apps (with Store apps and icons), Settings pages, files from the Windows Search index, and recently opened files. All of it is `shell`; searching and recent files are exec class, so only a bar or overlay that declares `shell` gets them.
+
+```js
+const bar = versailles.for("action-bar");
+const r = await bar.shell.search("rechnung");
+// { query, source: "index" | "walk" | "off", ms,
+//   settings: [{ kind: "settings", title, uri, en, de, score, exact }],
+//   files: [{ kind: "file" | "folder", path, name, folder, modified, match: "name" | "contents" }] }
+await bar.shell.open(r.settings[0].uri);                       // ms-settings:…
+await bar.shell.search("bluetooth", { files: false });         // Settings pages only: instant
+await bar.shell.search("rep", { limit: 8, fallback: false });  // as you type: never the slow walk
+const recent = await bar.shell.recent(10);                     // [{ kind, path, name, folder, opened }]
+const apps = await versailles.invoke("list_catalog");          // [{ id, name, target, kind: "shortcut" | "packaged", aumid, fresh, … }]
+const icon = await versailles.invoke("catalog_icon", { id: apps[0].id }); // 32×32 PNG data URL or null
+```
+
+- **Files** come from the Windows Search index (the provider PowerToys Run uses): names first (starting with the query, then containing it), then contents, at most `limit` (default 40, up to 100). Hidden and dot folders, `AppData`, `node_modules`, `target` and the recycle bin are left out. `modified` is ms since 1970. When the index is off or does not answer within 1.5 s, the search walks Documents, Desktop, Downloads, Pictures and your profile instead (`source: "walk"`, names only, up to 2 s); `fallback: false` skips the walk (`source: "off"`). `cli_search_files` still answers a plain list of paths, index first.
+- **Settings pages** are a built-in table of about 120 `ms-settings:` pages with English and German names and keywords; case, umlauts and hyphens do not matter (`lautstarke`, `wifi`). `title` is in the Windows display language; `exact` is true when the query is a whole name or keyword.
+- **Recent files** are the shortcuts Windows keeps in `%APPDATA%\Microsoft\Windows\Recent`, newest first, at most `limit` (default 30, up to 100); missing targets and network paths are left out. The list is empty when "Show recently opened items" (Settings › Personalization › Start) is off.
+- **Store apps** (packaged apps without a Start menu shortcut) are in `list_catalog` as `kind: "packaged"` with their AppUserModelID; `target` is `shell:AppsFolder\<id>` and `cli_open` starts them. A Store app with the same name as a shortcut is listed once.
+- **Privacy:** search results and recent files reveal file names and folders. Declare `shell` only on the piece that needs it; the wallpaper and folder widgets never get these calls.
 
 ## Clipboard
 

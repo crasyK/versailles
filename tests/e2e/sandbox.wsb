@@ -1,0 +1,39 @@
+<Configuration>
+  <!--
+    Windows Sandbox for the e2e (#38): a clean Windows where the taskbar
+    phase always runs. Windows Pro / Enterprise / Education only. A template:
+    scripts\sandbox-e2e.cmd fills in the __PLACEHOLDERS__ and starts it.
+    Untested so far (written on a Windows Home machine, which has no Sandbox).
+  -->
+  <MemoryInMB>4096</MemoryInMB>
+  <Networking>Disable</Networking>
+  <AudioInput>Disable</AudioInput>
+  <VideoInput>Disable</VideoInput>
+  <ClipboardRedirection>Disable</ClipboardRedirection>
+  <PrinterRedirection>Disable</PrinterRedirection>
+  <MappedFolders>
+    <MappedFolder>
+      <HostFolder>__REPO__</HostFolder>
+      <SandboxFolder>C:\repo</SandboxFolder>
+      <ReadOnly>true</ReadOnly>
+    </MappedFolder>
+    <MappedFolder>
+      <HostFolder>__BUILD__</HostFolder>
+      <SandboxFolder>C:\build</SandboxFolder>
+      <ReadOnly>true</ReadOnly>
+    </MappedFolder>
+    <MappedFolder>
+      <HostFolder>__NODE__</HostFolder>
+      <SandboxFolder>C:\node</SandboxFolder>
+      <ReadOnly>true</ReadOnly>
+    </MappedFolder>
+    <MappedFolder>
+      <HostFolder>__RESULTS__</HostFolder>
+      <SandboxFolder>C:\results</SandboxFolder>
+      <ReadOnly>false</ReadOnly>
+    </MappedFolder>
+  </MappedFolders>
+  <LogonCommand>
+    <Command>cmd.exe /c C:\repo\scripts\sandbox-e2e.cmd --inside</Command>
+  </LogonCommand>
+</Configuration>

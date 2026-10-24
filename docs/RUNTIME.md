@@ -60,7 +60,7 @@ Sidecar `versailles.json` / `shortcuts.json` are fallback if `#versailles` is mi
 
 Release builds start as a small **supervisor** that runs the app in a child process (same exe, `VERSAILLES_SUPERVISED=1`) inside a kill-on-close Job Object. Exit code 0 (Quit, or a second launch that handed off to the running instance) ends both. Any other exit restarts the app after 1s, 2s, 5s, 10s, 30s; a sixth crash within 10 minutes gives up. Session restore brings back the wallpaper and floating widgets. Apps launched from the action bar are not in the job and survive a restart.
 
-- Panics are written to `Versailles.log` and `last-crash.txt`; supervisor restarts go to `supervisor.log` (all in `%LOCALAPPDATA%\com.versailles.widgets\logs`).
+- Panics are written to `Versailles.log` and `last-crash.txt`; supervisor restarts go to `supervisor.log` (all in `%LOCALAPPDATA%\com.versailles.widgets\logs`). `Versailles.log` rolls over at 1 MB and keeps the last three files (the older ones get a date in their name).
 - A watchdog in the supervised app terminates it (exit code 3, then restart) when the main thread has not answered for 45 s (WebView2 deadlock). System sleep does not count.
 - Opt-outs: `VERSAILLES_NO_SUPERVISOR=1`, `VERSAILLES_NO_WATCHDOG=1`. Debug builds and bench mode never supervise.
 

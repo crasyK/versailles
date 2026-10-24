@@ -56,7 +56,7 @@ use tauri::{
 use window_manager::{
     open_widget_window, spawn_webview_prewarm, WindowManager,
 };
-use tauri_plugin_log::{Target, TargetKind};
+use tauri_plugin_log::{RotationStrategy, Target, TargetKind};
 
 pub use crash::supervise_if_needed;
 pub use taskbar::run_cli as taskbar_cli;
@@ -154,7 +154,12 @@ pub fn run() {
     }
 
     let log_builder = {
-        let mut b = tauri_plugin_log::Builder::new().level(log::LevelFilter::Info);
+        // The plugin's defaults (40 KB, KeepOne) delete the log every 40 KB,
+        // taking the lines before a problem with it: keep three 1 MB files.
+        let mut b = tauri_plugin_log::Builder::new()
+            .level(log::LevelFilter::Info)
+            .max_file_size(1_000_000)
+            .rotation_strategy(RotationStrategy::KeepSome(3));
         #[cfg(debug_assertions)]
         {
             b = b.targets([

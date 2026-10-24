@@ -66,6 +66,18 @@ Release builds start as a small **supervisor** that runs the app in a child proc
 
 A locked `config.json` at boot runs on in-memory defaults without overwriting the file. A corrupt one is copied to `config.json.corrupt-<unix-ts>` and reset, keeping `apiToken` when it can be read.
 
+## Diagnostics
+
+Tray menu **Copy diagnostics** writes `versailles-diagnostics-<yyyymmdd-hhmmss>.zip` to your Downloads folder, copies its path to the clipboard and shows it in Explorer. When the app will not start, `versailles.exe --diagnostics` writes the same zip (it prints the path when run from a console). Nothing is sent anywhere: attach the zip to a bug report yourself.
+
+| In the zip | What |
+| ---------- | ---- |
+| `info.json` | Host, SDK and WebView2 versions; Windows `DisplayVersion`, build and UBR; monitors with their scale; the page's pieces with their hooks; the `#versailles` config (or `versailles.json`); with the tray item also the open windows and whether the taskbar is hidden |
+| `Versailles.log*`, `supervisor.log`, `taskbar.log`, `last-crash.txt` | Logs, whichever exist |
+| `taskbar-restore.json` | The saved taskbar state, while the taskbar is hidden |
+
+In the config, the value of every key containing `token`, `secret`, `password`, `key` or `auth` (any case, at any depth; `hotkey` excepted) is replaced by `"<redacted>"`. Your profile folder (`C:\Users\<name>`) becomes `%USERPROFILE%` in every file. Shortcut names and targets stay as they are: look through `info.json` before you post it publicly.
+
 ## ACL
 
 `npm run verify:acl` must stay green. Adding a Tauri command means `src-tauri/src/lib.rs`, `src-tauri/build.rs`, and `src-tauri/capabilities/default.json` together.

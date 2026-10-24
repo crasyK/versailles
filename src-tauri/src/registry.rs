@@ -234,16 +234,19 @@ fn is_legacy_dir(root: &Path, dir: &Path) -> bool {
 }
 
 pub fn widgets_root() -> AppResult<PathBuf> {
+    let root = widgets_root_path()?;
+    fs::create_dir_all(&root)?;
+    Ok(root)
+}
+
+/// `VERSAILLES_ROOT`, else `Documents\Widgets`, without creating it.
+pub fn widgets_root_path() -> AppResult<PathBuf> {
     if let Ok(override_root) = std::env::var("VERSAILLES_ROOT") {
         let trimmed = override_root.trim();
         if !trimmed.is_empty() {
-            let root = PathBuf::from(trimmed);
-            fs::create_dir_all(&root)?;
-            return Ok(root);
+            return Ok(PathBuf::from(trimmed));
         }
     }
     let docs = dirs::document_dir().ok_or_else(|| AppError::msg("Documents folder not found"))?;
-    let root = docs.join("Widgets");
-    fs::create_dir_all(&root)?;
-    Ok(root)
+    Ok(docs.join("Widgets"))
 }

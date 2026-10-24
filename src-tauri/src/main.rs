@@ -1,6 +1,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
+    // `--diagnostics`: the bug-report zip, also when the app will not start.
+    if let Some(code) = versailles_lib::diagnostics_cli() {
+        std::process::exit(code);
+    }
     // `--restore-taskbar` and the taskbar guard (see src/taskbar.rs).
     if let Some(code) = versailles_lib::taskbar_cli() {
         std::process::exit(code);

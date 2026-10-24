@@ -100,6 +100,11 @@ pub fn install_panic_hook() {
     }));
 }
 
+/// Whether this process is the app running under the supervisor.
+pub fn supervised() -> bool {
+    SUPERVISED.load(Ordering::SeqCst)
+}
+
 /// Mark a requested shutdown so the watchdog never turns a slow exit into a restart.
 pub fn note_exiting() {
     EXITING.store(true, Ordering::SeqCst);

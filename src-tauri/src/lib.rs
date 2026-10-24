@@ -9,6 +9,7 @@ mod commands;
 mod config;
 mod crash;
 mod desktop;
+mod diagnostics;
 mod docks;
 mod engine_runtime;
 mod error;
@@ -60,6 +61,7 @@ use window_manager::{
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind};
 
 pub use crash::supervise_if_needed;
+pub use diagnostics::run_cli as diagnostics_cli;
 pub use taskbar::run_cli as taskbar_cli;
 
 /// Load config without ever failing boot: a locked / unreadable `config.json`
@@ -82,7 +84,8 @@ fn load_config_or_defaults(store: &ConfigStore) -> AppConfig {
 /// Tray icon + menu. Failure is logged, not fatal: at login Explorer may not be
 /// ready yet, and the wallpaper / hotkeys still work without a tray.
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
-    // Left-click still opens the action bar; the menu is desktop page + quit.
+    // Left-click still opens the action bar; the menu is desktop page,
+    // diagnostics and quit.
     let desktop_item = MenuItem::with_id(
         app,
         "desktop",
@@ -90,8 +93,10 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         true,
         None::<&str>,
     )?;
+    let diagnostics_item =
+        MenuItem::with_id(app, "diagnostics", "Copy diagnostics", true, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&desktop_item, &quit_item])?;
+    let menu = Menu::with_items(app, &[&desktop_item, &diagnostics_item, &quit_item])?;
     *app.state::<AppState>().tray_desktop_item.lock().unwrap() = Some(desktop_item);
 
     let mut tray = TrayIconBuilder::new();
@@ -118,6 +123,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                     let _ = state.store.lock().unwrap().save_runtime_from_app(&config);
                 }
             }
+            "diagnostics" => diagnostics::copy_from_tray(app),
             "quit" => {
                 app.exit(0);
             }

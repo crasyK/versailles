@@ -1121,8 +1121,9 @@
          copy per monitor) listing that monitor's app windows with the windows
          hook. Click a window to bring it up, click the focused one to minimize
          it, middle-click to close it (windows-control). On the right, the
-         notification-area icons (tray): click, right-click or double-click
-         them as in Windows. The tray icons only show while Versailles hides
+         notification-area icons (tray): click, right-click, double-click or
+         hover them as in Windows (Enter / Space and Shift+F10 when focused).
+         The tray icons only show while Versailles hides
          the Windows taskbar ("shell": { "hideTaskbar": true } in #versailles);
          otherwise this bar sits above the Windows taskbar, which keeps them.
          To try it, delete the two "try me" marker lines around the template
@@ -1198,25 +1199,64 @@
             // Tray icons. Windows' own volume / battery icons (system) are
             // left out: the quick settings example has those.
             var tray = v.for('taskbar').tray;
+            var hovered = null; // the icon the pointer is over (kept across renders)
             function renderTray(icons) {
+              var focused = trayBox.contains(document.activeElement) ? document.activeElement.dataset.tray : null;
               trayBox.replaceChildren();
               icons.forEach(function (t) {
                 if (t.system || !t.icon) return;
                 var b = document.createElement('button');
                 b.type = 'button';
-                b.title = t.tip || t.app || ''; // tooltips come from other apps: text only
+                b.dataset.tray = String(t.id);
+                // Tooltips come from other apps: text only. A version 4 icon
+                // without showTip draws its own pop-up on hover instead.
+                if (t.showTip) b.title = t.tip || t.app || '';
+                b.setAttribute('aria-label', t.tip || t.app || '');
                 var img = document.createElement('img');
                 img.src = t.icon;
                 img.alt = '';
                 b.appendChild(img);
                 function send(button) { tray.click(t.id, button).catch(function () {}); }
                 // A double click is click, click, dblclick here; Windows sends
-                // one click and then the double.
-                b.addEventListener('click', function (e) { if (e.detail < 2) send('left'); });
+                // one click and then the double. Keyboard clicks (detail 0)
+                // are handled as keys below.
+                b.addEventListener('click', function (e) { if (e.detail === 1) send('left'); });
                 b.addEventListener('dblclick', function () { send('double'); });
-                b.addEventListener('contextmenu', function (e) { e.preventDefault(); send('right'); });
                 b.addEventListener('auxclick', function (e) { if (e.button === 1) send('middle'); });
+                // Enter / Space select, the menu key / Shift+F10 open the menu,
+                // as on a focused icon in Windows' tray.
+                var keyMenu = 0;
+                b.addEventListener('keydown', function (e) {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    if (!e.repeat) send('key');
+                  } else if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
+                    e.preventDefault();
+                    keyMenu = Date.now();
+                    send('menu');
+                  }
+                });
+                b.addEventListener('contextmenu', function (e) {
+                  e.preventDefault();
+                  // The browser's own contextmenu after the menu key: sent already.
+                  if (Date.now() - keyMenu < 500) return;
+                  send('right');
+                });
+                // Hover: the app may update its tooltip or show its own pop-up.
+                // An icon that changes while hovered is drawn anew: enter once.
+                if (t.clickable) {
+                  b.addEventListener('mouseenter', function () {
+                    if (hovered === t.id) return;
+                    hovered = t.id;
+                    tray.hover(t.id, true).catch(function () {});
+                  });
+                  b.addEventListener('mouseleave', function () {
+                    if (hovered === t.id) hovered = null;
+                    tray.hover(t.id, false).catch(function () {});
+                  });
+                }
                 trayBox.appendChild(b);
+                if (focused === String(t.id)) b.focus();
               });
             }
             if (trayBox) tray.track(renderTray).catch(function () {});

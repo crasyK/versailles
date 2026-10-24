@@ -36,7 +36,7 @@ The host never grants more than that list. The catalog is fixed in [`src-tauri/s
 | `bluetooth` | Paired Bluetooth devices and whether they are connected; connect / disconnect audio devices from a bar or overlay |
 | `dnd` | Do Not Disturb: off, priority only, alarms only; change it from a bar or overlay |
 | `notify-control` | Dismiss one notification, clear all, open the app that raised one, turn an app's own banners on / off (from a bar or overlay; read them with `notify`) |
-| `tray` | The notification-area icons (tooltip, app, icon), pushed changes, and clicking one, while Versailles hides the Windows taskbar (see [Tray](#tray)). Tooltips can be private |
+| `tray` | The notification-area icons (tooltip, app, icon), pushed changes and balloons, and clicking, hovering or pressing a key on one, while Versailles hides the Windows taskbar (see [Tray](#tray)). Tooltips and balloons can be private |
 
 Unknown hook names are rejected.
 
@@ -130,7 +130,7 @@ await hud.focus.onChange((w) => (title.textContent = w.title));
 | `media` | on change | same as `media.now()` |
 | `windows` | 0.25 s | `{ type: "opened"\|"closed"\|"focused"\|"changed", id, window }` (see [Windows](#windows)) |
 | `notify` | 2 s | one new toast (see [Notifications](#notifications)) |
-| `tray` | on change | `{ type: "added"\|"changed"\|"removed", id, icon }` or `{ type: "active", active }` (see [Tray](#tray)) |
+| `tray` | on change | `{ type: "added"\|"changed"\|"removed", id, icon }`, `{ type: "balloon", id, title, text, icon }` or `{ type: "active", active }` (see [Tray](#tray)) |
 | `radios` | 2 s | `{ wifi, bluetooth }` (`true`, `false`, or `null` without that radio) |
 | `power-mode` | 2 s | `{ supported, mode: "efficiency"\|"balanced"\|"performance"\|null, energySaver }` |
 | `audio-control` | 3 s | `{ outputs: [{ id, name, default }] }` (volume and mute are the `audio` hook) |
@@ -234,9 +234,13 @@ Listed are visible, titled top-level windows without a tool-window style or owne
 const tray = versailles.for("taskbar").tray;
 await tray.track((icons, active) => render(icons.filter((t) => !t.system)));
 
-button.onclick = (e) => e.detail < 2 && tray.click(t.id, "left");
+button.title = t.showTip ? t.tip : "";
+button.onclick = (e) => e.detail === 1 && tray.click(t.id, "left");
 button.ondblclick = () => tray.click(t.id, "double");
 button.oncontextmenu = (e) => (e.preventDefault(), tray.click(t.id, "right"));
+button.onkeydown = (e) => e.key === "Enter" && (e.preventDefault(), tray.click(t.id, "key"));
+button.onmouseenter = () => tray.hover(t.id, true);
+button.onmouseleave = () => tray.hover(t.id, false);
 ```
 
 An icon:
@@ -245,6 +249,7 @@ An icon:
 | ----- | - |
 | `id` | Versailles' number for the icon (for this run); pass it to `click` |
 | `tip` | The tooltip, as the app set it (may have several lines) |
+| `showTip` | Whether Windows would show `tip` as a tooltip: always for older icons; a version 4 icon asks for it with `NIF_SHOWTIP`, otherwise it shows its own pop-up on hover (or nothing). Show your own tooltip only when this is true |
 | `app`, `exe`, `pid` | The owning app: executable name without `.exe`, full path, process id |
 | `guid` | The app's own id for the icon, when it gives one (stable across runs) |
 | `system` | One of Windows' own icons, drawn by Explorer (volume, battery). The quick-settings hooks cover these better |
@@ -252,11 +257,13 @@ An icon:
 | `icon` | PNG data URL at the icon's own size (16–64 px) |
 
 - `tray.state()`: `{ active, icons }`. `tray.list()`: the icons alone, oldest first.
-- `tray.onChange(fn)` / `on("tray", fn)`: `fn({ type: "added"|"changed"|"removed", id, icon })` per change (an icon the app hides is `removed`; shown again, `added`), and `{ type: "active", active }` when Versailles starts or stops holding the icons. Changes within 100 ms go out together.
+- `tray.onChange(fn)` / `on("tray", fn)`: `fn({ type: "added"|"changed"|"removed", id, icon })` per change (an icon the app hides is `removed`; shown again, `added`), `{ type: "balloon", id, title, text, icon }` when an app shows a balloon, and `{ type: "active", active }` when Versailles starts or stops holding the icons. Changes within 100 ms go out together.
+- Balloons: `title` and `text` as the app set them (one may be empty), `icon` one of `"info"`, `"warning"`, `"error"`, `"none"`, `"user"` (the app's own image; not sent). Windows still shows every balloon as a notification and tells the app when it is clicked or closed, so a page that shows one too is for information only: there is nothing to answer. Note: here `icon` is the balloon's kind, not an icon object; `tray.track` ignores balloons.
 - `tray.track(fn)`: `fn(icons, active)` now and after every change. Returns a function that stops tracking.
-- `tray.click(id, button, x, y)`: what clicking the icon in Windows' tray does. `button` is `"left"`, `"right"` (usually the app's menu), `"double"` or `"middle"`. Map browser events one to one: `click` → `left`, `contextmenu` → `right`, `dblclick` → `double`; skip the second `click` of a double click (`event.detail` 2), since Windows sends one click and then the double. `x`, `y` are physical screen pixels where the app should open its menu; leave them out to use the cursor. Only inside a click or key press, like quick settings; it is not control class, because a click does no more than the user clicking the icon in Explorer would. The app gets permission to come to the front.
+- `tray.click(id, button, x, y)`: what clicking the icon in Windows' tray does. `button` is `"left"`, `"right"` (usually the app's menu), `"double"` or `"middle"`. Map browser events one to one: `click` → `left`, `contextmenu` → `right`, `dblclick` → `double`; skip the second `click` of a double click (`event.detail` 2), since Windows sends one click and then the double. `x`, `y` are physical screen pixels where the app should open its menu; leave them out to use the cursor. From the keyboard: `"key"` for Enter / Space on a focused icon (`NIN_KEYSELECT`), `"menu"` for the menu key / Shift+F10 (`WM_CONTEXTMENU`); the app is told the icon's top-left corner, from `x`, `y` or else where the icon was last clicked or hovered. Icons older than `NOTIFYICON_VERSION` 3 get a left or right click instead. Only inside a click or key press, like quick settings; it is not control class, because a click does no more than the user clicking the icon in Explorer would. The app gets permission to come to the front.
+- `tray.hover(id, over, x, y)`: the pointer entered (`over` true) or left the icon. The app gets the mouse messages Explorer's tray sends (move and hover, then leave) and, for version 4 icons, `NIN_POPUPOPEN` / `NIN_POPUPCLOSE`, so apps with their own pop-up show it next to the icon; others may refresh their tooltip (a `changed` push follows when they do). Call it on `mouseenter` / `mouseleave`, once each. No click needed: hovering does no more than moving the mouse over the icon in Explorer.
 
-Icons arrive within about a second of the tray starting: apps add theirs again when Versailles tells them a taskbar was created. An app that ignores that message shows up the next time it changes its icon. An icon whose app quits without removing it is dropped within 2 s. Tooltips can be private (message counts, account names, VPN state): declare `tray` only on pieces that show them.
+Icons arrive within about a second of the tray starting: apps add theirs again when Versailles tells them a taskbar was created (told twice, the second time 3 s later, for apps that were busy). An app that ignores that message shows up the next time it changes its icon. Versailles does not read the icons Explorer already has: on Windows 11 22H2 and later Explorer's tray is drawn with XAML (there is no `ToolbarWindow32` with buttons to read), and the only ways in are reading Explorer's memory or injecting into it, which Versailles does not do. An icon whose app quits without removing it is dropped within 2 s. Tooltips can be private (message counts, account names, VPN state): declare `tray` only on pieces that show them.
 
 ## Layout
 

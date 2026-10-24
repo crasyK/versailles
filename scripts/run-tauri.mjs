@@ -25,7 +25,10 @@ let tempConfig = null;
  * so the caller's win):
  * - test builds (`-- --profile release-test`): `tauri.test.conf.json`, which
  *   lets the updater use a plain-http endpoint for a local test server
- *   (`VERSAILLES_UPDATE_URL`).
+ *   (`VERSAILLES_UPDATE_URL`). Never signed.
+ * - `VERSAILLES_SIGN=1` on a release build: `tauri.release.conf.json`
+ *   (Authenticode: certificate thumbprint, SHA-256, Certum timestamp). Without
+ *   it, release builds stay unsigned, so a build never needs the certificate.
  * - Updater artifacts (`.sig` next to the installer) need the updater key
  *   pair: without `TAURI_SIGNING_PRIVATE_KEY`, or while tauri.conf.json still
  *   has the placeholder public key, they are turned off so the build works.
@@ -50,6 +53,19 @@ function buildOverlays(rest) {
 
   if (test) {
     overlays.push(join(root, "src-tauri", "tauri.test.conf.json"));
+    if (process.env.VERSAILLES_SIGN === "1") {
+      console.warn("run-tauri: test builds are never signed; VERSAILLES_SIGN is ignored.");
+    }
+  } else if (process.env.VERSAILLES_SIGN === "1") {
+    const release = join(root, "src-tauri", "tauri.release.conf.json");
+    const thumbprint = readJson(release).bundle?.windows?.certificateThumbprint ?? "";
+    if (!/^[0-9A-Fa-f]{40}$/.test(thumbprint)) {
+      console.error(
+        "run-tauri: VERSAILLES_SIGN=1, but src-tauri/tauri.release.conf.json has no certificate thumbprint yet (see CONTRIBUTING, Signing).",
+      );
+      process.exit(1);
+    }
+    overlays.push(release);
   }
 
   const realKey = pubkey.length > 40 && !pubkey.includes("REPLACE_WITH") && !/\s/.test(pubkey);

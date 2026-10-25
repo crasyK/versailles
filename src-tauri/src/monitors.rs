@@ -221,7 +221,7 @@ pub fn layout_key(monitors: &[MonitorInfo]) -> Vec<(u32, bool, String, i64, Rect
 }
 
 pub fn start_watcher(app: AppHandle) {
-    std::thread::spawn(move || {
+    let _ = std::thread::Builder::new().name("versailles-monitors".into()).spawn(move || {
         let mut last = list(&app);
         loop {
             std::thread::sleep(Duration::from_secs(2));

@@ -104,8 +104,36 @@ mod imp {
         NetworkOperatorTetheringManager::CreateFromConnectionProfile(&profile).map_err(|_| "unknown")
     }
 
+    /// The manager for reads, kept per thread for the same internet
+    /// connection and up to a minute: creating one (and asking for the
+    /// capability) is most of what a read every 3 s costs. Its state is read
+    /// live each time.
+    fn read_manager() -> Result<NetworkOperatorTetheringManager, &'static str> {
+        use std::cell::RefCell;
+        use std::time::{Duration, Instant};
+        thread_local! {
+            static CACHE: RefCell<Option<(String, Instant, NetworkOperatorTetheringManager)>> = const { RefCell::new(None) };
+        }
+        com();
+        let profile = NetworkInformation::GetInternetConnectionProfile().map_err(|_| "no-internet")?;
+        let key = profile.ProfileName().map(|s| s.to_string()).unwrap_or_default();
+        let hit = CACHE.with(|c| {
+            c.borrow()
+                .as_ref()
+                .filter(|(k, at, _)| *k == key && at.elapsed() < Duration::from_secs(60))
+                .map(|(_, _, m)| m.clone())
+        });
+        if let Some(m) = hit {
+            return Ok(m);
+        }
+        CACHE.with(|c| *c.borrow_mut() = None);
+        let m = manager()?;
+        CACHE.with(|c| *c.borrow_mut() = Some((key, Instant::now(), m.clone())));
+        Ok(m)
+    }
+
     pub fn read() -> AppResult<Value> {
-        let m = match manager() {
+        let m = match read_manager() {
             Ok(m) => m,
             Err(reason) => return Ok(unsupported(reason)),
         };

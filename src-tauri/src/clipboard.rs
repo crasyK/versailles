@@ -115,7 +115,7 @@ fn listener_labels(app: &AppHandle) -> Vec<String> {
 /// the system clipboard changes. Polls the sequence number, which is cheap.
 pub fn start_change_watcher(app: AppHandle) {
     #[cfg(windows)]
-    std::thread::spawn(move || {
+    let _ = std::thread::Builder::new().name("versailles-clipboard".into()).spawn(move || {
         let mut last = win::sequence();
         loop {
             std::thread::sleep(Duration::from_millis(400));

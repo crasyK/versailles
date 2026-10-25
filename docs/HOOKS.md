@@ -249,7 +249,7 @@ await hud.focus.onChange((w) => (title.textContent = w.title));
 | `sharing` | 3 s | `{ casting, nearby: "off"\|"my-devices"\|"everyone"\|null }` |
 | `accessibility` | 2 s | `{ magnifier, contrast, captions, colorFilter, stickyKeys }` (`true`, `false`, or `null` when unknown) |
 
-A sensor is only read while some piece on the page declares its hook, and a value is pushed only when it changed. Pushes go only to the windows of pieces that declare the hook, by a script run in those windows (not a broadcast event). Sensor subscriptions also get the current value right away.
+A sensor is only read while some piece on the page declares its hook **and one of those pieces can be seen**: the wallpaper for a widget, an open window for a spawnable (a docked bar, a slide-out that is showing). A closed slide-out costs nothing; when it is shown again the host reads its sensors at once and pushes what changed while it was closed. Nothing is read while the session is locked or the display is off. A value is pushed only when it changed. Pushes go only to the windows of pieces that declare the hook, by a script run in those windows (not a broadcast event). Sensor subscriptions also get the current value right away, and `now()` always reads.
 
 ## Notifications
 
@@ -270,7 +270,7 @@ A toast is `{ id, app, aumid, title, body, time }`: `app` is the sending app's d
 | `unspecified` | Not decided yet. `items` is empty; the host never shows Windows' consent prompt |
 | `unavailable` | No notification listener on this system (or not Windows) |
 
-Windows offers no change event to an unpackaged app, so the host checks for new toasts every 2 s while some piece declares `notify` and pushes each one it has not seen (oldest first). The first check only notes what is already there. `onChange` does not fire on subscribe: call `now()` for the current list. Toast text can be private: declare `notify` only on pieces that need it.
+Windows offers no change event to an unpackaged app, so the host checks for new toasts every 2 s while some piece declares `notify` and pushes each one it has not seen (oldest first). Like a sensor, the check pauses while no piece that declares `notify` can be seen; the toasts that came meanwhile are pushed when one is shown. The first check only notes what is already there. `onChange` does not fire on subscribe: call `now()` for the current list. Toast text can be private: declare `notify` only on pieces that need it.
 
 ### Acting on notifications
 
@@ -327,7 +327,7 @@ Read (`windows`):
 
 - `windows.list({ icons })`: every window, top of the z-order first.
 - `windows.icon(id)`: one window's icon. Icons are cached by the host.
-- `windows.onChange(fn)` / `on("windows", fn)`: `fn({ type, id, window })` for each change. `closed` carries the last known window. `changed` covers title, minimized / maximized, focus lost, monitor, attention, progress and badge; moving or resizing alone sends nothing (read `rect` with `list()` when you need it).
+- `windows.onChange(fn)` / `on("windows", fn)`: `fn({ type, id, window })` for each change. `closed` carries the last known window. `changed` covers title, minimized / maximized, focus lost, monitor, attention, progress and badge; moving or resizing alone sends nothing (read `rect` with `list()` when you need it). Like a sensor, the list is only re-read while a piece that declares `windows` can be seen; the first read after pushes what changed meanwhile.
 - `windows.jumpList(id, { icons })`: the window's jump list (see [Jump lists](#jump-lists)).
 - `windows.track(fn, { icons })`: `fn(list)` now and after every change, in a stable order (new windows last). Returns a function that stops tracking.
 - `windows.preview(id, element)` / `windows.preview(null)`: Versailles' preview card for a window (see below).

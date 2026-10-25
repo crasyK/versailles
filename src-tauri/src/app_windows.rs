@@ -246,25 +246,29 @@ pub fn control(id: i64, action: Action, to: Option<MoveTo>) -> AppResult<()> {
     imp::control(id, action, to)
 }
 
-/// Whether some piece on the page declares `windows`.
-fn declared(app: &AppHandle) -> bool {
+/// Whether some piece on the page declares `windows`, and whether a window
+/// of such a piece is visible (see `presence`).
+fn declared(app: &AppHandle) -> (bool, bool) {
     let state = app.state::<crate::state::AppState>();
-    crate::desktop::page_catalog(&state)
-        .pieces
-        .iter()
-        .any(|p| p.hooks.iter().any(|h| h == "windows"))
+    let cat = crate::desktop::page_catalog(&state);
+    let declared = cat.pieces.iter().any(|p| p.hooks.iter().any(|h| h == "windows"));
+    let seen = declared && crate::presence::seen_hooks(app, &cat).contains("windows");
+    (declared, seen)
 }
 
 /// Background watcher: while some piece declares `windows`, read the list
-/// and push each change to the windows of those pieces.
+/// and push each change to the windows of those pieces. While none of them
+/// is visible the list is not read; the first read after pushes what
+/// changed meanwhile.
 pub fn start_watcher(app: AppHandle) {
-    std::thread::spawn(move || {
+    let _ = std::thread::Builder::new().name("versailles-windows".into()).spawn(move || {
         let mut last: Option<Vec<WindowInfo>> = None;
         // The shell hook for attention runs while the poll does.
         let mut listening = false;
         loop {
-            std::thread::sleep(POLL);
-            if !declared(&app) {
+            crate::presence::nap(POLL);
+            let (declared, seen) = declared(&app);
+            if !declared {
                 // The next declaration starts from a fresh list.
                 last = None;
                 if listening {
@@ -277,6 +281,9 @@ pub fn start_watcher(app: AppHandle) {
             if !listening {
                 listening = true;
                 crate::attention::start();
+            }
+            if !seen {
+                continue;
             }
             let Ok(now) = list(false) else {
                 continue;

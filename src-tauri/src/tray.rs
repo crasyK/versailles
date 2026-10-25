@@ -660,7 +660,7 @@ fn declared(app: &AppHandle) -> bool {
 /// taskbar and some piece declares `tray` or `windows`; otherwise Explorer
 /// keeps it.
 pub fn start_watcher(app: AppHandle) {
-    std::thread::spawn(move || loop {
+    let _ = std::thread::Builder::new().name("versailles-tray-watch".into()).spawn(move || loop {
         std::thread::sleep(Duration::from_secs(1));
         // Not on the way out: the exit stops the tray before the taskbar,
         // and starting it again in between kept the exit waiting.

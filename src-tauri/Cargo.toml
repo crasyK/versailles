@@ -88,6 +88,8 @@ windows = { version = "0.61", features = [
   "Win32_System_Memory",
   "Win32_System_Ole",
   "Win32_System_Power",
+  # presence.rs (lock / unlock notifications).
+  "Win32_System_RemoteDesktop",
   "Win32_System_Shutdown",
   "Networking_Connectivity",
   "Win32_Media_Audio",
@@ -103,11 +105,10 @@ windows = { version = "0.61", features = [
   "UI_Notifications",
   "UI_Notifications_Management",
   # vpn.rs (RAS; RasGetConnectStatusW / RASENTRYW need WinSock types),
-  # hotspot.rs, accessibility.rs (is Magnifier running).
+  # hotspot.rs.
   "Win32_NetworkManagement_Rras",
   "Win32_Networking_WinSock",
   "Networking_NetworkOperators",
-  "Win32_System_Diagnostics_ToolHelp",
 ] }
 
 [profile.release]

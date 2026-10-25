@@ -212,6 +212,7 @@ Pushes (`on(hook, fn)`) need no command: they go only to the windows of pieces t
 Deprecated events are still sent through 1.x. For a piece's own overlay, the piece events `shown` / `hiding` / `hidden` (see [Piece events](#piece-events)) need no filtering.
 
 `pty_open` returns the new session id (counter starting at 1). Events from an older session keep their own id, so filter on the id `pty_open` returned. Overlay events go to every webview; filter on `id`.
+
 ## Push
 
 The host pushes changes instead of pieces polling. `on(name, fn)` subscribes and returns a function that unsubscribes. State hooks call `fn` with the current value first; event hooks (`windows`, `tray`, `notify`, `clipboard`) only on changes (see [Patterns](#patterns)).
@@ -469,7 +470,7 @@ Six hooks for a quick-settings panel. Each reads like a sensor (`now()`, `onChan
 
 ```html
 <template class="spawnable" data-id="qs" data-anchor="tr" data-w="320" data-h="420"
-          data-hooks="radios,audio,audio-control,display,power-mode"> … </template>
+          data-hooks="radios,audio,audio-control,display,power-mode,wifi,bluetooth"> … </template>
 ```
 
 ```js
@@ -705,7 +706,9 @@ me.on("active", () => document.body.classList.remove("dim"));
 ```js
 const list = await versailles.monitors(); // [{ number, primary, name, scale, bounds, work }] (logical sizes)
 const here = await versailles.monitor();  // the monitor this page / window is on
-``` The first `shown` of a newly created window can arrive before its page has loaded; the page is visible when its scripts run anyway.
+```
+
+The first `shown` of a newly created window can arrive before its page has loaded; the page is visible when its scripts run anyway.
 
 **Animating in.** Windows shows a hidden window's last frame again the moment it is shown, before the page draws anything new. A piece that animates in should paint its animation's start pose on `hiding` (the host waits about 60 ms before hiding), so that stale frame is the start of the animation rather than the piece at rest.
 

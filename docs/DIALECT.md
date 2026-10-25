@@ -58,6 +58,7 @@ Duplicate `data-id` values are ignored after the first. A piece inside an HTML c
 ```
 
 The `runScripts` function is then unused; delete it too.
+
 ## Overlay vs slide-out
 
 A spawnable whose `data-anchor` is a grid point (`tl`, `tc`, `ml`, `c`, `mr`, `bl`, `bc`, `br`) or `cursor` is an overlay:
@@ -82,7 +83,7 @@ Every spawnable with `hotkey` in `data-hooks` can bind its own combo. Pressing t
 
 No `hotkey` piece → those shortcuts stay idle. Saving `desktop/index.html` rebinds them; otherwise restart Versailles.
 
-**The Windows and Copilot keys.** *Experimental:* a tap of Win or Copilot can still open Start on Windows 11 25H2 ([#37](https://github.com/crasyK/versailles/issues/37)); prefer a combo such as `Alt+Space` until that is fixed. `data-hotkey="Win"` binds a tap of the Windows key alone, `"Copilot"` binds the Copilot key, and any combo with `Win` (`"Win+A"`, `"Ctrl+Win+F1"`; `Super` means the same) can take over one Windows already uses. These go through a keyboard hook instead of a registered shortcut: Windows never sees the keys, and Start does not open when you let go of Win. The hook exists only while such a binding exists and ends with Versailles, so your keyboard is never left changed.
+**The Windows and Copilot keys.** `data-hotkey="Win"` binds a tap of the Windows key alone, `"Copilot"` binds the Copilot key, and any combo with `Win` (`"Win+A"`, `"Ctrl+Win+F1"`; `Super` means the same) can take over one Windows already uses. These go through a keyboard hook instead of a registered shortcut: Windows never sees the keys, and Start does not open when you let go of Win. The hook exists only while such a binding exists and ends with Versailles, so your keyboard is never left changed. It runs in a small helper process (`versailles --keys-hook`), so it sees every press, also while a Versailles window has the focus ([#37](https://github.com/crasyK/versailles/issues/37), fixed in 0.10.0).
 
 ```html
 <template class="spawnable" data-id="start" data-hooks="hotkey" data-hotkey="Win" data-anchor="bl"

@@ -353,12 +353,31 @@ fn authorize(headers: &HeaderMap, token: &str) -> Result<(), StatusCode> {
         .get("authorization")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    let expected = format!("Bearer {token}");
-    if header == expected {
+    if bearer_matches(header, token) {
         Ok(())
     } else {
         Err(StatusCode::UNAUTHORIZED)
     }
+}
+
+/// `Authorization: Bearer <token>` check. An empty configured token never
+/// matches (a hand-edited `"apiToken": ""` must not open the API), and the
+/// comparison takes the same time wherever the first difference is.
+pub(crate) fn bearer_matches(header: &str, token: &str) -> bool {
+    if token.trim().is_empty() {
+        return false;
+    }
+    let Some(given) = header.strip_prefix("Bearer ") else {
+        return false;
+    };
+    constant_time_eq(given.as_bytes(), token.as_bytes())
+}
+
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 async fn list_widgets(
@@ -572,6 +591,22 @@ mod tests {
 
     fn ok(path: &str, host: &str, origin: Option<&str>, site: Option<&str>, mode: Option<&str>) -> bool {
         request_allowed(PORT, path, Some(host), origin, site, mode)
+    }
+
+    #[test]
+    fn bearer_token_must_match_exactly_and_never_be_empty() {
+        let token = "0f8c2a4e-5b1d-4f7a-9c3e-2d6b8a1f4e70";
+        assert!(bearer_matches(&format!("Bearer {token}"), token));
+        assert!(!bearer_matches(token, token));
+        assert!(!bearer_matches(&format!("bearer {token}"), token));
+        assert!(!bearer_matches(&format!("Bearer {token}x"), token));
+        assert!(!bearer_matches(&format!("Bearer {}", &token[..35]), token));
+        assert!(!bearer_matches("Bearer ", token));
+        assert!(!bearer_matches("", token));
+        // A blank configured token locks the API instead of opening it.
+        assert!(!bearer_matches("Bearer ", ""));
+        assert!(!bearer_matches("Bearer  ", " "));
+        assert!(!bearer_matches("Bearer", ""));
     }
 
     #[test]

@@ -21,6 +21,7 @@ jobs:
       - run: npm ci
       - run: npm run verify:acl
       - run: npm run verify:sdk
+      - run: npm run verify:docs
       - run: npm run smoke:shortcuts
       - run: npm run smoke:desktop
       - run: cargo test --manifest-path src-tauri/Cargo.toml

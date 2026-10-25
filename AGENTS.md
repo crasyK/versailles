@@ -53,7 +53,7 @@ Opening the file from disk works; hooks resolve `{ host: false }`.
 
 ## SDK
 
-Load `/files/.sdk/versailles.js` (or `../.sdk/versailles.js` from `file:`). Call `versailles.for("now-playing").media.now()`, `versailles.spawn("calculator")`, `versailles.shell.open(url)`. The host never grants more than the piece’s `data-hooks`. Details: [`docs/HOOKS.md`](docs/HOOKS.md). Types: `.sdk/versailles.d.ts`.
+Load `/files/.sdk/versailles.js` (or `../.sdk/versailles.js` from `file:`). Call `versailles.for("now-playing").media.now()`, `versailles.spawn("calculator")`, `versailles.shell.open(url)`. The host never grants more than the piece’s `data-hooks`. Details: [`docs/HOOKS.md`](docs/HOOKS.md). Types: `.sdk/versailles.d.ts`. User guides: [`docs/GETTING-STARTED.md`](docs/GETTING-STARTED.md), [`docs/cookbook/`](docs/cookbook/README.md) (keep `npm run verify:docs` green); the 1.x promise: [`COMPATIBILITY.md`](COMPATIBILITY.md).
 
 ## Dev
 

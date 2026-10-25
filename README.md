@@ -1,87 +1,59 @@
 # Versailles
 
-Lightweight HTML desktop for Windows — a Tauri v2 (Rust + TypeScript) widget host.
+Versailles makes one HTML page your Windows 11 desktop: widgets on the wallpaper, bars docked to the screen edges (up to a full replacement for the taskbar), and overlays a hotkey opens. The page asks Windows for what it needs (windows, tray icons, quick settings, notifications, media, search) through named hooks, and gets nothing it did not declare.
 
-Versailles runs in the system tray and serves **one HTML document** from `%USERPROFILE%\Documents\Widgets\desktop\index.html`. That file is the UI for desktop tiles and spawnable overlays. A command bar on the page is an example of the dialect, not a host feature. Apps cover the wallpaper. Spawnables open as always-on-top windows from the same document (`data-anchor="c"` centers over apps; `tr` docks).
+It is a small Tauri v2 host (Rust, WebView2) that lives in the notification area. You write the page; Versailles never styles it.
 
 ## Features
 
-- One editable page (`desktop/index.html`). The starter ships a Paper stylesheet; your page can look like anything
-- `.widget` tiles on the canvas
-- `.spawnable` overlays as native always-on-top windows (`data-anchor="c"` covers apps)
-- Example command bar in the same file + `desktop/bar.js` (delete it and the host still works)
-- Named hooks (`data-hooks`) — the host never grants more than the list
-- GSMTC now-playing
-- Alt+Space overlay (each spawnable can bind its own `data-hotkey`)
-- Silent tray startup
-- Localhost API for automation
+- **One editable page**: `Documents\Widgets\desktop\index.html`, reloaded on save. Widgets are `article.widget`, windows are `template.spawnable`, and a few `data-*` attributes say where they go ([DIALECT.md](docs/DIALECT.md)).
+- **Wallpaper widgets** on every monitor or on the ones you name.
+- **Overlays and slide-outs** as native always-on-top windows, anchored to a corner, an edge, the centre or the cursor, each with its own hotkey, including the **Windows and Copilot keys**.
+- **Docked bars** (top bar, taskbar, dock, side rail) that reserve their strip like the Windows taskbar, float, or auto-hide; one copy per monitor if you like.
+- **Replace the taskbar**: hide Explorer's taskbar while your bar takes its place, with window buttons, live hover previews, attention, the tray icons and a keyboard-layout pill. The taskbar always comes back (Quit, a crash, the next logon).
+- **Quick settings** from your page: Wi-Fi networks, Bluetooth devices, volume, microphone and a per-app mixer, brightness, night light, projection, power mode, Do Not Disturb, notifications, Windows VPN profiles, the mobile hotspot, Cast and nearby sharing, accessibility toggles.
+- **System readings**: battery, network, the focused window, audio, media (now playing), notifications, the tablet posture of a convertible, the keyboard layout.
+- **A command bar** in the starter page: apps (Store apps included), Settings pages by name in English and German, the Windows Search index, recent files, shortcuts, PowerShell and a terminal.
+- **Between pieces**: per-piece storage, a message bus, data handed to an overlay as it opens.
+- **A frozen API**: 33 hooks, a page SDK with TypeScript types (`.sdk/versailles.d.ts`), one error shape, stable through 1.x ([COMPATIBILITY.md](COMPATIBILITY.md)).
+- **Safe by default**: a piece gets only the hooks it lists; settings change only from bars and overlays, inside a click; web sites and other apps cannot use Versailles to get more than they already have ([SECURITY.md](docs/SECURITY.md)).
+- **Updates from the tray**, verified against a key built into the app; diagnostics for bug reports with secrets removed; a supervisor that restarts the app after a crash.
 
 ## Install
 
-After install, look for the **Versailles tray icon**. Left-click toggles the first spawnable with the `hotkey` hook (the example command bar). **Alt+Space** also toggles it when that piece declares `data-hooks="hotkey"` and `data-hotkey="Alt+Space"`. Add `data-hotkey` on any other spawnable the same way. The tray menu is **Show desktop page** / **Hide desktop page**, **Copy diagnostics** (a zip for bug reports, see [`docs/RUNTIME.md`](docs/RUNTIME.md#diagnostics)) and **Quit**, plus **Update to x.y.z** when a new release is out (it installs only when you click it; [updates](docs/RUNTIME.md#updates)). Type `desk` in the example bar to toggle the HTML desktop.
+Download `Versailles_x.y.z_x64-setup.exe` from the [latest release](https://github.com/crasyK/versailles/releases/latest) and run it. Releases are not code-signed, so Windows SmartScreen asks first: **More info** → **Run anyway**. The installer needs no administrator rights. On first start a welcome window offers to set up the example desktop.
 
-On the first start without a `Documents\Widgets\desktop\index.html`, Versailles offers to set up the example desktop (the [`templates/starter/`](templates/starter) shipped inside the app) or to let you bring your own page. It copies only with your consent, asks once, and never overwrites a file that exists. To do it by hand instead, copy `templates/starter/` onto `%USERPROFILE%\Documents\Widgets`.
+The whole path, from the download to your own bar: [Getting started](docs/GETTING-STARTED.md).
+
+## Documentation
+
+| | |
+| - | - |
+| [Getting started](docs/GETTING-STARTED.md) | Install, the starter, editing live, your first widget, bar and hotkey overlay, hiding the taskbar, updating, uninstalling |
+| [Cookbook](docs/cookbook/README.md) | Recipes: a top bar, a taskbar, quick settings, a command bar, tablet posture, storage, talking between pieces |
+| [DIALECT.md](docs/DIALECT.md) | Reference: classes, `data-*` attributes, placement, docked bars, monitors, the `#versailles` config |
+| [HOOKS.md](docs/HOOKS.md) | Reference: every hook, the SDK, payloads, errors, hook classes |
+| [RUNTIME.md](docs/RUNTIME.md) | The local file server and API, config files, crash recovery, diagnostics, updates |
+| [SECURITY.md](docs/SECURITY.md) | Threat model: what Versailles protects, from whom, and what it leaves to you |
+| [COMPATIBILITY.md](COMPATIBILITY.md) | What 1.x guarantees, deprecations, versioning |
+| [CHANGELOG.md](CHANGELOG.md) | What changed in each release |
+| [`examples/`](examples) | Widgets and overlays to copy into your page |
 
 ## Develop
+
+Requirements: Node 22, Rust (stable), the WebView2 runtime (part of Windows 11).
 
 ```bash
 npm install
 npm run tauri:dev
 ```
 
-Or run [`dev.cmd`](dev.cmd) — it prepends `%USERPROFILE%\.cargo\bin`. Close and reopen the terminal if you just installed Rust.
+Or run [`dev.cmd`](dev.cmd), which puts `%USERPROFILE%\.cargo\bin` on the `PATH`. The dev build serves the same `Documents\Widgets` folder on port 47831.
 
-The example command bar's `desktop/bar.js` is generated from [`src/launcher.ts`](src/launcher.ts): `npm run build:bar` writes `templates/starter/desktop/bar.js`; add `-- --install` to also copy it into `%USERPROFILE%\Documents\Widgets\desktop`. The shipped widget SDK is [`templates/starter/.sdk/versailles.js`](templates/starter/.sdk/versailles.js) (plain script, no build step).
+- `templates/starter/` is the example desktop the app ships and copies on first run. Its command bar, `desktop/bar.js`, is generated from [`src/launcher.ts`](src/launcher.ts) with `npm run build:bar`. The page SDK is [`templates/starter/.sdk/versailles.js`](templates/starter/.sdk/versailles.js) (plain script, no build step) with its types next to it.
+- Checks: `npm run verify:acl` (Tauri permissions), `npm run verify:sdk` (the SDK, its types and the locked surface), `npm run verify:docs` (the SDK calls in the docs), `cargo test` in `src-tauri`, and the end-to-end self-test `npm run e2e`.
 
-Edit `Documents\Widgets\desktop\index.html`. Preview via the file server (accurate) or by opening the file (hooks stub `{ host: false }`):
-
-| Query | Surface |
-| ----- | ------- |
-| `index.html` or `?m=desktop` | Stage + widgets; spawnables hidden |
-| `?m=widgets` | Widgets on a blank paper canvas |
-| `?m=spawn` | Spawnable templates as cards |
-| `?m=spawn&id=calculator` | One spawnable, window-sized (`calc` aliases `calculator`) |
-| `?m=action_bar` | Action bar chrome only |
-
-Example: `http://127.0.0.1:47831/files/desktop/index.html?m=widgets`
-
-Dialect: `.widget` / `.spawnable` / `.action-bar`, `data-id`, `data-w`, `data-h`, `data-anchor`, `data-hooks`. Full spec: [`docs/DIALECT.md`](docs/DIALECT.md). Steal pieces from [`examples/`](examples).
-
-Paper (host chrome and starter look): [`design/PAPER-THEME.md`](design/PAPER-THEME.md). Agent notes: [`AGENTS.md`](AGENTS.md).
-
-## Local API
-
-Enabled by default on `http://127.0.0.1:47831`. The live token is in `Documents\Widgets\.versailles\config.json` — do not commit it.
-
-```bash
-curl -H "Authorization: Bearer <token>" http://127.0.0.1:47831/widgets
-```
-
-See [`docs/RUNTIME.md`](docs/RUNTIME.md).
-
-## Config
-
-Customization is `desktop/index.html` plus `.versailles/` runtime. Host knobs and shortcuts live in a JSON blob:
-
-```html
-<script type="application/json" id="versailles">
-{
-  "autostart": true,
-  "snapThreshold": 12,
-  "launcher": { "hotkey": "Alt+Space" },
-  "api": { "enabled": true, "port": 47831 },
-  "shortcuts": [ { "n": "github", "t": "web", "d": "GitHub", "target": "https://github.com/", "cat": "dev" } ]
-}
-</script>
-```
-
-| File | Purpose |
-| ---- | ------- |
-| `desktop/index.html` | UI + `#versailles` config/shortcuts |
-| `.sdk/versailles.js` | Widget SDK |
-| `.versailles/config.json` | Runtime only (token, layouts, desktop shown, session) |
-
-Sidecar `versailles.json` / `shortcuts.json` still work if `#versailles` is missing. The host never rewrites `index.html`. Use `%HOME%` in folder targets. Reload the overlay after edits.
+Rules, tests, the performance budget and the release steps: [CONTRIBUTING.md](CONTRIBUTING.md). Notes for coding agents: [AGENTS.md](AGENTS.md).
 
 ## License
 

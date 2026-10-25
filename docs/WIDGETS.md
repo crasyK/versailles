@@ -4,6 +4,8 @@ Versailles does not own the live desktop. You keep HTML under `Documents\Widgets
 
 Put tiles in `article.widget` and overlays in `template.spawnable` inside `desktop/index.html`. Do not iframe per-widget folders.
 
+- Getting started: [`GETTING-STARTED.md`](GETTING-STARTED.md)
+- Cookbook: [`cookbook/`](cookbook/README.md)
 - Dialect: [`DIALECT.md`](DIALECT.md)
 - Hooks: [`HOOKS.md`](HOOKS.md)
 - Starter: [`../templates/starter/`](../templates/starter)

@@ -19,9 +19,10 @@ Versailles offers to copy this starter for you on its first start when there is 
 | `desktop/index.html` | Widgets, spawnables, example command bar, `#versailles` config |
 | `desktop/bar.js` | Example command-bar engine |
 | `.sdk/versailles.js` | Named-hook SDK. Versailles updates an unchanged older copy on start (keeping `versailles.js.bak`) and leaves an edited one alone. |
+| `.sdk/versailles.d.ts` | Types for the SDK, for editors (`/// <reference path="../.sdk/versailles.d.ts" />` or a `jsconfig.json`) |
 | `.sdk/xterm.js` | Nested terminal for `!!` |
 
-Host knobs and shortcuts live in `<script type="application/json" id="versailles">` in the page. Then start Versailles and type `desk` in the overlay (Alt+Space). Add more tiles from [`../../examples/`](../../examples).
+Host knobs and shortcuts live in `<script type="application/json" id="versailles">` in the page. Then start Versailles and type `desk` in the overlay (Alt+Space). The page has commented-out examples near the end of `<body>` (a top bar, a taskbar, quick settings): delete their `try me` lines to try them. Add more tiles from [`../../examples/`](../../examples); recipes in the [cookbook](../../docs/cookbook/README.md), the whole path in [Getting started](../../docs/GETTING-STARTED.md).
 
 ## Third-party
 

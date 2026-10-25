@@ -7,6 +7,10 @@
 //! Every session gets a fresh id from a counter starting at 1; reader threads
 //! only ever tag events with their own session's id, so output from a killed
 //! session can never be mistaken for the new one.
+//!
+//! Both events go only to the windows of the piece that opened the session
+//! (its spawn window and any monitor copy), never to every window: terminal
+//! output can hold secrets, and other pieces could `listen` for it.
 
 use crate::cli;
 use crate::page::HookClass;
@@ -21,11 +25,18 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State, Webview};
 
-/// `pty_*` only from a spawn window whose piece declares `pty` (never the wallpaper).
-fn gate_pty(app_state: &AppState, webview: &Webview, caller: Option<&str>) -> Result<(), String> {
+/// `pty_*` only from a spawn window whose piece declares `pty` (never the
+/// wallpaper). Returns the piece the call acts as.
+fn gate_pty(app_state: &AppState, webview: &Webview, caller: Option<&str>) -> Result<String, String> {
     crate::commands::require_hook(app_state, webview, caller, "pty", HookClass::Exec)
-        .map(|_| ())
         .map_err(|e| e.to_string())
+}
+
+/// Send a pty event to the open windows of piece `owner` only.
+fn emit_to_owner<S: Serialize + Clone>(app: &AppHandle, owner: &str, event: &str, payload: S) {
+    for label in crate::window_manager::piece_window_labels(app, owner) {
+        let _ = app.emit_to(label.as_str(), event, payload.clone());
+    }
 }
 
 static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
@@ -117,12 +128,12 @@ pub async fn pty_open(
     rows: u16,
     caller: Option<String>,
 ) -> Result<u64, String> {
-    gate_pty(&app_state, &webview, caller.as_deref())?;
+    let owner = gate_pty(&app_state, &webview, caller.as_deref())?;
     // Shell probe + ConPTY spawn can take hundreds of ms: keep the UI thread free.
-    cli::blocking(move || open_session(&app, cwd, cols, rows)).await
+    cli::blocking(move || open_session(&app, owner, cwd, cols, rows)).await
 }
 
-fn open_session(app: &AppHandle, cwd: Option<String>, cols: u16, rows: u16) -> Result<u64, String> {
+fn open_session(app: &AppHandle, owner: String, cwd: Option<String>, cols: u16, rows: u16) -> Result<u64, String> {
     let shell = cli::shell_exe()?;
     let state = app.state::<PtyState>();
     let mut guard = state.session.lock().map_err(|e| e.to_string())?;
@@ -187,8 +198,11 @@ fn open_session(app: &AppHandle, cwd: Option<String>, cols: u16, rows: u16) -> R
     let alive_f = alive.clone();
     let app_r = app.clone();
     let app_f = app.clone();
+    let owner_r = owner.clone();
     let emit_data = move |app: &AppHandle, bytes: &[u8]| {
-        let _ = app.emit(
+        emit_to_owner(
+            app,
+            &owner,
             "pty://data",
             PtyData {
                 session,
@@ -196,6 +210,7 @@ fn open_session(app: &AppHandle, cwd: Option<String>, cols: u16, rows: u16) -> R
             },
         );
     };
+    let emit_data_f = emit_data.clone();
 
     std::thread::spawn(move || {
         while alive_f.load(Ordering::SeqCst) {
@@ -210,7 +225,7 @@ fn open_session(app: &AppHandle, cwd: Option<String>, cols: u16, rows: u16) -> R
                 }
                 std::mem::take(&mut *p)
             };
-            emit_data(&app_f, &chunk);
+            emit_data_f(&app_f, &chunk);
         }
     });
 
@@ -241,7 +256,7 @@ fn open_session(app: &AppHandle, cwd: Option<String>, cols: u16, rows: u16) -> R
                 emit_data(&app_r, &chunk);
             }
         }
-        let _ = app_r.emit("pty://exit", PtyExit { session });
+        emit_to_owner(&app_r, &owner_r, "pty://exit", PtyExit { session });
         alive_r.store(false, Ordering::SeqCst);
     });
 

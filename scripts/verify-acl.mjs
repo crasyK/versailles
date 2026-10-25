@@ -61,6 +61,31 @@ for (const cmd of registered) {
   }
 }
 
+// Permissions pages must never get (docs/SECURITY.md). Hook classes are
+// enforced per calling window label: a page that could create a window
+// could pick a spawn window's label (`widget-<id>`) and run exec hooks from
+// the wallpaper. Raw global shortcuts would let any page take system-wide
+// keys around the `hotkey` hook. The host does both from Rust.
+const forbidden = [
+  "core:window:allow-create",
+  "core:webview:allow-create-webview",
+  "core:webview:allow-create-webview-window",
+  "global-shortcut:default",
+  "global-shortcut:allow-register",
+  "global-shortcut:allow-register-all",
+  "global-shortcut:allow-unregister",
+  "global-shortcut:allow-unregister-all",
+  "global-shortcut:allow-is-registered",
+];
+for (const cap of caps) {
+  for (const perm of cap.permissions ?? []) {
+    const id = typeof perm === "string" ? perm : perm?.identifier;
+    if (forbidden.includes(id)) {
+      missing.push(`${capDir}/${cap.file} must not grant "${id}" (see docs/SECURITY.md)`);
+    }
+  }
+}
+
 const extras = manifest.filter((cmd) => !registered.includes(cmd));
 for (const cmd of extras) {
   missing.push(`build.rs lists unused command "${cmd}"`);

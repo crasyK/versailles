@@ -49,7 +49,7 @@
       })();
     </script>
     <template class="spawnable" data-id="e2e-overlay" data-anchor="c" data-dim="none" data-dismiss-on-blur="false"
-              data-hooks="storage,bus,audio,audio-control,notify-control" data-w="200" data-h="80">
+              data-hooks="storage,bus,audio,audio-control,notify-control,windows-control" data-w="200" data-h="80">
       <div style="font:12px monospace;padding:8px">e2e overlay</div>
       <script>
         /* Counts its own runs (template scripts must run once) and says hello on the bus. */
@@ -71,6 +71,13 @@
               .then(function () { return 'allowed'; }, function (e) { return String((e && e.message) || e); })
               .then(function (r) { me.storage.set('dismiss', r).catch(function () {}); });
             me.storage.set('report', { runs: window.__e2eRuns }).catch(function () {});
+            // A real click (tests/e2e/click.ps1) gets window control past the click check:
+            // window 0 does not exist, so the answer is "no window 0", not "needs a click".
+            document.addEventListener('click', function () {
+              v.invoke('windows_control', { id: 0, action: 'focus', caller: 'e2e-overlay' })
+                .then(function () { return 'allowed'; }, function (e) { return String((e && e.message) || e); })
+                .then(function (r) { me.storage.set('clickControl', r).catch(function () {}); });
+            });
             me.bus.publish('e2e-hello', {}).catch(function () {});
             // What the folder widget was allowed (it shares this origin's localStorage).
             (function folder(n) {

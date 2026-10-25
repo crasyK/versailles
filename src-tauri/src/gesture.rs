@@ -2,12 +2,17 @@
 //!
 //! The SDK checks `navigator.userActivation` before `power`, `windows-control`
 //! and `tray.click`, but a page script can call the host directly. So the host
-//! asks the page's own Chromium: every page window gets, before any page
-//! script runs, a global function that reads the real activation through
-//! getters captured at that moment. It is non-writable and non-configurable,
-//! so a page can call it (harmless) but cannot replace it or the getters it
-//! uses. The host calls it with WebView2's `ExecuteScript`, whose answer comes
-//! back to the host only.
+//! asks the page itself: every page window gets, before any page script runs,
+//! capture listeners on `window` that note the time of each trusted click, tap
+//! or key press (`isTrusted`: a script cannot dispatch one), and a global
+//! function that says whether the last one was under 5 s ago (Chromium's own
+//! transient activation lasts about as long). The function is non-writable and
+//! non-configurable, and uses only references captured before the page ran, so
+//! a page can call it (harmless) but cannot replace or fool it. The host calls
+//! it with WebView2's `ExecuteScript`, whose answer comes back to the host only.
+//!
+//! Not `navigator.userActivation` itself: `ExecuteScript` runs as a user
+//! gesture, so the page always looks activated while the host asks.
 
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -28,18 +33,21 @@ pub fn init_script() -> String {
     format!(
         r#"(function () {{
   try {{
-    var ua = navigator.userActivation;
-    var get = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(ua), "isActive").get;
-    var apply = Reflect.apply;
-    Object.defineProperty(window, "{name}", {{ value: function () {{ return apply(get, ua, []) === true; }} }});
+    var now = performance.now.bind(performance);
+    var last = -Infinity;
+    var seen = function (e) {{ if (e.isTrusted) last = now(); }};
+    ["keydown", "mousedown", "pointerdown", "pointerup", "touchend"].forEach(function (t) {{
+      addEventListener(t, seen, true);
+    }});
+    Object.defineProperty(window, "{name}", {{ value: function () {{ return now() - last < 5000; }} }});
   }} catch (_) {{}}
 }})();"#,
         name = name()
     )
 }
 
-/// The page in `webview` had a click or key press in the last few seconds
-/// (Chromium's transient activation, about 5 s). False when it cannot tell.
+/// The page in `webview` had a click, tap or key press in the last 5 s.
+/// False when it cannot tell.
 pub async fn active(webview: &Webview) -> bool {
     let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
     // `window.` explicitly: a page cannot shadow `window`, and the property

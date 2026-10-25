@@ -411,6 +411,9 @@ async function checksPhase(exe) {
     const dismiss = await until("overlay dismiss", () => store(dest, "e2e-overlay")?.dismiss, 15_000).catch(() => null);
     check("dismissing a missing notification is refused", /no notification 0|not allowed access/.test(dismiss || ""), dismiss);
     check("overlay template script runs once", overlay.runs === 1, `runs ${overlay.runs}`);
+    execFileSync("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", join(repo, "tests/e2e/click.ps1")]);
+    const viaClick = await until("overlay click", () => store(dest, "e2e-overlay")?.clickControl, 10_000).catch(() => null);
+    check("window control inside a click gets past the click check", /no window 0/.test(viaClick || ""), viaClick);
     const tray = await until("tray report", () => store(dest, "e2e-wall")?.report?.trayClick && store(dest, "e2e-wall").report, 15_000)
       .catch(() => store(dest, "e2e-wall")?.report || {});
     check("tray answers", tray.tray && tray.tray.active === false, JSON.stringify(tray.tray) + (tray.errors?.tray || ""));

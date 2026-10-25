@@ -507,7 +507,7 @@ button.onclick = () => versailles.for("power-menu").power.lock();
 // also: sleep(), signOut(), restart(), shutdown()
 ```
 
-These run only inside a click or key press (`navigator.userActivation`, checked by the SDK and, since 1.0, by the host), so a page cannot lock or shut down the machine on its own. Typing a command and pressing Enter counts: call `power.*` from that key press, not after a slow wait (the press counts for about 5 s). `restart` and `shutdown` are immediate. The host logs every request.
+These run only inside a click or key press (checked by the SDK with `navigator.userActivation` and, since 1.0, by the host), so a page cannot lock or shut down the machine on its own. Typing a command and pressing Enter counts: call `power.*` from that key press, not after a slow wait (the press counts for about 5 s). `restart` and `shutdown` are immediate. The host logs every request.
 
 `sleep()` needs classic (S3) sleep. Many newer laptops only have Modern Standby (`powercfg /a` lists "S0 low power idle"), which Windows gives apps no supported way to start; there `sleep()` rejects with an error saying so. Catch it and hide or disable your sleep button.
 

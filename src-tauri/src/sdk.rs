@@ -49,6 +49,7 @@ pub const SHIPPED: &[(&str, u64)] = &[
     ("0.9.1", 0xb22c_bc01_6619_66aa),
     ("0.10.0", 0xe5a5_a217_4eac_6e7c),
     ("0.11.1", 0xcb23_ad82_c99c_77cf),
+    ("0.12.0", 0xde3a_254b_8706_b500),
 ];
 
 /// Version on the SDK's first line (`/*! versailles-sdk 0.6.0 */`). Releases

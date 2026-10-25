@@ -36,7 +36,7 @@ Same-origin helpers (no CORS fight):
 
 ## API (Bearer)
 
-Enabled by default. The token lives in `.versailles/config.json` — never commit it.
+Enabled by default. The token lives in `.versailles/config.json` — never commit it. An empty token locks the API. What the server does and does not protect: [SECURITY.md](SECURITY.md).
 
 ```bash
 curl -H "Authorization: Bearer <token>" http://127.0.0.1:47831/widgets

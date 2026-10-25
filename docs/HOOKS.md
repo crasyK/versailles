@@ -82,7 +82,7 @@ To keep your own SDK, edit it (any change opts out of updates). The host writes 
 
 ## Enforcement
 
-Identity comes from the **calling window**, never from an IPC argument:
+Identity comes from the **calling window**, never from an IPC argument (threat model: [SECURITY.md](SECURITY.md)):
 
 | Window | Acts as |
 | ------ | ------- |
@@ -106,10 +106,11 @@ That piece must list the hook in `data-hooks`. A piece that omitted `data-hooks=
 
 | Event | Payload |
 | ----- | ------- |
-| `pty://data` | `{ "session": <u64>, "data": "<base64>" }` |
-| `pty://exit` | `{ "session": <u64> }` |
+| `pty://data` | `{ "session": <u64>, "data": "<base64>" }` — to the windows of the piece that opened the session |
+| `pty://exit` | `{ "session": <u64> }` — same windows |
 | `overlay://shown` | `{ "id": "<piece id>", "seed": "<string>" }` |
 | `clipboard://changed` | `null` — to windows of pieces that declare `clipboard` |
+| `media://update` | Now-playing (as `media_now`) — to windows of pieces that declare `media` (the SDK's `media.onUpdate`) |
 | `overlay://hiding` | `{ "id": "<piece id>" }` — about 60 ms before the overlay hides |
 | `overlay://hidden` | `{ "id": "<piece id>" }` (`null` when only the backdrop hid) |
 | `launcher://shown` / `launcher://hidden` | Legacy: bare seed string / `true` |

@@ -114,6 +114,30 @@ pub fn start_media_listener(app: AppHandle, state: MediaState) {
     });
 }
 
+/// Windows that may hear `media://update`: page pieces and folder widgets
+/// that declared `media`.
+fn media_listeners(app: &AppHandle) -> Vec<String> {
+    use tauri::Manager;
+    let app_state = app.state::<crate::state::AppState>();
+    let cat = crate::desktop::page_catalog(&app_state);
+    let mut labels = crate::bus::hook_window_labels(app, &cat, "media");
+    let folders: Vec<String> = app_state
+        .registry
+        .lock()
+        .unwrap()
+        .list()
+        .iter()
+        .filter(|w| w.manifest.permissions.iter().any(|p| p.hook_name() == "media"))
+        .map(|w| crate::window_manager::widget_label(&w.manifest.id))
+        .collect();
+    for label in folders {
+        if !labels.contains(&label) {
+            labels.push(label);
+        }
+    }
+    labels
+}
+
 fn publish_media(app: &AppHandle, state: &MediaState, info: MediaInfo) {
     let to_emit = {
         let mut current = state.current.lock().unwrap();
@@ -143,7 +167,11 @@ fn publish_media(app: &AppHandle, state: &MediaState, info: MediaInfo) {
         *current = merged.clone();
         merged
     };
-    let _ = app.emit("media://update", &to_emit);
+    // Only to the windows of pieces that declared `media` (like the push
+    // below): a piece without the hook must not learn what is playing.
+    for label in media_listeners(app) {
+        let _ = app.emit_to(label.as_str(), "media://update", &to_emit);
+    }
     if let Ok(data) = serde_json::to_value(&to_emit) {
         crate::push::to_hook(&app, "media", &data);
     }

@@ -749,7 +749,7 @@ fn start_autohide_watcher(app: &AppHandle) {
         return;
     }
     let app = app.clone();
-    std::thread::spawn(move || loop {
+    let _ = std::thread::Builder::new().name("versailles-autohide".into()).spawn(move || loop {
         std::thread::sleep(Duration::from_millis(40));
         let any = states()
             .lock()

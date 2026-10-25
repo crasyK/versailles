@@ -1,6 +1,7 @@
 use crate::error::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -53,6 +54,8 @@ impl MediaInfo {
 pub struct MediaState {
     pub current: Arc<Mutex<MediaInfo>>,
     pub last_error: Arc<Mutex<Option<String>>>,
+    /// When the session was last read.
+    polled: Arc<Mutex<Option<Instant>>>,
 }
 
 impl MediaState {
@@ -63,19 +66,70 @@ impl MediaState {
     pub fn last_error(&self) -> Option<String> {
         self.last_error.lock().unwrap().clone()
     }
+
+    fn polled_within(&self, age: Duration) -> bool {
+        self.polled.lock().unwrap().is_some_and(|t| t.elapsed() < age)
+    }
 }
 
 /// Require several empty polls before flipping UI to idle (GSMTC flickers).
 const IDLE_STREAK_BEFORE_CLEAR: u8 = 4;
+
+/// How often the session is read while a visible piece declares `media`.
+pub const POLL: Duration = Duration::from_millis(350);
+/// How often otherwise (nobody shows it, the session is locked, the display
+/// is off): `/media/now` reads at once when its snapshot is older than
+/// `FRESH` (see `refresh_if_stale`).
+pub const POLL_UNSEEN: Duration = Duration::from_secs(5);
+pub const FRESH: Duration = Duration::from_secs(1);
+
+/// The poll interval: fast only while a piece that shows `media` is visible.
+pub fn poll_every(seen: bool) -> Duration {
+    if seen {
+        POLL
+    } else {
+        POLL_UNSEEN
+    }
+}
+
+fn media_seen(app: &AppHandle) -> bool {
+    use tauri::Manager;
+    // The listener starts before the app state exists.
+    let Some(state) = app.try_state::<crate::state::AppState>() else {
+        return false;
+    };
+    let cat = crate::desktop::page_catalog(&state);
+    cat.pieces.iter().any(|p| p.hooks.iter().any(|h| h == "media"))
+        && crate::presence::seen_hooks(app, &cat).contains("media")
+}
+
+/// Read the session now when the snapshot is older than `FRESH` (for
+/// `/media/now` callers while no page keeps the fast poll going).
+pub async fn refresh_if_stale(app: &AppHandle, state: &MediaState) {
+    if state.polled_within(FRESH) {
+        return;
+    }
+    if let Ok(Ok(info)) = tokio::task::spawn_blocking(poll_media_blocking).await {
+        *state.polled.lock().unwrap() = Some(Instant::now());
+        if info.looks_active() {
+            publish_media(app, state, info);
+        }
+    }
+}
 
 pub fn start_media_listener(app: AppHandle, state: MediaState) {
     tauri::async_runtime::spawn(async move {
         let mut last_err: Option<String> = None;
         let mut idle_streak: u8 = 0;
         loop {
+            if state.polled_within(poll_every(media_seen(&app)).saturating_sub(Duration::from_millis(50))) {
+                tokio::time::sleep(POLL).await;
+                continue;
+            }
             let info = tokio::task::spawn_blocking(poll_media_blocking)
                 .await
                 .unwrap_or_else(|e| Err(AppError::msg(e.to_string())));
+            *state.polled.lock().unwrap() = Some(Instant::now());
 
             match info {
                 Ok(info) => {
@@ -109,7 +163,7 @@ pub fn start_media_listener(app: AppHandle, state: MediaState) {
                     idle_streak = idle_streak.saturating_add(1);
                 }
             }
-            tokio::time::sleep(std::time::Duration::from_millis(350)).await;
+            tokio::time::sleep(POLL).await;
         }
     });
 }
@@ -347,7 +401,18 @@ fn poll_media_blocking() -> AppResult<MediaInfo> {
         .map(|s| s.to_string())
         .unwrap_or_else(|_| "unknown".into());
 
-    let thumbnail_data_url = read_thumbnail(&props);
+    // The art is read once per track, not on every poll.
+    let key = format!("{source}|{title}|{artist}|{album}");
+    let thumbnail_data_url = match cached_thumbnail(&key) {
+        Some(url) => Some(url),
+        None => {
+            let url = read_thumbnail(&props);
+            if let Some(url) = &url {
+                *thumbnail_cache().lock().unwrap() = Some((key, url.clone()));
+            }
+            url
+        }
+    };
 
     let has_session = status == "playing"
         || status == "paused"
@@ -377,6 +442,23 @@ fn now_filetime() -> i64 {
         .map(|d| (d.as_nanos() / 100) as i64)
         .unwrap_or(0);
     UNIX_EPOCH_AS_FILETIME + since_unix
+}
+
+/// The last track's art: `(source / title / artist / album, data URL)`.
+#[cfg(windows)]
+fn thumbnail_cache() -> &'static Mutex<Option<(String, String)>> {
+    static CACHE: OnceLock<Mutex<Option<(String, String)>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
+}
+
+#[cfg(windows)]
+fn cached_thumbnail(key: &str) -> Option<String> {
+    thumbnail_cache()
+        .lock()
+        .unwrap()
+        .as_ref()
+        .filter(|(k, _)| k == key)
+        .map(|(_, url)| url.clone())
 }
 
 #[cfg(windows)]
@@ -515,4 +597,49 @@ pub fn get_mouse_position() -> AppResult<(i32, i32)> {
 #[cfg(not(windows))]
 pub fn get_mouse_position() -> AppResult<(i32, i32)> {
     Ok((0, 0))
+}
+
+/// What one media poll costs here: `cargo test --lib live_media_poll -- --ignored --nocapture`.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fast_poll_only_while_seen() {
+        assert_eq!(poll_every(true), POLL);
+        assert_eq!(poll_every(false), POLL_UNSEEN);
+        assert!(FRESH < POLL_UNSEEN && POLL < FRESH);
+    }
+
+    #[test]
+    fn polled_within_tracks_the_last_read() {
+        let state = MediaState::default();
+        assert!(!state.polled_within(Duration::from_secs(60)));
+        *state.polled.lock().unwrap() = Some(Instant::now());
+        assert!(state.polled_within(Duration::from_secs(60)));
+        assert!(!state.polled_within(Duration::ZERO));
+    }
+}
+
+#[cfg(all(test, windows))]
+mod live {
+    #[test]
+    #[ignore]
+    fn live_media_poll() {
+        let _ = super::poll_media_blocking();
+        let start = std::time::Instant::now();
+        const N: u32 = 10;
+        let mut info = None;
+        for _ in 0..N {
+            info = super::poll_media_blocking().ok();
+        }
+        let ms = start.elapsed().as_secs_f64() * 1000.0 / N as f64;
+        let info = info.unwrap();
+        eprintln!(
+            "media poll {ms:.2} ms; status {} title {:?} thumb {} B",
+            info.status,
+            info.title,
+            info.thumbnail_data_url.as_ref().map(|s| s.len()).unwrap_or(0)
+        );
+    }
 }

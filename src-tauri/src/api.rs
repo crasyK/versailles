@@ -492,8 +492,10 @@ async fn media_now(
     headers: HeaderMap,
 ) -> Result<Json<Value>, StatusCode> {
     authorize(&headers, &state.token)?;
-    let media = state.app.state::<AppState>().media.snapshot();
-    Ok(Json(json!(media)))
+    let media = state.app.state::<AppState>().media.clone();
+    // No page may be keeping the snapshot fresh (see `media::POLL_UNSEEN`).
+    crate::media::refresh_if_stale(&state.app, &media).await;
+    Ok(Json(json!(media.snapshot())))
 }
 
 async fn media_toggle(

@@ -2,8 +2,9 @@
 //! `posture` from its own module) and the
 //! watcher that pushes their changes, plus new toasts for `notify` (see
 //! `toasts`) and page-wide `idle` / `active` and `theme-changed` events. A
-//! sensor is only read while some piece declares its hook, and only a
-//! changed value is pushed.
+//! sensor is only read while some piece declares its hook and a window of
+//! such a piece is visible (see `presence`), and only a changed value is
+//! pushed.
 
 use crate::error::{AppError, AppResult};
 use serde_json::{json, Value};
@@ -293,17 +294,41 @@ mod imp {
     pub fn init_thread() {}
 }
 
-/// Hooks some piece on the page declares.
-fn declared_hooks(app: &AppHandle) -> HashSet<String> {
+/// Hooks some piece on the page declares, and those of them a visible window
+/// declares (see `presence`).
+fn declared_and_seen(app: &AppHandle) -> (HashSet<String>, HashSet<String>) {
     let state = app.state::<crate::state::AppState>();
     let cat = crate::desktop::page_catalog(&state);
-    cat.pieces.iter().flat_map(|p| p.hooks.iter().cloned()).collect()
+    let declared = cat.pieces.iter().flat_map(|p| p.hooks.iter().cloned()).collect();
+    (declared, crate::presence::seen_hooks(app, &cat))
+}
+
+/// What the watcher does with one sensor on a tick.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Step {
+    /// Nobody declares it: forget the last value, so the next declaration
+    /// gets its first value pushed.
+    Forget,
+    /// Not due yet, or nobody can see a piece that declares it: no read. The
+    /// last pushed value is kept, so a reveal pushes only what changed.
+    Wait,
+    Read,
+}
+
+pub fn step(declared: bool, seen: bool, due: Option<Instant>, now: Instant) -> Step {
+    if !declared {
+        Step::Forget
+    } else if !seen || due.is_some_and(|t| now < t) {
+        Step::Wait
+    } else {
+        Step::Read
+    }
 }
 
 /// Background watcher: pushes sensor changes to pieces with the hook, and
 /// `idle` / `active` / `theme-changed` to every page window.
 pub fn start_watcher(app: AppHandle) {
-    std::thread::spawn(move || {
+    let _ = std::thread::Builder::new().name("versailles-sensors".into()).spawn(move || {
         imp::init_thread();
         let mut last: HashMap<&str, Value> = HashMap::new();
         let mut due: HashMap<&str, Instant> = HashMap::new();
@@ -314,9 +339,10 @@ pub fn start_watcher(app: AppHandle) {
         let mut toasts = crate::toasts::Watch::default();
         let mut next_toasts = Instant::now();
         loop {
-            std::thread::sleep(Duration::from_millis(250));
+            // A piece being shown, or the user coming back, ends the nap.
+            crate::presence::nap(Duration::from_millis(250));
             let now = Instant::now();
-            let declared = declared_hooks(&app);
+            let (declared, seen) = declared_and_seen(&app);
             if declared.contains("posture") {
                 crate::posture::listen();
                 if crate::posture::take_changed() {
@@ -324,13 +350,14 @@ pub fn start_watcher(app: AppHandle) {
                 }
             }
             for (hook, every) in SENSORS {
-                if !declared.contains(*hook) {
-                    // Next declaration starts fresh and pushes its first value.
-                    last.remove(hook);
-                    continue;
-                }
-                if due.get(hook).is_some_and(|t| now < *t) {
-                    continue;
+                let s = step(declared.contains(*hook), seen.contains(*hook), due.get(hook).copied(), now);
+                match s {
+                    Step::Forget => {
+                        last.remove(hook);
+                        continue;
+                    }
+                    Step::Wait => continue,
+                    Step::Read => {}
                 }
                 due.insert(hook, now + *every);
                 if let Ok(value) = read(hook) {
@@ -342,7 +369,9 @@ pub fn start_watcher(app: AppHandle) {
             }
             if !declared.contains("notify") {
                 toasts.reset();
-            } else if now >= next_toasts {
+            } else if seen.contains("notify") && now >= next_toasts {
+                // While unseen the baseline stays: toasts that came meanwhile
+                // are pushed, oldest first, once a declaring piece is seen.
                 next_toasts = now + NOTIFY_EVERY;
                 for toast in toasts.poll() {
                     if let Ok(data) = serde_json::to_value(&toast) {
@@ -415,6 +444,69 @@ mod tests {
         assert_eq!(idle_transition(false, IDLE_AFTER_MS), Some(true));
         assert_eq!(idle_transition(true, IDLE_AFTER_MS + 5_000), None);
         assert_eq!(idle_transition(true, 10), Some(false));
+    }
+
+    /// CPU time of this thread so far, in ms.
+    fn thread_cpu_ms() -> f64 {
+        #[cfg(windows)]
+        unsafe {
+            use windows::Win32::Foundation::FILETIME;
+            use windows::Win32::System::Threading::{GetCurrentThread, GetThreadTimes};
+            let (mut a, mut b, mut k, mut u) = (FILETIME::default(), FILETIME::default(), FILETIME::default(), FILETIME::default());
+            if GetThreadTimes(GetCurrentThread(), &mut a, &mut b, &mut k, &mut u).is_ok() {
+                let t = |f: FILETIME| ((f.dwHighDateTime as u64) << 32 | f.dwLowDateTime as u64) as f64 / 10_000.0;
+                return t(k) + t(u);
+            }
+        }
+        0.0
+    }
+
+    /// What each sensor read costs on this machine, and whether its value
+    /// moves between reads: `cargo test --lib live_read_costs -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn live_read_costs() {
+        imp::init_thread();
+        let mut hooks: Vec<&str> = SENSORS.iter().map(|(h, _)| *h).collect();
+        hooks.push("notify");
+        for hook in hooks {
+            let first = read(hook);
+            let mut changed = 0;
+            let mut prev = first.as_ref().ok().cloned();
+            let cpu0 = thread_cpu_ms();
+            let start = Instant::now();
+            const N: u32 = 40;
+            for _ in 0..N {
+                let v = read(hook).ok();
+                if v != prev {
+                    changed += 1;
+                }
+                prev = v;
+            }
+            let ms = start.elapsed().as_secs_f64() * 1000.0 / N as f64;
+            let len = prev.map(|v| v.to_string().len()).unwrap_or(0);
+            let cpu = (thread_cpu_ms() - cpu0) / N as f64;
+            eprintln!("{hook:<14} {ms:>8.2} ms/read ({cpu:.2} ms CPU here)  {len:>6} B  changed {changed}/{N}  ok={}", first.is_ok());
+        }
+        let start = Instant::now();
+        for _ in 0..10 {
+            let _ = crate::app_windows::list(false);
+        }
+        let n = crate::app_windows::list(false).map(|l| l.len()).unwrap_or(0);
+        eprintln!("windows list   {:>8.2} ms/read  {n} windows", start.elapsed().as_secs_f64() * 100.0);
+    }
+
+    #[test]
+    fn sensors_are_read_only_when_declared_seen_and_due() {
+        let now = Instant::now();
+        let later = now + Duration::from_secs(1);
+        assert_eq!(step(false, true, None, now), Step::Forget);
+        assert_eq!(step(false, false, Some(later), now), Step::Forget);
+        // Declared but hidden (a closed slide-out, a locked session): no read.
+        assert_eq!(step(true, false, None, now), Step::Wait);
+        assert_eq!(step(true, true, Some(later), now), Step::Wait);
+        assert_eq!(step(true, true, None, now), Step::Read);
+        assert_eq!(step(true, true, Some(now), later), Step::Read);
     }
 
     #[test]

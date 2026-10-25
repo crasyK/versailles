@@ -75,7 +75,13 @@ pub fn state_json(read: impl Fn(Feature) -> Option<bool>) -> Value {
 }
 
 pub fn read() -> AppResult<Value> {
-    Ok(state_json(imp::get))
+    // One process snapshot answers both apps: it is most of a read's cost,
+    // and this is a sensor read every 2 s.
+    let running = imp::apps_running();
+    Ok(state_json(|f| match f {
+        Feature::Magnifier | Feature::Captions => imp::installed(f).then(|| running.contains(&f)),
+        _ => imp::get(f),
+    }))
 }
 
 /// Turn one toggle on or off. Blocking (a contrast theme takes seconds):
@@ -128,10 +134,6 @@ pub fn set(name: &str, on: bool) -> AppResult<Option<Value>> {
 #[cfg(windows)]
 mod imp {
     use super::*;
-    use windows::Win32::Foundation::CloseHandle;
-    use windows::Win32::System::Diagnostics::ToolHelp::{
-        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
-    };
     use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
     use windows::Win32::UI::Accessibility::{HIGHCONTRASTW, HIGHCONTRASTW_FLAGS, STICKYKEYS, STICKYKEYS_FLAGS};
     use windows::Win32::UI::WindowsAndMessaging::{
@@ -151,26 +153,64 @@ mod imp {
         }
     }
 
-    /// Whether a process with this file name runs (any session).
-    fn running(exe: &str) -> bool {
-        unsafe {
-            let Ok(snap) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else {
-                return false;
-            };
-            let mut e = PROCESSENTRY32W { dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32, ..Default::default() };
-            let mut found = false;
-            let mut ok = Process32FirstW(snap, &mut e).is_ok();
-            while ok {
-                let end = e.szExeFile.iter().position(|c| *c == 0).unwrap_or(e.szExeFile.len());
-                if String::from_utf16_lossy(&e.szExeFile[..end]).eq_ignore_ascii_case(exe) {
-                    found = true;
-                    break;
-                }
-                ok = Process32NextW(snap, &mut e).is_ok();
+    /// Processes that own a top-level window (Magnifier and Live Captions
+    /// always do while they run), each with its executable's file name. A
+    /// process snapshot cost ~10 ms of CPU per read; this enumerates windows
+    /// and asks only new processes for their name.
+    fn window_processes() -> Vec<String> {
+        use std::collections::{HashMap, HashSet};
+        use std::sync::{Mutex, OnceLock};
+        use windows::core::BOOL;
+        use windows::Win32::Foundation::{HWND, LPARAM};
+        use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetWindowThreadProcessId};
+        unsafe extern "system" fn each(h: HWND, l: LPARAM) -> BOOL {
+            let pids = &mut *(l.0 as *mut HashSet<u32>);
+            let mut pid = 0u32;
+            GetWindowThreadProcessId(h, Some(&mut pid));
+            if pid != 0 {
+                pids.insert(pid);
             }
-            let _ = CloseHandle(snap);
-            found
+            BOOL(1)
         }
+        static NAMES: OnceLock<Mutex<HashMap<u32, String>>> = OnceLock::new();
+        let mut pids: HashSet<u32> = HashSet::new();
+        unsafe {
+            let _ = EnumWindows(Some(each), LPARAM(&mut pids as *mut HashSet<u32> as isize));
+        }
+        let mut names = NAMES.get_or_init(|| Mutex::new(HashMap::new())).lock().unwrap();
+        names.retain(|pid, _| pids.contains(pid));
+        for pid in pids {
+            names.entry(pid).or_insert_with(|| {
+                crate::app_windows::process_path(pid)
+                    .and_then(|p| std::path::Path::new(&p).file_name().map(|n| n.to_string_lossy().into_owned()))
+                    .unwrap_or_default()
+            });
+        }
+        names.values().cloned().collect()
+    }
+
+    /// Which of these file names run (with a window).
+    fn running_any(exes: &[&str]) -> Vec<bool> {
+        let running = window_processes();
+        exes.iter().map(|exe| running.iter().any(|n| n.eq_ignore_ascii_case(exe))).collect()
+    }
+
+    /// Whether a process with this file name runs (with a window).
+    fn running(exe: &str) -> bool {
+        running_any(&[exe])[0]
+    }
+
+    /// Whether the app behind a toggle (Magnifier, Live Captions) is on this PC.
+    pub fn installed(f: Feature) -> bool {
+        system32(app_exe(f)).is_file()
+    }
+
+    /// The app toggles whose app runs.
+    pub fn apps_running() -> Vec<Feature> {
+        let apps = [Feature::Magnifier, Feature::Captions];
+        let exes = apps.map(app_exe);
+        let found = running_any(&exes);
+        apps.into_iter().zip(found).filter(|(_, on)| *on).map(|(f, _)| f).collect()
     }
 
     fn sticky_flags() -> Option<u32> {
@@ -320,6 +360,12 @@ mod imp {
     }
     pub fn get(_: Feature) -> Option<bool> {
         None
+    }
+    pub fn installed(_: Feature) -> bool {
+        false
+    }
+    pub fn apps_running() -> Vec<Feature> {
+        Vec::new()
     }
     pub fn set_sticky(_: bool) -> AppResult<()> {
         unavailable()

@@ -57,6 +57,10 @@ pub fn to_piece(app: &AppHandle, id: &str, name: &str, data: &Value) {
         PageKind::Widget => crate::window_manager::desktop_window_labels(app),
     };
     deliver(app, &labels, &Push { name, data, id: Some(&piece.id) });
+    if name == "shown" {
+        // Its sensors were not read while it was hidden: read them now.
+        crate::presence::wake();
+    }
 }
 
 /// An event for one window of piece `id` (e.g. one monitor copy of a bar).

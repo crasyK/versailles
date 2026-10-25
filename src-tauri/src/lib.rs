@@ -21,6 +21,7 @@ mod page;
 mod placement;
 mod power;
 mod posture;
+mod presence;
 mod preview;
 mod push;
 mod hotkeys;
@@ -358,6 +359,8 @@ pub fn run() {
             clipboard::start_change_watcher(app.handle().clone());
             // Before any sensor or quick setting touches WinRT on a short-lived thread.
             quick::keep_com_alive();
+            // Lock / unlock and display on / off pause the watchers below.
+            presence::start();
             sensors::start_watcher(app.handle().clone());
             app_windows::start_watcher(app.handle().clone());
             tray::start_watcher(app.handle().clone());

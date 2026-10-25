@@ -507,8 +507,7 @@ if ($Phase -eq 'installed') {
       $mm = [regex]::Match($line, $lineRe)
       if (-not $mm.Success) { continue }
       # Versailles.log stamps are local time from 0.12.0 on (UTC before).
-      $utc = [datetime]::ParseExact($mm.Groups[1].Value + ' ' + $mm.Groups[2].Value, 'yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture)
-      $when = $utc
+      $when = [datetime]::ParseExact($mm.Groups[1].Value + ' ' + $mm.Groups[2].Value, 'yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture)
       if ($when -lt $since.AddSeconds(-1)) { continue }
       if ($mm.Groups[4].Value -eq 'ERROR') {
         # Known noise, not a failure: a host window asking for a favicon it does not have.

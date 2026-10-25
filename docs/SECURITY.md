@@ -44,17 +44,19 @@ Versailles is an unpackaged, unelevated, unsigned (no Authenticode) Tauri v2 app
 
 ### IPC: who may call what
 
-- **Capabilities.** One capability (`capabilities/default.json`) covers the page windows (`desktop`, `desktop-*`, `widget-*`) and host chrome (`launcher-dim`, `guides`), for the app origin and for `http://127.0.0.1|localhost` on ports 47831–47841. The first-run window has its own (`welcome.json`: two commands). Pages cannot create windows or webviews, and cannot register global shortcuts; `scripts/verify-acl.mjs` fails the build if a capability grants them. The updater has no capability: pages cannot call it.
+- **Capabilities.** One capability (`capabilities/default.json`) covers the page windows (`desktop`, `desktop-*`, `widget-*`) and host chrome (`launcher-dim`, `guides`), for the app origin and, added at start-up (`api.rs` `allow_pages_on`), for `http://127.0.0.1|localhost` on the one port the server bound. The first-run window has its own (`welcome.json`: two commands). Pages cannot create windows or webviews, and cannot register global shortcuts; `scripts/verify-acl.mjs` fails the build if a capability grants them. The updater has no capability: pages cannot call it.
 - **Identity is the calling window's label** (`page.rs` `classify_invoker`, `commands.rs` `require_hook`), never an argument. A spawn window acts as its piece; the wallpaper must name a piece (`versailles.for(id)`) and may only act as a piece on the page; a folder widget gets its `widget.json` permissions; host windows get no hooks. The piece must list the hook in `data-hooks`.
-- **Classes.** Exec class (`cli_exec*`, `cli_search*`, `cli_recent_files`, `pty_*`) and control class (`quick_set`) are refused from the wallpaper and from folder widgets; only a spawn window whose piece declares the hook may use them. The SDK also waits for a click or key press before a control call (a convenience, not a host check).
+- **Folder widgets are not the page.** A floating folder widget (`widget.json`) gets only the commands that check a hook themselves, `monitor_info` / `get_monitors` / `sys_stats`, and close / menu / opacity / always-on-top for its own window (`page.rs` `FOLDER_ALLOWED`, checked in front of every command by `commands.rs` `folder_gate`). Every other host command is refused to it, including the API token (`get_api_info`), the page's HTML, layouts, the launcher and other widgets, and any command added later that is not on the list.
+- **Classes.** Exec class (`cli_exec*`, `cli_search*`, `cli_recent_files`, `pty_*`) and control class (`quick_set`) are refused from the wallpaper and from folder widgets; only a spawn window whose piece declares the hook may use them. The SDK also waits for a click or key press before a control call.
+- **A click or key press, checked by the host.** `power`, `windows-control` (including `openJump`) and `tray.click` are refused unless the calling page is inside a click or key press (Chromium's transient activation, about 5 s), wherever the call comes from (`gesture.rs`). Before any page script runs, every page window gets a non-writable, non-configurable global function, under a name random per run, that reads `navigator.userActivation` through getters captured at that moment; the host calls it with WebView2's `ExecuteScript`, whose answer reaches only the host. A page can call that function too (it learns nothing new) but cannot replace it or the getters it uses. Quick-settings changes are control class (spawn windows only); the host does not check their click.
 - **Pushed data follows the hook.** Hook data is delivered by script only into windows of pieces that declared the hook (`push.rs`, `bus.rs`). The Tauri events that carry data do the same: `clipboard://changed` and `media://update` go to the hook's windows, `pty://data` / `pty://exit` to the windows of the piece that opened the terminal.
 - **Layout** only moves or resizes the caller's own window; `windows-control` never acts on Versailles' own windows.
 
 ### The localhost server (`api.rs`, `protocol.rs`)
 
-- Binds `127.0.0.1` only (47831, or the next free port up to 47841).
+- Binds `127.0.0.1` only (47831, or the next free port up to 47841). Pages get IPC on that port only.
 - Every request: `Host` must be `127.0.0.1:<port>` / `localhost:<port>` (DNS rebinding); a present `Origin` must be the server or the app origin; without `Origin`, `Sec-Fetch-Site: cross-site|same-site` is refused unless it is a navigation to `/files/*`. CORS reflects only allowlisted origins.
-- The control routes (`/widgets*`, `/layouts/*`, `/launcher/show`, `/media/*`) need `Authorization: Bearer <token>`: a random UUIDv4 kept in `.versailles/config.json`, compared in constant time; an empty token never matches.
+- The control routes (`/widgets*`, `/layouts/*`, `/launcher/show`, `/media/*`) and saving the weather location (`/weather?save=1`) need `Authorization: Bearer <token>`: a random UUIDv4 kept in `.versailles/config.json`, compared in constant time; an empty token never matches.
 - `/files/*` serves only `desktop/**`, `.sdk/**`, the configured page and registered folder widgets, never `.versailles/`. The path is decoded once (by axum); `:` (drive letters, alternate data streams), NUL, rooted, UNC and `.`/`..` components are refused before any file system call; the canonical path (symlinks, junctions, 8.3 names resolved) is checked against the same scope again.
 
 ### Opening things (`cli_open`, `apps.rs`)
@@ -93,11 +95,11 @@ Wi-Fi passwords are logged as `<set>`; VPN credentials and the hotspot passphras
 
 | # | Severity | Area | What | Status |
 | - | -------- | ---- | ---- | ------ |
-| L1 | medium | Folder widgets | Folder widgets (`widget.json`) are served from the same origin as the desktop page (`http://127.0.0.1:<port>/files/…`). One can read the page and other folders over `fetch`, share `localStorage`, and call the host commands that need no hook (`get_api_info` with the API token, `get_desktop_html`, `list_catalog`, `open_widget`, `toggle_launcher`, `patch_engine_runtime`, …). It cannot use hooks it did not declare, and never exec or control class. Treat a folder widget like a script on your page. | documented |
-| L2 | low | Localhost server | Loopback is shared by every account on the PC. Without a token, another account can read what `/files` serves (your page, `.sdk`, folder widgets), call `/weather` and `/quote`, and change the saved weather location with `/weather?save=1`. | accepted |
-| L3 | low | Capabilities | The IPC capability covers ports 47831–47841, not only the bound one. If another account holds a port in that range and a Versailles window is navigated there (a hard-coded link while Versailles fell back to another port), that page gets IPC with the window's label. | documented |
+| L1 | low | Folder widgets | Folder widgets (`widget.json`) are served from the same origin as the desktop page (`http://127.0.0.1:<port>/files/…`): one can still read the page and other folders over `fetch` and share `localStorage`. Since 1.0 it no longer gets the host commands that need no hook (the API token, the page's HTML, layouts, the launcher, other widgets); see *Folder widgets are not the page*. Treat its scripts like scripts on your page. | partly fixed (1.0) |
+| L2 | low | Localhost server | Loopback is shared by every account on the PC. Without a token, another account can read what `/files` serves (your page, `.sdk`, folder widgets) and call `/weather` and `/quote`. Saving the weather location needs the token since 1.0. | accepted (save fixed in 1.0) |
+| L3 | low | Capabilities | Up to 0.12 the IPC capability covered ports 47831–47841, not only the bound one: a page another account served on a port in that range, opened in a Versailles window, got IPC. Since 1.0 the capability is added at start-up for the bound port only. | fixed (1.0) |
 | L4 | info | `cli_open` | Plain class: the wallpaper may call it. Opening an existing local path runs it by file association (`.exe`, `.bat`, `.vbs`, `.lnk`, …), and `ms-` / `shell:` handlers other than the denied ones open. This is what a launcher tile does; Windows' own Mark-of-the-Web prompts still apply. | accepted |
-| L5 | info | Plain class | `power` (shut down, sign out), `windows-control` (close other apps' windows) and `tray_click` work from the wallpaper and without a user gesture. | accepted |
+| L5 | info | Plain class | `power` (shut down, sign out), `windows-control` (close other apps' windows) and `tray_click` work from the wallpaper. Since 1.0 only inside a click or key press, checked by the host. | fixed (1.0) |
 | L6 | info | Events and windows | `core:event:default` lets any page emit any event to any window (the host needs `overlay://staged` from pages), and the window commands accept any label: a page can close, hide or move other Versailles windows and fake UI events (for example text in the bar's terminal view). No host action trusts an event payload beyond reveal timing. | accepted |
 | L7 | info | `notify-control` | `NotifyOpen` opens `shell:AppsFolder\<aumid>` for any well-formed id, including `{KNOWNFOLDERID}\path.exe` forms, without the Applications-folder check `cli_open` does. Control class, spawn windows only, and `cli_open` already opens local paths. | documented |
 | L8 | info | Unsigned builds | Releases carry no Authenticode signature (owner's decision): SmartScreen warns on first install, and a user cannot tell a genuine first download from a fake one by signature. Updates after that are protected by minisign. | accepted |
@@ -113,10 +115,11 @@ Wi-Fi passwords are logged as `<set>`; VPN credentials and the hotspot passphras
 | medium | Terminal | `pty.rs` (`pty://data` was `app.emit`) | Any window listens for `pty://data` and reads terminal output. Now sent only to the opening piece's windows. | fixed |
 | low | Media | `media.rs` (`media://update` was `app.emit`) | A piece without `media` listens for now-playing data. Now sent only to `media` windows. | fixed |
 | low | API token | `api.rs` `bearer_matches` | Non-constant-time comparison; a hand-edited empty `apiToken` made the expected header `Bearer ` (only HTTP whitespace trimming kept it closed). | fixed |
-| medium | Folder widgets | `api.rs` `current_file_scope`, `commands.rs` ungated commands | L1 | documented |
-| low | Localhost server | `api.rs` `start_api_server` | L2 | accepted |
-| low | Capabilities | `capabilities/default.json` `remote.urls` | L3 | documented |
-| info | `cli_open`, plain class, events, notify-control, signing, mapped drives, token | `cli.rs` `cli_open`, `toasts.rs` `open_app`, … | L4–L10 | accepted / documented |
+| medium | Folder widgets | `commands.rs` ungated commands | L1: the hook-free commands are refused to folder widgets (`folder_gate`, e2e checks). | fixed (1.0) |
+| low | Localhost server | `api.rs` `weather` | L2: `/weather?save=1` needs the token (e2e check). Reading `/files` stays open. | fixed (1.0) / accepted |
+| low | Capabilities | `capabilities/default.json` `remote.urls` | L3: the bound port only, added at start-up. | fixed (1.0) |
+| info | Plain class | `commands.rs` `power_action`, `windows_control`, `windows_jump`, `tray_click` | L5: host-checked click or key press (`gesture.rs`, e2e checks). | fixed (1.0) |
+| info | `cli_open`, events, notify-control, signing, mapped drives, token | `cli.rs` `cli_open`, `toasts.rs` `open_app`, … | L4, L6–L10 | accepted / documented |
 | info | File server | `protocol.rs` `sanitize_request_path`, `resolve_in_root` | `..`, `%2e%2e`, `%5c`, ADS, 8.3 names, symlinks: all refused (unit tests, and probes against a running 0.11.1). | ok |
 | info | Search / recent | `search.rs`, `recent.rs` | SQL quoting, LIKE escaping, UNC skipped (unit tests). | ok |
 | info | Tray | `tray.rs` `parse`, `forward_appbar` | Bounds-checked parsing, clamped icon sizes, no message filter opened for low integrity. | ok |
@@ -126,8 +129,7 @@ Wi-Fi passwords are logged as `<set>`; VPN credentials and the hotspot passphras
 
 ## Follow-ups
 
-- Give each folder widget its own origin (a per-folder host name or port), or gate the hook-free host commands on the invoker kind (host chrome and page pieces only) (L1).
-- Add the IPC capability at runtime for the bound port only (`AppHandle::add_capability`) instead of the static port range (L3).
+- Give each folder widget its own origin (a per-folder host name or port), so it cannot read the page or share its `localStorage` either (L1).
 - Run `NotifyOpen` ids through the same Applications-folder check as `cli_open` once it is clear no notifying app is missing from that folder (L7).
 - Consider a per-session secret for `/files` (cookie set on the window's first navigation) so other accounts cannot read the page (L2).
 

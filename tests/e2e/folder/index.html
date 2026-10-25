@@ -1,0 +1,34 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>e2e folder widget</title>
+  </head>
+  <body style="font:12px monospace;margin:8px">
+    e2e folder widget
+    <script src="/files/.sdk/versailles.js"></script>
+    <script>
+      /* A floating folder widget (widget.json) shares the page's origin but
+         not its host commands (SECURITY.md L1). It cannot use the storage
+         hook, so it leaves what it saw in localStorage (same origin) for the
+         e2e overlay to save. */
+      (function wait(n) {
+        var v = window.versailles;
+        if (!v || typeof v.invoke !== 'function') { if (n < 400) setTimeout(function () { wait(n + 1); }, 50); return; }
+        function ask(cmd, args) {
+          return v.invoke(cmd, args || {}).then(
+            function () { return 'allowed'; },
+            function (e) { return String((e && e.message) || e); });
+        }
+        Promise.all([
+          ask('get_api_info'),
+          ask('get_desktop_html'),
+          ask('monitor_info'),
+          ask('close_widget', { id: 'e2e-wall' })
+        ]).then(function (r) {
+          localStorage.setItem('e2e-folder', JSON.stringify({ apiInfo: r[0], desktopHtml: r[1], monitorInfo: r[2], closeOther: r[3] }));
+        });
+      })(0);
+    </script>
+  </body>
+</html>

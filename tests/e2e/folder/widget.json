@@ -1,0 +1,8 @@
+{
+  "id": "e2e-folder",
+  "title": "e2e folder widget",
+  "width": 220,
+  "height": 60,
+  "defaultPosition": { "x": 40, "y": 140 },
+  "permissions": ["media"]
+}

@@ -1,5 +1,5 @@
     <!-- ── e2e test pieces, injected by scripts/e2e.mjs ── -->
-    <article class="widget" data-id="e2e-wall" data-hooks="storage,battery,network,focus,audio,bus,spawn,radios,audio-control,display,power-mode,wifi,bluetooth,dnd,tray,posture,keyboard,vpn,hotspot,sharing,accessibility"
+    <article class="widget" data-id="e2e-wall" data-hooks="storage,battery,network,focus,audio,bus,spawn,windows-control,radios,audio-control,display,power-mode,wifi,bluetooth,dnd,tray,posture,keyboard,vpn,hotspot,sharing,accessibility"
              style="position:fixed;left:8px;top:8px;font:12px monospace">e2e</article>
     <script>
       /* Reports what the wallpaper sees into its storage ("report"). */
@@ -7,7 +7,7 @@
         if (/[?&]m=spawn/.test(location.search)) return;
         if (window.__e2eWall) return;
         window.__e2eWall = true;
-        var report = { sdk: null, sensors: {}, pushes: {}, bus: [], persisted: null, errors: {}, controlRefused: null, tray: null, trayClick: null };
+        var report = { sdk: null, sensors: {}, pushes: {}, bus: [], persisted: null, errors: {}, controlRefused: null, tray: null, trayClick: null, winControl: null };
         (function wait(n) {
           var v = window.versailles;
           if (!v || typeof v.for !== 'function') { if (n < 400) setTimeout(function () { wait(n + 1); }, 50); return; }
@@ -29,9 +29,15 @@
             report.tray = { active: active, icons: icons.length, apps: icons.map(function (t) { return t.app; }) };
             save();
           }).catch(err('tray'));
+          // Without a click or key press the host refuses these (SECURITY.md L5).
           v.invoke('tray_click', { id: 0, caller: 'e2e-wall' }).then(
             function () { report.trayClick = 'allowed'; save(); },
             function (e) { report.trayClick = String((e && e.message) || e); save(); });
+          v.invoke('windows_control', { id: 0, action: 'focus', caller: 'e2e-wall' }).then(
+            function () { report.winControl = 'allowed'; save(); },
+            function (e) { report.winControl = String((e && e.message) || e); save(); });
+          // The folder widget (tests/e2e/folder) reports through the overlay.
+          v.invoke('open_widget', { id: 'e2e-folder' }).catch(err('open_widget'));
           // Settings never change from the wallpaper, whatever it declares.
           v.invoke('quick_set', { action: { kind: 'mute', on: false }, caller: 'e2e-wall' }).then(
             function () { report.controlRefused = 'allowed'; save(); },
@@ -66,6 +72,13 @@
               .then(function (r) { me.storage.set('dismiss', r).catch(function () {}); });
             me.storage.set('report', { runs: window.__e2eRuns }).catch(function () {});
             me.bus.publish('e2e-hello', {}).catch(function () {});
+            // What the folder widget was allowed (it shares this origin's localStorage).
+            (function folder(n) {
+              var seen = null;
+              try { seen = localStorage.getItem('e2e-folder'); } catch (_) {}
+              if (seen) { me.storage.set('folder', JSON.parse(seen)).catch(function () {}); return; }
+              if (n < 60) setTimeout(function () { folder(n + 1); }, 250);
+            })(0);
           }, 500);
         })(0);
       </script>

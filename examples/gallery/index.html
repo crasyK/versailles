@@ -760,7 +760,15 @@
               url = '/weather?save=1';
               if (explicit) url += '&location=' + encodeURIComponent(explicit);
             }
-            const res = await fetch(url, { headers: { Accept: 'application/json' } });
+            const headers = { Accept: 'application/json' };
+            if (explicit != null) {
+              // Saving the location needs the API token (Versailles 1.0): every account on the PC shares 127.0.0.1.
+              try {
+                const api = window.versailles && await window.versailles.invoke('get_api_info');
+                if (api && api.token) headers.Authorization = 'Bearer ' + api.token;
+              } catch (_) {}
+            }
+            const res = await fetch(url, { headers });
             const data = await res.json();
             if (!data || data.ok === false) throw new Error(data && data.error ? data.error : 'fail');
             shell.classList.remove('is-editing');

@@ -33,6 +33,7 @@
  */
 import { execFileSync, spawn } from "node:child_process";
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { get as httpGet } from "node:http";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -95,6 +96,8 @@ function makeDesktop() {
   if (!html.includes(anchor)) throw new Error("starter page changed: no #preview-root anchor");
   const pieces = readFileSync(join(repo, "tests/e2e/pieces.html"), "utf8");
   writeFileSync(page, html.replace(anchor, pieces + anchor));
+  // A floating folder widget (widget.json), opened by the wallpaper piece.
+  cpSync(join(repo, "tests/e2e/folder"), join(dest, "e2e-folder"), { recursive: true });
   return { dest, page };
 }
 
@@ -111,6 +114,18 @@ function launch(exe, dest, port) {
     },
     stdio: "ignore",
     windowsHide: false,
+  });
+}
+
+/** Status of a plain GET to the app's server (no browser headers). */
+function httpStatus(port, path) {
+  return new Promise((resolve) => {
+    const req = httpGet({ host: "127.0.0.1", port, path, timeout: 10_000 }, (res) => {
+      res.resume();
+      resolve(res.statusCode);
+    });
+    req.on("timeout", () => req.destroy());
+    req.on("error", (err) => resolve(String(err.message || err)));
   });
 }
 
@@ -376,7 +391,8 @@ async function checksPhase(exe) {
   });
   try {
     // Run 1: everything comes up.
-    child = launch(exe, dest, await freePort());
+    const port1 = await freePort();
+    child = launch(exe, dest, port1);
     const wall = await until("wallpaper report", () => {
       const r = store(dest, "e2e-wall")?.report;
       return r && r.sdk && Object.keys(r.sensors).length + Object.keys(r.errors).length >= 17 && r.bus.length && r.controlRefused
@@ -398,7 +414,17 @@ async function checksPhase(exe) {
     const tray = await until("tray report", () => store(dest, "e2e-wall")?.report?.trayClick && store(dest, "e2e-wall").report, 15_000)
       .catch(() => store(dest, "e2e-wall")?.report || {});
     check("tray answers", tray.tray && tray.tray.active === false, JSON.stringify(tray.tray) + (tray.errors?.tray || ""));
-    check("tray click without the tray is refused", /Explorer holds the icons/.test(tray.trayClick || ""), tray.trayClick);
+    check("tray click without a click is refused", /needs a click or key press/.test(tray.trayClick || ""), tray.trayClick);
+    const win = await until("windows-control report", () => store(dest, "e2e-wall")?.report?.winControl, 15_000).catch(() => null);
+    check("window control without a click is refused", /needs a click or key press/.test(win || ""), win);
+    const folder = await until("folder widget report", () => store(dest, "e2e-overlay")?.folder, 20_000).catch(() => null);
+    check("folder widget gets no API token", /folder widget 'e2e-folder' cannot use get_api_info/.test(folder?.apiInfo || ""),
+      folder ? folder.apiInfo : "no report");
+    check("folder widget cannot read the page", /cannot use get_desktop_html/.test(folder?.desktopHtml || ""), folder?.desktopHtml);
+    check("folder widget may read monitors", folder?.monitorInfo === "allowed", folder?.monitorInfo);
+    check("folder widget cannot close other widgets", /only for itself/.test(folder?.closeOther || ""), folder?.closeOther);
+    const save = await httpStatus(port1, "/weather?save=1&location=Berlin");
+    check("saving the weather location needs the token", save === 401, `status ${save}`);
     await until("bar load", () => store(dest, "e2e-bar")?.loads >= 1);
     const p1 = await until("bar visible", () => {
       const p = probe(child.pid);

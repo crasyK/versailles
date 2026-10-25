@@ -28,7 +28,7 @@ Same-origin helpers (no CORS fight):
 | Path | Source |
 | ---- | ------ |
 | `GET /quote` | Daily quote proxy |
-| `GET /weather` | Open-Meteo proxy (`?location=` `&save=1`) |
+| `GET /weather` | Open-Meteo proxy (`?location=`; `&save=1` stores the location and needs `Authorization: Bearer <token>`, from `versailles.invoke("get_api_info")`) |
 | `GET /media/now` | GSMTC now-playing |
 | `POST /media/play-pause` | Media control |
 | `POST /media/next` | Skip |

@@ -108,7 +108,7 @@ Every rejection is an `Error` with a `code` and a `message`:
 | `hook-undeclared` | The piece does not list the hook in `data-hooks` (SDK or host) |
 | `hook-refused` | The host refused the call from this window (the wallpaper asking for a control or exec class call, a host window, an unknown piece) |
 | `unknown-hook` | A hook name the host does not know |
-| `needs-gesture` | `power.*`, quick-settings changes and `tray.click` outside a click or key press |
+| `needs-gesture` | `power.*`, `windows-control`, quick-settings changes and `tray.click` outside a click or key press |
 | `unknown-event` | `on(name)` with a name that is neither a push hook nor a piece event |
 | `bad-argument` | A call the SDK cannot send as given (`windows.preview` without a target) |
 | `host-error` | Anything else the host answers with (Windows refused, not supported, …); `message` says what |
@@ -132,7 +132,7 @@ Identity comes from the **calling window**, never from an IPC argument (threat m
 | Spawn window (`widget-<id>`, opened from a `template.spawnable`) | Its own piece `<id>`. `caller` is ignored, so `bar.js` may call `pty_open` / `cli_open` without one. |
 | Monitor copy of a bar (`widget-<id>:<n>`, from `data-monitor="all"` on a docked bar) | The same piece `<id>`, like `widget-<id>`. |
 | Desktop wallpaper (`desktop`, all `article.widget` pieces in one document) | The piece named by `caller` (`versailles.for(id)` sets it). A missing or unknown `caller` is rejected. |
-| Floating folder widget (`widget-<id>` from a `widget.json` folder) | Its `widget.json` `permissions`. |
+| Floating folder widget (`widget-<id>` from a `widget.json` folder) | Its `widget.json` `permissions`. Of the host commands that need no hook it gets only `monitor_info`, `get_monitors`, `sys_stats`, and close / menu / opacity / always-on-top for its own window: no API token, no page HTML, no layouts or launcher ([SECURITY.md](SECURITY.md)). |
 | Host windows (`launcher-dim`, `guides`) | Nothing — they never call hooks. |
 
 That piece must list the hook in `data-hooks`. A piece that omitted `data-hooks="media"` cannot call `media_now` even if the JS tries.
@@ -185,7 +185,7 @@ Part of the contract: every gated host command belongs to one class, and the cla
 | `accessibility` | `sense_now` | `quick_set` | - |
 <!-- hook-classes:end -->
 
-Pushes (`on(hook, fn)`) need no command: they go only to the windows of pieces that declare the hook. A few plain calls have an extra rule: `layout` acts only on the piece's own window, `windows.preview` only from a bar or overlay, and the SDK runs `power.*` and `tray.click` only inside a click or key press.
+Pushes (`on(hook, fn)`) need no command: they go only to the windows of pieces that declare the hook. A few plain calls have an extra rule: `layout` acts only on the piece's own window, `windows.preview` only from a bar or overlay, and `power.*`, `windows-control` and `tray.click` run only inside a click or key press. The host checks that click itself (since 1.0), so calling the command directly does not get around it.
 
 **Control class.** `quick_set` (`radios`, `audio-control`, `display`, `power-mode`, `wifi`, `bluetooth`, `dnd`, `notify-control`, `keyboard`, `vpn`, `hotspot`, `sharing`, `accessibility`) changes a system setting. Like exec class it is refused from the desktop wallpaper and from folder widgets; only a spawn window (bar, slide-out, overlay) whose piece declares the hook may change a setting. The SDK also asks for a click or key press first. Reading those hooks works anywhere.
 
@@ -349,7 +349,7 @@ button.onmouseleave = () => (clearTimeout(timer), wins.preview(null));
 - It hides about 0.1 s after `preview(null)` (moving to the next button and calling `preview` again keeps it up), when the pointer has left both the bar and the card for 0.3 s, when the window closes, and a minute after the last call. Call `preview` again when the button moves.
 - Only from a bar or overlay (a spawn window), never from the wallpaper: the card is a topmost window placed from the calling window's position. It is display only, so `windows` is enough and no click is needed. At most 30 calls a second; only listed windows.
 
-Control (`windows-control`): `focus(id)` (restores a minimized window), `minimize(id)`, `restore(id)`, `maximize(id)`, `close(id)` (posts `WM_CLOSE`: the app may still ask to save), `move(id, { x, y, width, height })` (physical px; `x` / `y` alone moves, `width` / `height` alone resizes; a maximized or minimized window is restored first), `openJump(id, key)` (see [Jump lists](#jump-lists)).
+Control (`windows-control`): `focus(id)` (restores a minimized window), `minimize(id)`, `restore(id)`, `maximize(id)`, `close(id)` (posts `WM_CLOSE`: the app may still ask to save), `move(id, { x, y, width, height })` (physical px; `x` / `y` alone moves, `width` / `height` alone resizes; a maximized or minimized window is restored first), `openJump(id, key)` (see [Jump lists](#jump-lists)). Each only inside a click or key press (since 1.0; otherwise `needs-gesture`): a button that focuses or closes a window works, a script that rearranges windows on a timer does not.
 
 ### Progress and badges
 
@@ -507,7 +507,7 @@ button.onclick = () => versailles.for("power-menu").power.lock();
 // also: sleep(), signOut(), restart(), shutdown()
 ```
 
-The SDK only runs these inside a click or key press (`navigator.userActivation`), so a page cannot lock or shut down the machine on its own. `restart` and `shutdown` are immediate. The host logs every request.
+These run only inside a click or key press (`navigator.userActivation`, checked by the SDK and, since 1.0, by the host), so a page cannot lock or shut down the machine on its own. Typing a command and pressing Enter counts: call `power.*` from that key press, not after a slow wait (the press counts for about 5 s). `restart` and `shutdown` are immediate. The host logs every request.
 
 `sleep()` needs classic (S3) sleep. Many newer laptops only have Modern Standby (`powercfg /a` lists "S0 low power idle"), which Windows gives apps no supported way to start; there `sleep()` rejects with an error saying so. Catch it and hide or disable your sleep button.
 

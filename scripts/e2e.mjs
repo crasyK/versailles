@@ -21,6 +21,15 @@
  * restores the taskbar), runs the phase, and always starts it again
  * afterwards (same exe, `--autostart` if it had it), even when checks fail.
  * The taskbar phase also kills and restarts Explorer.
+ *
+ * Last, the performance phase (#49) starts the e2e page once more (wallpaper,
+ * the docked bar, the overlay the wallpaper opens, a page edit so the key
+ * helper runs), lets it settle and checks the budgets in
+ * tests/e2e/budget.json: host private memory, WebView2 total, idle CPU over
+ * 30 s and start-up time to the wallpaper being ready.
+ *
+ *   npm run e2e -- --no-perf            # skip the performance phase
+ *   npm run e2e -- --perf-only          # only the performance phase
  */
 import { execFileSync, spawn } from "node:child_process";
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -28,6 +37,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { bootSnapshot, formatByType, idleCpu, loadBudget, summarize } from "./perf.mjs";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
@@ -38,6 +48,11 @@ const exeArg = (() => {
 const keep = args.includes("--keep"); // leave the app and its folder up on failure
 const take = args.includes("--take-taskbar"); // stop the user's Versailles for the taskbar phase
 const dryRun = args.includes("--dry-run"); // print the plan only
+const noPerf = args.includes("--no-perf"); // skip the performance phase
+const perfOnly = args.includes("--perf-only"); // run only the performance phase
+const budgetFile = join(repo, "tests/e2e/budget.json");
+const perfSettleMs = 20_000; // after the pieces are up, before measuring
+const perfCpuMs = 30_000; // idle CPU window
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function resolveExe() {
@@ -258,7 +273,17 @@ async function restartExplorer() {
   return "started by the test";
 }
 
+const perfPlan = `Performance phase: start the app isolated once more on the e2e page, settle ${perfSettleMs / 1000} s,
+   measure idle CPU over ${perfCpuMs / 1000} s and memory, check them and the start-up time against
+   tests/e2e/budget.json, stop it.`;
+
 function printPlan(exe) {
+  if (perfOnly) {
+    console.log(`e2e --dry-run: nothing is started or stopped.
+  app under test: ${exe || "none found (npm run build:test, or --exe)"}
+1. ${perfPlan}`);
+    return;
+  }
   const p = probe(process.pid);
   const found = userVersailles();
   console.log(`e2e --dry-run: nothing is started or stopped.
@@ -283,6 +308,7 @@ function printPlan(exe) {
 3. Always, even when checks fail: stop the test app, then start "${f.exe}"${f.autostart ? " --autostart" : ""} again.`);
     }
   }
+  console.log(noPerf ? "Last: the performance phase is skipped (--no-perf)." : `Last: ${perfPlan}`);
 }
 
 const reservedBottom = (p) => Math.max(...[p.monitors].flat().map((m) => m.bottom));
@@ -305,6 +331,10 @@ function check(name, ok, detail = "", known = null) {
 
 async function main() {
   const exe = resolveExe();
+  if (noPerf && perfOnly) {
+    console.error("--no-perf and --perf-only exclude each other.");
+    process.exit(2);
+  }
   if (dryRun) {
     printPlan(exe);
     process.exit(0);
@@ -314,6 +344,23 @@ async function main() {
     process.exit(2);
   }
   console.log(`e2e: ${exe}`);
+  if (!perfOnly) await checksPhase(exe);
+  if (!noPerf) await perfPhase(exe);
+
+  const width = Math.max(...results.map((r) => r.name.length));
+  for (const r of results) {
+    const status = r.ok ? "PASS" : r.known ? "KNOWN" : "FAIL";
+    console.log(`${status.padEnd(5)}  ${r.name.padEnd(width)}  ${r.detail}${!r.ok && r.known ? ` (${r.known})` : ""}`);
+  }
+  const failed = results.filter((r) => !r.ok && !r.known).length;
+  const known = results.filter((r) => !r.ok && r.known).length;
+  const note = known ? ` (${known} known issue${known > 1 ? "s" : ""} not counted)` : "";
+  console.log(failed ? `\n${failed} of ${results.length} checks failed${note}` : `\nall ${results.length} checks passed${note}`);
+  process.exit(failed ? 1 : 0);
+}
+
+/** The functional checks: two runs and the taskbar phase. */
+async function checksPhase(exe) {
   const baseline = reservedBottom(probe(process.pid));
   const { dest, page } = makeDesktop();
   let child = null;
@@ -505,17 +552,85 @@ async function main() {
     }
     giveBack();
   }
+}
 
-  const width = Math.max(...results.map((r) => r.name.length));
-  for (const r of results) {
-    const status = r.ok ? "PASS" : r.known ? "KNOWN" : "FAIL";
-    console.log(`${status.padEnd(5)}  ${r.name.padEnd(width)}  ${r.detail}${!r.ok && r.known ? ` (${r.known})` : ""}`);
+/**
+ * Performance budget (#49): a fresh isolated app on the e2e page (wallpaper,
+ * the docked bar, the overlay the wallpaper opens; a page edit registers the
+ * hotkeys, which starts the key helper as in the checks above). Measures the
+ * app's own processes only (scripts/perf.mjs): its process tree and its own
+ * WebView2 data folder, never the user's running Versailles.
+ */
+async function perfPhase(exe) {
+  let budget;
+  try {
+    budget = loadBudget(budgetFile);
+  } catch (err) {
+    check("performance budget readable", false, String(err && err.message ? err.message : err));
+    return;
   }
-  const failed = results.filter((r) => !r.ok && !r.known).length;
-  const known = results.filter((r) => !r.ok && r.known).length;
-  const note = known ? ` (${known} known issue${known > 1 ? "s" : ""} not counted)` : "";
-  console.log(failed ? `\n${failed} of ${results.length} checks failed${note}` : `\nall ${results.length} checks passed${note}`);
-  process.exit(failed ? 1 : 0);
+  console.log(`e2e: performance phase (settle ${perfSettleMs / 1000} s, idle CPU over ${perfCpuMs / 1000} s)`);
+  const baseline = reservedBottom(probe(process.pid));
+  const { dest, page } = makeDesktop();
+  const dataDir = join(dest, "webview2");
+  let child = null;
+  // Ctrl+C: stop this app too; a handler from the checks phase exits after it.
+  process.prependOnceListener("SIGINT", () => {
+    kill(child);
+    if (!process.listenerCount("SIGINT")) process.exit(130);
+  });
+  try {
+    const port = await freePort();
+    const started = Date.now();
+    child = launch(exe, dest, port);
+    // Start-up: the app's own clock from process start to the wallpaper
+    // page's load event (bench mode writes it to .versailles/boot.json).
+    let boot = null;
+    while (!boot && Date.now() - started < 60_000) {
+      const b = bootSnapshot(dest);
+      if (b && b.ready) boot = b;
+      else await sleep(100);
+    }
+    if (!boot) throw new Error("timed out waiting for the wallpaper to be ready (.versailles/boot.json)");
+    const seen = Date.now() - started;
+    await until("wallpaper report", () => store(dest, "e2e-wall")?.report?.bus?.length); // the overlay is open
+    await until("bar load", () => store(dest, "e2e-bar")?.loads >= 1);
+    writeFileSync(page, readFileSync(page, "utf8") + "\n<!-- e2e perf edit -->\n");
+    await until("bar reload", () => store(dest, "e2e-bar")?.loads >= 2, 30_000).catch(() => null);
+    await sleep(perfSettleMs);
+    const cpu = await idleCpu(child.pid, dataDir, perfCpuMs);
+    const s = summarize(cpu.rows);
+    const total = (s.host || 0) + (s.keys || 0) + s.webviewTotal;
+    console.log(`e2e: perf: app total ${total} MB (host ${s.host}, key helper ${s.keys ?? "-"}, WebView2 ${s.webviewTotal})`);
+    if (s.other.length) console.log(`e2e: perf: also started by the app, not counted: ${s.other.map((r) => `${r.type} ${r.mb} MB`).join(", ")}`);
+    const cpuSplit = Object.entries(cpu.byType)
+      .filter(([, ms]) => ms > 0)
+      .sort((a, b) => b[1] - a[1])
+      .map(([t, ms]) => `${t} ${ms}`)
+      .join(", ");
+
+    check("start-up to wallpaper ready", boot.readyMs <= budget.startupMs,
+      `${boot.readyMs} ms (budget ${budget.startupMs}); seen by the test after ${seen} ms`);
+    check("host private memory", s.host != null && s.host <= budget.hostPrivateMB,
+      `${s.host} MB (budget ${budget.hostPrivateMB}); key helper ${s.keys == null ? "not running" : `${s.keys} MB`}`);
+    check("WebView2 total memory", s.webviewCount > 0 && s.webviewTotal <= budget.webviewTotalMB,
+      `${s.webviewTotal} MB (budget ${budget.webviewTotalMB}); ${s.webviewCount} processes: ${formatByType(s.byType)}`);
+    check(`idle CPU over ${perfCpuMs / 1000} s`, s.host != null && cpu.percent <= budget.idleCpuPercent,
+      `${cpu.percent.toFixed(2)} % of one core (budget ${budget.idleCpuPercent}); ${cpu.usedMs} ms CPU in ${(cpu.elapsedMs / 1000).toFixed(1)} s: ${cpuSplit}`);
+  } catch (err) {
+    check("performance phase completed", false, String(err && err.message ? err.message : err));
+  } finally {
+    kill(child);
+    child = null;
+    await sleep(2500);
+    const after = reservedBottom(probe(process.pid));
+    check("perf cleanup: no screen space left reserved", after <= baseline, `bottom ${after} px (was ${baseline})`);
+    try {
+      rmSync(dest, { recursive: true, force: true });
+    } catch {
+      /* WebView2 may still hold files for a moment */
+    }
+  }
 }
 
 main();

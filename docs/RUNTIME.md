@@ -58,6 +58,24 @@ Sidecar `versailles.json` / `shortcuts.json` are fallback if `#versailles` is mi
 
 **First run.** When `desktop/index.html` does not exist (under `VERSAILLES_ROOT` if set), a small welcome window offers **Set up the example desktop** or **I'll bring my own**. Setting up copies the starter shipped inside the app (`desktop/`, `.sdk/`), creating each file only if it does not exist yet, and shows the desktop. Either answer is remembered in `%LOCALAPPDATA%\com.versailles.widgets\first-run-offered` (delete it to be asked again); closing the window without answering asks again at the next start. Bench and e2e runs never show it. The window's capability (`capabilities/welcome.json`) allows only its two commands.
 
+## What idle costs
+
+Measured on the dev laptop (0.12, percent of one CPU core, host + WebView2 processes, 30–60 s with nobody touching anything):
+
+| Page | Idle CPU |
+| ---- | -------- |
+| Starter as shipped (wallpaper widgets) | about 1 % |
+| Starter with its top bar, taskbar and quick-settings examples on | about 3 % (0.11: 7 %) |
+| e2e page (17 sensor hooks on the wallpaper) | about 4 % (0.11: 5.5 %) |
+
+What the host does while idle:
+
+- **Sensors** are read only while a piece that declares them can be seen (see [HOOKS.md](HOOKS.md#push)): a closed slide-out costs nothing, and nothing is read while the session is locked or the display is off. Most reads cost under 1 ms of CPU; `wifi`, `radios`, `hotspot`, `display` and `notify` wait 10–50 ms on Windows services, which do the work in their own processes.
+- **`windows`** re-reads the window list every 0.25 s while a piece that shows it is visible (about 0.3 ms a read). **`media`** reads the playing session every 0.35 s while a visible piece declares `media`, else every 5 s; the cover art is read once per track.
+- Everything else is event-driven or rare: the clipboard sequence number (0.4 s), monitors (2 s), docked bars' reserved space (3 s), the fullscreen check (0.3 s, only with docked bars).
+
+What a page can cost: **an infinite CSS animation keeps its window drawing 60 frames a second**, even a `steps()` one that changes twice a minute: one blinking colon on a full-screen wallpaper measured 8 % of a core (renderer + GPU), the same blink from a 1 s `setInterval` 1.7 %. Change the DOM from a timer at the rate it really changes, write text only when it differs (`if (el.textContent !== text) el.textContent = text`), pause loops on `document.hidden` and the piece's `hidden` event, and use `setTimeout` instead of a `requestAnimationFrame` loop that skips most frames.
+
 ## Crash recovery
 
 Release builds start as a small **supervisor** that runs the app in a child process (same exe, `VERSAILLES_SUPERVISED=1`) inside a kill-on-close Job Object. Exit code 0 (Quit, or a second launch that handed off to the running instance) ends both. Any other exit restarts the app after 1s, 2s, 5s, 10s, 30s; a sixth crash within 10 minutes gives up. Session restore brings back the wallpaper and floating widgets. Apps launched from the action bar are not in the job and survive a restart.

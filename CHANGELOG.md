@@ -2,6 +2,11 @@
 
 What changed in each release of Versailles, newest first. Full notes and installers: [GitHub releases](https://github.com/crasyK/versailles/releases). Each release commit updates this file.
 
+## 0.12.1 — 2026-10-25
+
+- Fixed: quitting Versailles, or updating it from the tray, stalled for 45 s and was then ended by the watchdog while Versailles held the tray: the update never started. On exit the tray thread listed the app windows (to hand taskbar progress back to Explorer) and asked Versailles' own windows for their titles, which needed the main thread it was blocking. The exit now also waits at most 5 s for the tray.
+- If you have 0.12.0 and Versailles hides your taskbar, the update from the tray stalls in the same way: install 0.12.1 from the release page instead.
+
 ## 0.12.0 — 2026-10-25
 
 The last release before 1.0. The API is frozen, the docs are written, and Versailles does less while nothing happens.

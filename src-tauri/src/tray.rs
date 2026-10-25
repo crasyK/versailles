@@ -773,7 +773,17 @@ mod imp {
             return;
         };
         r.stop.store(true, Ordering::SeqCst);
-        let _ = r.thread.join();
+        // Called on the main thread when Versailles exits or updates: never
+        // wait forever, whatever the tray thread is stuck on.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !r.thread.is_finished() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        if r.thread.is_finished() {
+            let _ = r.thread.join();
+        } else {
+            tracing::warn!("tray: the tray thread did not stop within 5 s; going on without it");
+        }
     }
 
     fn emit(push: Value) {

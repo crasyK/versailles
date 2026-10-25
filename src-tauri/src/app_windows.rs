@@ -484,6 +484,11 @@ mod imp {
     }
 
     fn candidate(h: HWND) -> Candidate {
+        // Never read the title of one of our own windows: for a window of
+        // this process Windows sends WM_GETTEXTLENGTH to its thread, and a
+        // list taken while the main thread waits on the caller (the tray
+        // stopping on exit) would never return. Our windows are never listed.
+        let own_process = pid_of(h) == std::process::id();
         unsafe {
             let ex = GetWindowLongPtrW(h, GWL_EXSTYLE) as u32;
             Candidate {
@@ -493,8 +498,8 @@ mod imp {
                 app_window: ex & WS_EX_APPWINDOW.0 != 0,
                 no_activate: ex & WS_EX_NOACTIVATE.0 != 0,
                 owned: GetWindow(h, GW_OWNER).is_ok(),
-                has_title: GetWindowTextLengthW(h) > 0,
-                own_process: pid_of(h) == std::process::id(),
+                has_title: !own_process && GetWindowTextLengthW(h) > 0,
+                own_process,
                 shell: is_shell_class(&class_of(h)),
             }
         }

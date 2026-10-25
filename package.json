@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "verify:acl": "node scripts/verify-acl.mjs",
     "verify:sdk": "node --check templates/starter/.sdk/versailles.js && node scripts/check-sdk-types.mjs && node scripts/check-sdk-behaviour.mjs && node scripts/check-api-surface.mjs",
+    "verify:docs": "node scripts/check-docs.mjs",
     "build:bar": "node scripts/build-bar.mjs",
     "smoke:shortcuts": "node scripts/smoke-shortcuts.mjs",
     "smoke:desktop": "node scripts/smoke-desktop.mjs",

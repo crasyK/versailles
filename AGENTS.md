@@ -23,6 +23,7 @@ First-time user setup: the host offers to set up the starter on first run, with 
 - Customization is `desktop/index.html` (`#versailles` JSON) plus `.versailles/` runtime. Do not add a settings UI to the action bar.
 - Slide-outs are spawn windows from Alt+Space / `versailles.spawn(id)`, not DOM overlays on the wallpaper. A spawnable with `data-anchor="c"` is a centered overlay (covers apps).
 - Keep `npm run verify:acl` green. A new Tauri command needs `lib.rs`, `build.rs`, and `capabilities/default.json` together.
+- The dialect, hook names and SDK are frozen for 1.x ([`docs/API-REVIEW-1.0.md`](docs/API-REVIEW-1.0.md)): never remove or reshape a name; rename = keep the old one as an alias. Keep `npm run verify:sdk` green: a new SDK name needs its type in `.sdk/versailles.d.ts`, then `npm run verify:sdk -- --update` adds it to `docs/api-surface.json`.
 
 ## Dialect (short)
 
@@ -52,7 +53,7 @@ Opening the file from disk works; hooks resolve `{ host: false }`.
 
 ## SDK
 
-Load `/files/.sdk/versailles.js` (or `../.sdk/versailles.js` from `file:`). Call `versailles.for("now-playing").media.now()`, `versailles.spawn("calculator")`, `versailles.shell.open(url)`. The host never grants more than the piece’s `data-hooks`. Details: [`docs/HOOKS.md`](docs/HOOKS.md).
+Load `/files/.sdk/versailles.js` (or `../.sdk/versailles.js` from `file:`). Call `versailles.for("now-playing").media.now()`, `versailles.spawn("calculator")`, `versailles.shell.open(url)`. The host never grants more than the piece’s `data-hooks`. Details: [`docs/HOOKS.md`](docs/HOOKS.md). Types: `.sdk/versailles.d.ts`.
 
 ## Dev
 

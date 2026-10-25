@@ -9,6 +9,7 @@ Versailles is the HTML desktop runtime. User tiles live under `Documents\Widgets
 3. Keep `scripts/verify-acl.mjs` green. A new Tauri command needs `lib.rs`, `build.rs`, and `capabilities/default.json` together (or a capability file of its own for a host window, listed in `tauri.conf.json`, like `welcome.json`).
 4. Do not add a settings UI to the action bar. Config is `#versailles` in `desktop/index.html` plus `.versailles/` runtime.
 5. Do not ship a second built-in theme.
+6. The dialect, hooks and SDK are frozen for 1.x ([`docs/API-REVIEW-1.0.md`](docs/API-REVIEW-1.0.md)). Keep `npm run verify:sdk` green: it checks that `.sdk/versailles.d.ts` types exactly the SDK, that no name in [`docs/api-surface.json`](docs/api-surface.json) is gone, and that the hook-class table in `docs/HOOKS.md` matches the code. After adding a name (and its type), `npm run verify:sdk -- --update` adds it to the snapshot.
 
 ## Dev
 
@@ -37,7 +38,7 @@ Branch from `main`, open a pull request against `main`. Title the work after the
 ## Release
 
 1. Bump the version in `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock` and `src-tauri/tauri.conf.json`.
-2. If the SDK changed, bump its first line (`/*! versailles-sdk x.y.z */`) and `SDK_VERSION`, and add a line to `sdk::SHIPPED` (the `sdk` test prints the hash).
+2. If the SDK changed, bump its first line (`/*! versailles-sdk x.y.z */`) and `SDK_VERSION`, and add a line to `sdk::SHIPPED` (the `sdk` test prints the hash). `npm run verify:sdk` passes.
 3. Add the release to [`CHANGELOG.md`](CHANGELOG.md), newest first.
 4. Run the e2e with the taskbar phase: `npm run build:test`, then `npm run e2e -- --take-taskbar` (or `scripts\sandbox-e2e.cmd`). Every check passes and the taskbar phase is not skipped.
 5. Build the release with the updater key (see [Updates](#updates)): `set TAURI_SIGNING_PRIVATE_KEY_PATH=%USERPROFILE%\.tauri\versailles-updater.key`, `set TAURI_SIGNING_PRIVATE_KEY_PASSWORD=…` and `npm run tauri:build`. `src-tauri\target\release\bundle\nsis\` must hold `Versailles_x.y.z_x64-setup.exe` **and** `Versailles_x.y.z_x64-setup.exe.sig` (the build prints a warning when it makes no `.sig`). Releases are not Authenticode-signed for now (no certificate yet; Windows shows "unknown publisher"). Once there is one (see [Signing](#signing)): log in to SimplySign Desktop and `set VERSAILLES_SIGN=1` before building, check the signatures (`signtool verify /pa /v` on `src-tauri\target\release\versailles.exe` and on the installer), install it, and check the uninstaller too (`%LOCALAPPDATA%\Versailles\uninstall.exe`).

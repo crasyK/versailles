@@ -22,7 +22,7 @@ First-time user setup: the host offers to set up the starter on first run, with 
 - Paper is the look of the host's own chrome and of the starter template. Tokens: [`design/PAPER-THEME.md`](design/PAPER-THEME.md). A user's `desktop/index.html` can look like anything: the host never imposes styling on user pieces (host fallbacks use zero-specificity `:where()` rules). Do not ship a second built-in theme or glass launcher chrome.
 - Customization is `desktop/index.html` (`#versailles` JSON) plus `.versailles/` runtime. Do not add a settings UI to the action bar.
 - Slide-outs are spawn windows from Alt+Space / `versailles.spawn(id)`, not DOM overlays on the wallpaper. A spawnable with `data-anchor="c"` is a centered overlay (covers apps).
-- Keep `npm run verify:acl` green. A new Tauri command needs `lib.rs`, `build.rs`, and `capabilities/default.json` together.
+- Keep `npm run verify:acl` green. A new Tauri command needs `lib.rs`, `build.rs`, and `capabilities/default.json` together. Pages never get window/webview creation or raw global shortcuts (verify:acl checks); a boundary change updates [`docs/SECURITY.md`](docs/SECURITY.md).
 
 ## Dialect (short)
 

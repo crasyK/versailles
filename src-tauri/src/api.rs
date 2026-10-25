@@ -27,7 +27,8 @@ struct ApiState {
 /// Give pages served by this server (`http://127.0.0.1:<port>/files/…`) the
 /// page capability, for the bound port only (SECURITY.md L3). The static
 /// `capabilities/default.json` has no remote URLs: a fixed port range would
-/// also cover a port another account holds. Same windows and permissions.
+/// also cover a port another account holds. Same windows and permissions;
+/// pages opened as `http://localhost:<port>` get no IPC.
 pub fn allow_pages_on(app: &AppHandle, port: u16) -> AppResult<()> {
     let cap = page_capability(port)?;
     app.add_capability(cap).map_err(|e| AppError::msg(e.to_string()))
@@ -48,8 +49,9 @@ fn page_capability(port: u16) -> AppResult<tauri::ipc::CapabilityBuilder> {
     }
     let mut cap = tauri::ipc::CapabilityBuilder::new("pages-on-port")
         .local(false)
+        // 127.0.0.1 only: Versailles opens pages there (`protocol.rs`), and
+        // Tauri compiles the pattern once per allowed command (each costs memory).
         .remote(format!("http://127.0.0.1:{port}/*"))
-        .remote(format!("http://localhost:{port}/*"))
         .windows(list("windows"));
     for p in permissions {
         cap = cap.permission(p);

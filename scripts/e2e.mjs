@@ -344,8 +344,12 @@ async function main() {
     process.exit(2);
   }
   console.log(`e2e: ${exe}`);
-  if (!perfOnly) await checksPhase(exe);
-  if (!noPerf) await perfPhase(exe);
+  try {
+    if (!perfOnly) await checksPhase(exe);
+    if (!noPerf) await perfPhase(exe);
+  } finally {
+    giveBack();
+  }
 
   const width = Math.max(...results.map((r) => r.name.length));
   for (const r of results) {
@@ -550,7 +554,8 @@ async function checksPhase(exe) {
     } catch {
       /* WebView2 may still hold files for a moment */
     }
-    giveBack();
+    // The user's Versailles comes back after the performance phase (main), so
+    // its bars do not reserve space while that phase measures.
   }
 }
 

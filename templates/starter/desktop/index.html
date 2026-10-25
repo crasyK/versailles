@@ -1674,7 +1674,7 @@
               renderMixer(s.sessions);
             }
             me.on('audio-control', renderAudio).catch(function () {});
-            $('.q-out').onchange = function () { act(me.audioControl.setOutput(this.value)).then(renderAudio); };
+            $('.q-out').onchange = function () { act(me.audioControl.setDefaultOutput(this.value)).then(renderAudio); };
             $('.q-in').onchange = function () { act(me.audioControl.setDefaultInput(this.value)).then(renderAudio); };
 
             var night = null;
@@ -1701,7 +1701,7 @@
               });
             }).catch(function () {});
             root.querySelectorAll('.q-proj button').forEach(function (b) {
-              b.onclick = function () { act(me.display.project(b.dataset.mode)); };
+              b.onclick = function () { act(me.display.setProjection(b.dataset.mode)); };
             });
             $('.q-night').onclick = function () { act(me.display.setNightLight(!(night && night.on))); };
 

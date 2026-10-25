@@ -31,7 +31,7 @@ The host is a small windowing + hooks layer. Pieces on the page are the product.
 | `data-anchor` | no | Placement. Overlays (cover apps): a point of the grid `tl tc · / ml c mr / bl bc br`, or `cursor`. `center` / `overlay` alias `c`. `tc` (action bar) rests 120 px (logical) from the top. `tr`, no anchor, or an unknown value = docked top-right slide-out. `top` / `bottom` / `left` / `right` = a docked bar (see [Docked bars](#docked-bars)). See [Overlay placement](#overlay-placement). |
 | `data-offset` | no | Overlays only. `x,y` in logical px from the anchor, inward: from the left/top edge for `l`/`t` anchors, from the right/bottom edge for `r`/`b` anchors, a plain right/down shift on a centre axis, added to the cursor for `cursor`. Default `0,0` (`tc`: `0,120`). |
 | `data-dim` | no | Overlays only. `host` (default) = the host's dim window behind the overlay. `page` = the overlay window covers the monitor and the page draws its own backdrop. `none` = no backdrop. Wins over `spawnables.<id>.overlay.dim`. |
-| `data-monitor` | no | Which monitor. Widgets: `primary` (default), a display number (`2`, as in Windows display settings) or `all`; each monitor named gets its own wallpaper. Spawnables: `primary` or a number pins where they open; default (or `cursor`) is the monitor under the mouse. Docked bars also take `all`: one copy per monitor. See [Multiple monitors](#multiple-monitors). |
+| `data-monitor` | no | Which monitor (`main` aliases `primary`). Widgets: `primary` (default), a display number (`2`, as in Windows display settings) or `all`; each monitor named gets its own wallpaper. Spawnables: `primary` or a number pins where they open; default (or `cursor`) is the monitor under the mouse. Docked bars also take `all`: one copy per monitor. See [Multiple monitors](#multiple-monitors). |
 | `data-dock` | no | Docked bars only. `reserve` (default): reserves its strip like the taskbar, so maximized apps stop at its edge. `float`: always on top, no space reserved. `auto-hide`: tucked at the edge, slides out when the mouse touches it. |
 | `data-peek` | no | `auto-hide` bars: logical px left showing while tucked away. Default 4. |
 | `data-hotkey` | no | Global accelerator for this spawnable when `data-hooks` includes `hotkey`. Format: Tauri accelerators (`Alt+Space`, `Ctrl+Shift+D`, `CommandOrControl+K`), plus `Win`, `Copilot` and `Win+` combos (see [Overlay vs slide-out](#overlay-vs-slide-out)). Several combos, comma-separated: `"Alt+Space, Win"`. Duplicate combos: first piece on the page wins. A hook piece with no `data-hotkey` uses `#versailles` `launcher.hotkey` (once). |
@@ -39,6 +39,8 @@ The host is a small windowing + hooks layer. Pieces on the page are the product.
 | `data-dismiss-on-blur` | no | Overlays only. `true` / `false`: hide the overlay when its window loses focus. Wins over `#versailles` `spawnables.<id>.overlay.dismissOnBlur`. Default `true`, except pieces with the `pty` hook default to `false` (a terminal survives focus flicker). |
 
 Duplicate `data-id` values are ignored after the first. A piece inside an HTML comment (`<!-- … -->`) is not on the page.
+
+**Stable through 1.x.** These attributes, their values and the hook names are frozen ([API-REVIEW-1.0.md](API-REVIEW-1.0.md)); new ones may be added, none is removed. Aliases that keep working: `calc` = `calculator` (ids), `center` / `overlay` = `c` (`data-anchor`), `main` = `primary` (`data-monitor`), `Super` = `Win` (`data-hotkey`), and a tag with only the `action-bar` class is a spawnable.
 
 ## Scripts inside templates
 

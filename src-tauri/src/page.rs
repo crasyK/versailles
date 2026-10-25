@@ -1072,6 +1072,41 @@ mod tests {
         assert_eq!(classify_invoker("widget-calc:2", &cat, folder_none), Invoker::Host);
     }
 
+    /// The hook names are frozen (#47): `docs/api-surface.json` lists every
+    /// one a page may declare. A hook is never removed within 1.x; a new
+    /// one is added to the snapshot (`npm run verify:sdk -- --update`).
+    #[test]
+    fn known_hooks_match_the_locked_surface() {
+        let snapshot: serde_json::Value =
+            serde_json::from_str(include_str!("../../docs/api-surface.json")).expect("api-surface.json");
+        let locked: Vec<&str> = snapshot["hooks"]
+            .as_array()
+            .expect("hooks")
+            .iter()
+            .map(|v| v.as_str().expect("hook name"))
+            .collect();
+        for hook in &locked {
+            assert!(KNOWN_HOOKS.contains(hook), "hook '{hook}' was removed: pages may declare it");
+        }
+        for hook in KNOWN_HOOKS {
+            assert!(
+                locked.contains(hook),
+                "new hook '{hook}': add it to docs/api-surface.json (npm run verify:sdk -- --update)"
+            );
+        }
+        // Every attribute the parser reads is locked too.
+        let attrs: Vec<&str> = snapshot["attributes"]
+            .as_array()
+            .expect("attributes")
+            .iter()
+            .map(|v| v.as_str().expect("attribute"))
+            .collect();
+        let src = include_str!("page.rs");
+        for attr in &attrs {
+            assert!(src.contains(&format!("attr(tag, \"{attr}\")")), "attribute '{attr}' is no longer parsed");
+        }
+    }
+
     #[test]
     fn same_piece_handles_alias_and_case() {
         let cat = live_like_page();

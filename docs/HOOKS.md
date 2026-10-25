@@ -48,7 +48,7 @@ Unknown hook names are rejected.
 
 ## Contents
 
-- **Basics:** [SDK](#sdk) · [Enforcement](#enforcement) · [Events](#events)
+- **Basics:** [SDK](#sdk) · [Patterns](#patterns) · [Errors](#errors) · [Enforcement](#enforcement) · [Hook classes](#hook-classes) · [Events](#events)
 - **Reading the system:** [Push](#push) · [Notifications](#notifications) · [Windows](#windows) · [Tray](#tray) · [Posture](#posture)
 - **Acting:** [Layout](#layout) · [Power](#power) · [Quick settings](#quick-settings) · [Connections and accessibility](#connections-and-accessibility) · [Keyboard](#keyboard) · [Clipboard](#clipboard) · [Search](#search-recent-files-and-settings)
 - **Between pieces:** [Storage](#storage) · [Bus](#bus) · [Piece events](#piece-events)
@@ -66,6 +66,8 @@ await versailles.for("launcher").spawn("calculator");
 
 Without Tauri (plain browser / `file:`), hook calls resolve `{ host: false }` instead of throwing.
 
+**Types.** [`.sdk/versailles.d.ts`](../templates/starter/.sdk/versailles.d.ts) (copied by the starter) types the whole SDK, payloads and push names included, so editors and agents autocomplete it. Reference it from a page script with `/// <reference path="../.sdk/versailles.d.ts" />` or a `jsconfig.json`. `npm run verify:sdk` keeps it in step with the SDK.
+
 **Waiting for the SDK.** Scripts that run before the SDK has loaded must check `typeof window.versailles?.for === "function"`, not just `window.versailles`: a page with the `<script type="application/json" id="versailles">` config block has an element named `versailles`, and browsers expose it as `window.versailles` until the SDK replaces it.
 
 **Keeping it current.** The SDK ships inside Versailles; its first line carries its version (`/*! versailles-sdk 0.6.0 */`, also `versailles.version`). On start the host compares `.sdk\versailles.js` with the one it ships:
@@ -80,6 +82,47 @@ Without Tauri (plain browser / `file:`), hook calls resolve `{ host: false }` in
 
 To keep your own SDK, edit it (any change opts out of updates). The host writes nothing outside `.sdk\`. `get_spawnable_engine_context` reports `hostVersion` and `sdk: { bundled, desktop: { state, version }, updated }`.
 
+## Patterns
+
+The SDK has one namespace per hook, named after it in camelCase (`audio-control` → `audioControl`); `windows-control`'s calls live on `windows` (they act on `windows.list()` items). Each namespace uses the same few shapes:
+
+| Shape | Meaning |
+| ----- | ------- |
+| `now()` | One read of the hook's current value. |
+| `onChange(fn)` | Same as `on(hook, fn)`: `fn(data, push)` on each push. **State hooks** (the sensors, quick settings and `media`) call `fn` with the current value first (`push.initial` is `true`); **event hooks** (`windows`, `tray`, `notify`, `clipboard`) only on changes. |
+| `track(fn)` | A list kept current: `fn(list)` now and after every change (`windows`, `tray`). |
+| `set(value)` / `setX(…)` | A change: `set` when the hook has one value (`dnd.set`, `powerMode.set`), `setX` for one of several (`display.setBrightness`). Quick-settings changes answer the hook's new state. |
+| verbs | Actions that are not a value: `connect`, `scan`, `open`, `focus`, `lock`, … |
+
+Every subscription resolves to a function that unsubscribes. Payload fields are camelCase; enumerated string values are lower-case or kebab-case (`"my-devices"`, `"location-denied"`).
+
+Some names were renamed for 1.0; the old names keep working through 1.x (they log a deprecation warning once) and are listed in [API-REVIEW-1.0.md](API-REVIEW-1.0.md#deprecated-names).
+
+## Errors
+
+Every rejection is an `Error` with a `code` and a `message`:
+
+| `code` | When |
+| ------ | ---- |
+| `no-host` | `versailles.invoke` / `closeWidget` outside Versailles (hook calls resolve `{ host: false }` instead) |
+| `hook-undeclared` | The piece does not list the hook in `data-hooks` (SDK or host) |
+| `hook-refused` | The host refused the call from this window (the wallpaper asking for a control or exec class call, a host window, an unknown piece) |
+| `unknown-hook` | A hook name the host does not know |
+| `needs-gesture` | `power.*`, quick-settings changes and `tray.click` outside a click or key press |
+| `unknown-event` | `on(name)` with a name that is neither a push hook nor a piece event |
+| `bad-argument` | A call the SDK cannot send as given (`windows.preview` without a target) |
+| `host-error` | Anything else the host answers with (Windows refused, not supported, …); `message` says what |
+
+```js
+try {
+  await qs.display.setNightLight(true);
+} catch (err) {
+  if (err.code === "host-error") showHint(err.message); // "display: night light is not supported …"
+}
+```
+
+`message` is the text the host sent (unchanged from earlier releases); `String(err)` of a host error is still that bare text.
+
 ## Enforcement
 
 Identity comes from the **calling window**, never from an IPC argument (threat model: [SECURITY.md](SECURITY.md)):
@@ -93,6 +136,56 @@ Identity comes from the **calling window**, never from an IPC argument (threat m
 | Host windows (`launcher-dim`, `guides`) | Nothing — they never call hooks. |
 
 That piece must list the hook in `data-hooks`. A piece that omitted `data-hooks="media"` cannot call `media_now` even if the JS tries.
+
+## Hook classes
+
+Part of the contract: every gated host command belongs to one class, and the class decides which windows may call it. The table below is generated from the host's gating code (`npm run verify:sdk` fails when it drifts).
+
+| Class | Who may call it |
+| ----- | --------------- |
+| **Plain** | Any window of a piece that declares the hook: the wallpaper (with `caller`, which `versailles.for(id)` sets), a bar, slide-out or overlay, a folder widget with the permission. |
+| **Control** | Changes a system setting. Only a spawn window (bar, slide-out, overlay) whose piece declares the hook; never the wallpaper or a folder widget. The SDK also asks for a click or key press. |
+| **Exec** | Runs code or reads the file system. Only a spawn window whose piece declares the hook; never the wallpaper or a folder widget. |
+
+<!-- hook-classes:begin (generated: npm run verify:sdk -- --update) -->
+| Hook | Plain | Control | Exec |
+| ---- | ----- | ------- | ---- |
+| `media` | `media_next_cmd`, `media_now`, `media_play_pause_cmd`, `media_previous_cmd` | - | - |
+| `mouse` | `get_mouse_position_cmd` | - | - |
+| `layout` | `layout_update`, `move_widget_cmd` | - | - |
+| `spawn` | `toggle_slideout` | - | - |
+| `shell` | `cli_open` | - | `cli_exec`, `cli_exec_term`, `cli_recent_files`, `cli_search`, `cli_search_files` |
+| `hotkey` | (no command: a declaration) | - | - |
+| `pty` | - | - | `pty_close`, `pty_is_alive`, `pty_open`, `pty_resize`, `pty_write` |
+| `storage` | `storage_op` | - | - |
+| `clipboard` | `clipboard_read`, `clipboard_write` | - | - |
+| `power` | `power_action` | - | - |
+| `bus` | `bus_publish` | - | - |
+| `battery` | `sense_now` | - | - |
+| `network` | `sense_now` | - | - |
+| `focus` | `sense_now` | - | - |
+| `audio` | `sense_now` | - | - |
+| `windows` | `windows_icon`, `windows_list`, `windows_preview` | - | - |
+| `windows-control` | `windows_control` | - | - |
+| `notify` | `sense_now` | - | - |
+| `radios` | `sense_now` | `quick_set` | - |
+| `audio-control` | `sense_now` | `quick_set` | - |
+| `display` | `sense_now` | `quick_set` | - |
+| `power-mode` | `sense_now` | `quick_set` | - |
+| `wifi` | `sense_now` | `quick_set` | - |
+| `bluetooth` | `sense_now` | `quick_set` | - |
+| `dnd` | `sense_now` | `quick_set` | - |
+| `notify-control` | - | `quick_set` | - |
+| `tray` | `tray_click`, `tray_hover`, `tray_list` | - | - |
+| `posture` | `sense_now` | - | - |
+| `keyboard` | `sense_now` | `quick_set` | - |
+| `vpn` | `sense_now` | `quick_set` | - |
+| `hotspot` | `sense_now` | `quick_set` | - |
+| `sharing` | `sense_now` | `quick_set` | - |
+| `accessibility` | `sense_now` | `quick_set` | - |
+<!-- hook-classes:end -->
+
+Pushes (`on(hook, fn)`) need no command: they go only to the windows of pieces that declare the hook. A few plain calls have an extra rule: `layout` acts only on the piece's own window, `windows.preview` only from a bar or overlay, and the SDK runs `power.*` and `tray.click` only inside a click or key press.
 
 **Control class.** `quick_set` (`radios`, `audio-control`, `display`, `power-mode`, `wifi`, `bluetooth`, `dnd`, `notify-control`, `keyboard`, `vpn`, `hotspot`, `sharing`, `accessibility`) changes a system setting. Like exec class it is refused from the desktop wallpaper and from folder widgets; only a spawn window (bar, slide-out, overlay) whose piece declares the hook may change a setting. The SDK also asks for a click or key press first. Reading those hooks works anywhere.
 
@@ -109,16 +202,19 @@ That piece must list the hook in `data-hooks`. A piece that omitted `data-hooks=
 | `pty://data` | `{ "session": <u64>, "data": "<base64>" }` — to the windows of the piece that opened the session |
 | `pty://exit` | `{ "session": <u64> }` — same windows |
 | `overlay://shown` | `{ "id": "<piece id>", "seed": "<string>" }` |
-| `clipboard://changed` | `null` — to windows of pieces that declare `clipboard` |
-| `media://update` | Now-playing (as `media_now`) — to windows of pieces that declare `media` (the SDK's `media.onUpdate`) |
 | `overlay://hiding` | `{ "id": "<piece id>" }` — about 60 ms before the overlay hides |
 | `overlay://hidden` | `{ "id": "<piece id>" }` (`null` when only the backdrop hid) |
-| `launcher://shown` / `launcher://hidden` | Legacy: bare seed string / `true` |
+| `clipboard://changed` | Deprecated: use `clipboard.onChange(fn)`. `null`, to windows of pieces that declare `clipboard` |
+| `media://update` | Deprecated: use `media.onChange(fn)`. The `media` payload, to windows of pieces that declare `media` |
+| `launcher://shown` / `launcher://hidden` | Deprecated: use `overlay://shown` / `overlay://hidden`. Bare seed string / `true` |
+| `overlay://id` | Deprecated: the shown overlay's id as a bare string; use `overlay://shown` |
+
+Deprecated events are still sent through 1.x. For a piece's own overlay, the piece events `shown` / `hiding` / `hidden` (see [Piece events](#piece-events)) need no filtering.
 
 `pty_open` returns the new session id (counter starting at 1). Events from an older session keep their own id, so filter on the id `pty_open` returned. Overlay events go to every webview; filter on `id`.
 ## Push
 
-The host pushes changes instead of pieces polling. `on(name, fn)` subscribes and returns a function that unsubscribes.
+The host pushes changes instead of pieces polling. `on(name, fn)` subscribes and returns a function that unsubscribes. State hooks call `fn` with the current value first; event hooks (`windows`, `tray`, `notify`, `clipboard`) only on changes (see [Patterns](#patterns)).
 
 ```js
 const hud = versailles.for("hud");
@@ -134,7 +230,7 @@ await hud.focus.onChange((w) => (title.textContent = w.title));
 | `network` | 3 s | `{ online, level: "none"\|"local"\|"constrained"\|"internet", name, wifi, signalBars }` |
 | `focus` | 0.5 s | `{ title, app, exe, pid, self }` (`self`: a Versailles window) |
 | `audio` | 1 s | `{ device, volume, muted, input: { device, volume, muted } }` (`input`: the default microphone, `null` without one) |
-| `media` | on change | same as `media.now()` |
+| `media` | on change | same as `media.now()`: `{ title, artist, album, status, positionMs, durationMs, thumbnailDataUrl, source, hasSession }` |
 | `windows` | 0.25 s | `{ type: "opened"\|"closed"\|"focused"\|"changed", id, window }` (see [Windows](#windows)) |
 | `notify` | 2 s | one new toast (see [Notifications](#notifications)) |
 | `tray` | on change | `{ type: "added"\|"changed"\|"removed", id, icon }`, `{ type: "balloon", id, title, text, kind }` or `{ type: "active", active }` (see [Tray](#tray)) |
@@ -159,7 +255,7 @@ A sensor is only read while some piece on the page declares its hook, and a valu
 ```js
 const feed = versailles.for("inbox").notify;
 const { access, items } = await feed.now();   // newest first, up to 50
-await feed.onToast((t) => prepend(t));        // each new toast, once
+await feed.onChange((t) => prepend(t));       // each new toast, once (old name: onToast)
 ```
 
 A toast is `{ id, app, aumid, title, body, time }`: `app` is the sending app's display name (`null` when Windows does not know it), `aumid` its app user model id, `title` the first text line, `body` the other lines joined by `\n`, `time` ms since the Unix epoch. Read-only: a piece cannot dismiss, clear or raise toasts.
@@ -173,7 +269,7 @@ A toast is `{ id, app, aumid, title, body, time }`: `app` is the sending app's d
 | `unspecified` | Not decided yet. `items` is empty; the host never shows Windows' consent prompt |
 | `unavailable` | No notification listener on this system (or not Windows) |
 
-Windows offers no change event to an unpackaged app, so the host checks for new toasts every 2 s while some piece declares `notify` and pushes each one it has not seen (oldest first). The first check only notes what is already there. `onToast` does not fire on subscribe: call `now()` for the current list. Toast text can be private: declare `notify` only on pieces that need it.
+Windows offers no change event to an unpackaged app, so the host checks for new toasts every 2 s while some piece declares `notify` and pushes each one it has not seen (oldest first). The first check only notes what is already there. `onChange` does not fire on subscribe: call `now()` for the current list. Toast text can be private: declare `notify` only on pieces that need it.
 
 ### Acting on notifications
 
@@ -185,12 +281,12 @@ const { items } = await qs.notify.now();
 await qs.notifyControl.dismiss(items[0].id);      // remove one from Action Center
 await qs.notifyControl.clear();                   // remove all
 await qs.notifyControl.open(items[0].aumid);      // open the app that raised it
-await qs.notifyControl.banners(items[0].aumid, false); // no Windows pop-ups from that app
+await qs.notifyControl.setBanners(items[0].aumid, false); // no Windows pop-ups from that app
 await qs.dnd.set("priority");                     // "off" | "priority" | "alarms"
 ```
 
 - A notification's own click action cannot be run from outside (Windows does not hand out its arguments); `open` starts the app instead.
-- `banners(aumid, false)` hides that app's Windows pop-ups; its notifications still reach Action Center, so `notify` still sees them and a page can show its own. To take over for every app, turn on Do Not Disturb "priority": Windows keeps the notifications and only hides the pop-ups.
+- `setBanners(aumid, false)` (old name `banners`) hides that app's Windows pop-ups; its notifications still reach Action Center, so `notify` still sees them and a page can show its own. To take over for every app, turn on Do Not Disturb "priority": Windows keeps the notifications and only hides the pop-ups.
 - Do Not Disturb uses the shell's undocumented quiet-hours setting; `supported: false` when Windows does not offer it.
 - Dismissing needs the notification access the read already needs.
 
@@ -288,7 +384,7 @@ An icon:
 | `clickable` | The app takes clicks. `click` refuses an icon that does not |
 | `icon` | PNG data URL at the icon's own size (16–64 px) |
 
-- `tray.state()`: `{ active, icons }`. `tray.list()`: the icons alone, oldest first.
+- `tray.now()`: `{ active, icons }` (old name `state()`). `tray.list()`: the icons alone, oldest first.
 - `tray.onChange(fn)` / `on("tray", fn)`: `fn({ type: "added"|"changed"|"removed", id, icon })` per change (an icon the app hides is `removed`; shown again, `added`), `{ type: "balloon", id, title, text, kind }` when an app shows a balloon, and `{ type: "active", active }` when Versailles starts or stops holding the icons. Changes within 100 ms go out together.
 - Balloons: `title` and `text` as the app set them (one may be empty), `kind` one of `"info"`, `"warning"`, `"error"`, `"none"`, `"user"` (the app's own image; not sent). Windows still shows every balloon as a notification and tells the app when it is clicked or closed, so a page that shows one too is for information only: there is nothing to answer. `tray.track` ignores balloons.
 - `tray.track(fn)`: `fn(icons, active)` now and after every change. Returns a function that stops tracking.
@@ -387,7 +483,7 @@ if (airplane !== null) planeButton.onclick = () => qs.radios.setAirplane(!airpla
 volume.oninput = () => qs.audioControl.setVolume(volume.value);   // 0–100
 muteButton.onclick = () => qs.audioControl.setMute(true);
 const { outputs } = await qs.audioControl.now();               // [{ id, name, default }]
-await qs.audioControl.setOutput(outputs[1].id);
+await qs.audioControl.setDefaultOutput(outputs[1].id);       // old name: setOutput
 const { input } = await qs.audio.now();                        // { device, volume, muted } or null
 micMute.onclick = () => qs.audioControl.setInputMute(!input.muted);
 mic.oninput = () => qs.audioControl.setInputVolume(mic.value);  // 0–100
@@ -399,7 +495,7 @@ for (const s of sessions) {                                    // [{ id, app, ex
 await qs.audioControl.setSessionMute(sessions[0].id, true);
 const { brightness, projection } = await qs.display.now();     // brightness: [{ id, kind, level }]
 await qs.display.setBrightness(brightness[0].id, 60);          // 0–100
-await qs.display.project("extend");                            // "pc" | "duplicate" | "extend" | "second"
+await qs.display.setProjection("extend");                      // "pc" | "duplicate" | "extend" | "second" (old name: project)
 const { nightLight } = await qs.display.now();                 // { supported, on }
 if (nightLight.supported) await qs.display.setNightLight(!nightLight.on);
 await qs.powerMode.set("balanced");                            // "efficiency" | "balanced" | "performance"

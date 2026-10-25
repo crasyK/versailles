@@ -495,7 +495,7 @@
       async openJump(id, key) {
         const activation = global.navigator && global.navigator.userActivation;
         if (activation && !activation.isActive) {
-          throw new Error("windows.openJump needs a click or key press");
+          throw needsGesture("windows.openJump needs a click or key press");
         }
         return hostInvoke("windows-control", "windows_jump", { id: Number(id), key: String(key) });
       },

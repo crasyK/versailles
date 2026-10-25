@@ -165,8 +165,8 @@ Part of the contract: every gated host command belongs to one class, and the cla
 | `network` | `sense_now` | - | - |
 | `focus` | `sense_now` | - | - |
 | `audio` | `sense_now` | - | - |
-| `windows` | `windows_icon`, `windows_list`, `windows_preview` | - | - |
-| `windows-control` | `windows_control` | - | - |
+| `windows` | `windows_icon`, `windows_jumplist`, `windows_list`, `windows_preview` | - | - |
+| `windows-control` | `windows_control`, `windows_jump` | - | - |
 | `notify` | `sense_now` | - | - |
 | `radios` | `sense_now` | `quick_set` | - |
 | `audio-control` | `sense_now` | `quick_set` | - |

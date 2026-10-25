@@ -260,6 +260,20 @@ declare global {
       devices: BluetoothDevice[];
     }
 
+    interface BluetoothFound {
+      id: string;
+      name: string;
+      kind: "classic" | "le";
+      signal: number | null;
+    }
+
+    interface BluetoothPairing {
+      /** `confirm`: show `pin`, ask whether it matches the device; `display`: type `pin` on the device; `pin`: ask for the device's PIN; answer those (and `waiting`) with `pairReply`. */
+      status: "paired" | "cancelled" | "confirm" | "display" | "pin" | "waiting";
+      id: string;
+      pin?: string;
+    }
+
     type DndMode = "off" | "priority" | "alarms";
 
     interface Dnd {
@@ -333,6 +347,39 @@ declare global {
       items: Toast[];
     }
 
+    interface WindowProgress {
+      state: "normal" | "paused" | "error" | "indeterminate";
+      /** 0..1; `null` while indeterminate. */
+      value: number | null;
+    }
+
+    interface WindowBadge {
+      /** PNG data URL. */
+      icon: string | null;
+      /** The app's description of the badge, for screen readers. */
+      label: string | null;
+    }
+
+    interface JumpItem {
+      /** Pass to `openJump`. */
+      key: string;
+      title: string;
+      path: string | null;
+      separator?: boolean;
+      /** 16x16 PNG data URL, with `{ icons: true }`. */
+      icon?: string | null;
+    }
+
+    interface JumpList {
+      appId: string | null;
+      tasks: JumpItem[];
+      categories: { name: string; items: JumpItem[] }[];
+      recent: JumpItem[];
+      frequent: JumpItem[];
+      /** Whether Windows knows a jump list for this app at all. */
+      known: boolean;
+    }
+
     interface AppWindow {
       /** Window handle; pass it to the control calls. */
       id: number;
@@ -345,6 +392,10 @@ declare global {
       maximized: boolean;
       focused: boolean;
       attention: boolean;
+      /** Taskbar progress the app set (`ITaskbarList3`), while Versailles hides the taskbar; `null` when none. */
+      progress?: WindowProgress | null;
+      /** Overlay badge the app set (unread count, status), while Versailles hides the taskbar; `null` when none. */
+      badge?: WindowBadge | null;
       /** Physical screen px. */
       rect: Rect;
       /** 32×32 PNG data URL, with `{ icons: true }`. */
@@ -627,6 +678,12 @@ declare global {
     interface BluetoothHook extends StateHook<Bluetooth> {
       connect(id: string): Changed<Bluetooth>;
       disconnect(id: string): Changed<Bluetooth>;
+      /** Look for devices to pair (`seconds`, default 10, 3-30); resolves when done. Bars and overlays only. */
+      scan(opts?: { seconds?: number }): Promise<Hosted<{ devices: BluetoothFound[] }>>;
+      /** Pair a device from `scan()`; `{ pin }` for one with a fixed PIN. Control class. */
+      pair(id: string, opts?: { pin?: string }): Changed<BluetoothPairing>;
+      /** Answer a pairing step: `accept`, with `pin` when asked for one. */
+      pairReply(id: string, accept: boolean, pin?: string): Changed<BluetoothPairing>;
     }
 
     interface DndHook extends StateHook<Dnd> {
@@ -697,6 +754,10 @@ declare global {
       close(id: number): Promise<Hosted<void>>;
       /** Physical px. */
       move(id: number, to: Partial<Rect>): Promise<Hosted<void>>;
+      /** The window's jump list, as a right click on its taskbar button shows it. Read with `windows`. */
+      jumpList(id: number, opts?: { icons?: boolean }): Promise<Hosted<JumpList>>;
+      /** Open a jump list entry by its `key`. `windows-control`; only inside a click or key press. */
+      openJump(id: number, key: string): Promise<Hosted<void>>;
     }
 
     interface TrayHook {

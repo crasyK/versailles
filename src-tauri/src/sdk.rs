@@ -3,6 +3,12 @@
 //! replaced (the old file kept as `versailles.js.bak`); a copy edited by hand
 //! is left alone and logged once. A missing copy is served from the app by
 //! `/files/.sdk/versailles.js`. Nothing outside `.sdk/` is ever written.
+//!
+//! The SDK's TypeScript types (`.sdk/versailles.d.ts`, for editors) follow
+//! the SDK: written when missing, replaced when the copy there still starts
+//! with the types' own first line (one Versailles wrote; the old file kept
+//! as `versailles.d.ts.bak`), and left alone when edited or when the SDK
+//! itself is (edited, or newer than this host).
 
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -13,6 +19,9 @@ pub const BUNDLED: &str = include_str!("../../templates/starter/.sdk/versailles.
 
 /// Published path of the SDK under `/files/`.
 pub const FILES_PATH: &str = ".sdk/versailles.js";
+
+/// The SDK's TypeScript types this host ships.
+pub const BUNDLED_TYPES: &str = include_str!("../../templates/starter/.sdk/versailles.d.ts");
 
 /// Every SDK that shipped, by content hash (see [`content_hash`]): a desktop
 /// copy with one of these hashes is unmodified and safe to replace.
@@ -142,6 +151,46 @@ fn replace(sdk_dir: &Path, bundled: &str) -> std::io::Result<()> {
     std::fs::rename(&tmp, &file)
 }
 
+/// What to do with the desktop's `.sdk/versailles.d.ts`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TypesAction {
+    Keep,
+    Write,
+    Replace,
+}
+
+fn first_line(text: &str) -> &str {
+    text.trim_start_matches('\u{feff}').lines().next().unwrap_or("").trim_end()
+}
+
+/// `desktop`: the types file there (`None`: missing). Only called when the
+/// desktop SDK is this host's (current, or just updated).
+fn types_action(desktop: Option<&str>, bundled: &str) -> TypesAction {
+    match desktop {
+        None => TypesAction::Write,
+        Some(d) if content_hash(d) == content_hash(bundled) => TypesAction::Keep,
+        // Still headed as Versailles writes it: an older copy of ours.
+        Some(d) if first_line(d) == first_line(bundled) => TypesAction::Replace,
+        Some(_) => TypesAction::Keep,
+    }
+}
+
+fn sync_types(sdk_dir: &Path) {
+    let file = sdk_dir.join("versailles.d.ts");
+    let desktop = std::fs::read_to_string(&file).ok();
+    let result = match types_action(desktop.as_deref(), BUNDLED_TYPES) {
+        TypesAction::Keep => return,
+        TypesAction::Write => std::fs::write(&file, BUNDLED_TYPES).map(|_| "added"),
+        TypesAction::Replace => std::fs::copy(&file, sdk_dir.join("versailles.d.ts.bak"))
+            .and_then(|_| std::fs::write(&file, BUNDLED_TYPES))
+            .map(|_| "updated (old copy in versailles.d.ts.bak)"),
+    };
+    match result {
+        Ok(what) => tracing::info!("sdk: types {what}: {}", file.display()),
+        Err(err) => tracing::warn!("sdk: could not write {} ({err})", file.display()),
+    }
+}
+
 /// Compare and, when safe, update the desktop's SDK under `root`
 /// (`Documents\Widgets`). Runs once at start, before the wallpaper loads.
 pub fn sync(root: &Path) -> SdkStatus {
@@ -176,6 +225,10 @@ pub fn sync(root: &Path) -> SdkStatus {
             file.display()
         ),
     }
+    // The types follow an SDK of ours (not a missing, edited or newer one).
+    if updated || decision == Decision::Current {
+        sync_types(&sdk_dir);
+    }
     let status = SdkStatus {
         bundled: ours.to_string(),
         desktop: decision,
@@ -206,6 +259,18 @@ mod tests {
         );
         let mut seen = std::collections::HashSet::new();
         assert!(SHIPPED.iter().all(|(v, h)| seen.insert(*v) && *h != 0), "one line per version");
+    }
+
+    #[test]
+    fn types_follow_the_sdk_but_never_an_edited_copy() {
+        let bundled = "/*! versailles-sdk types (kept in step with versailles.js) */\ninterface A {}\n";
+        assert_eq!(types_action(None, bundled), TypesAction::Write);
+        assert_eq!(types_action(Some(bundled), bundled), TypesAction::Keep);
+        assert_eq!(types_action(Some(&bundled.replace('\n', "\r\n")), bundled), TypesAction::Keep);
+        let older = "/*! versailles-sdk types (kept in step with versailles.js) */\ninterface Old {}\n";
+        assert_eq!(types_action(Some(older), bundled), TypesAction::Replace);
+        assert_eq!(types_action(Some("// my own notes\ninterface Mine {}"), bundled), TypesAction::Keep);
+        assert!(first_line(BUNDLED_TYPES).starts_with("/*! versailles-sdk types"), "the shipped types keep their marker line");
     }
 
     #[test]

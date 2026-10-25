@@ -80,7 +80,7 @@ Without Tauri (plain browser / `file:`), hook calls resolve `{ host: false }` in
 | Marked newer than this Versailles | Left alone |
 | Missing | `/files/.sdk/versailles.js` serves the shipped SDK |
 
-To keep your own SDK, edit it (any change opts out of updates). The host writes nothing outside `.sdk\`. `get_spawnable_engine_context` reports `hostVersion` and `sdk: { bundled, desktop: { state, version }, updated }`.
+To keep your own SDK, edit it (any change opts out of updates). The host writes nothing outside `.sdk\`. The SDK's TypeScript types, `.sdk\versailles.d.ts`, follow an SDK the host shipped or just updated: written when missing, replaced while their first line is still Versailles' own (the old file kept as `.sdk\versailles.d.ts.bak`), left alone when edited. `get_spawnable_engine_context` reports `hostVersion` and `sdk: { bundled, desktop: { state, version }, updated }`.
 
 ## Patterns
 

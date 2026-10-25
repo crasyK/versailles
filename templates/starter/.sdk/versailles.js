@@ -36,10 +36,60 @@
     return null;
   }
 
+  /**
+   * One error shape: every rejection is an `Error` with `.code` and
+   * `.message` (see docs/API-REVIEW-1.0.md). Codes: `no-host`,
+   * `hook-undeclared`, `hook-refused`, `unknown-hook`, `needs-gesture`,
+   * `unknown-event`, `bad-argument`, `host-error`.
+   */
+  function versaillesError(code, message) {
+    const err = new Error(message);
+    err.code = code;
+    return err;
+  }
+
+  /** The host answers with a bare message; give it a code by its wording. */
+  function codeOf(message) {
+    if (/^hook '[^']*' not declared on /.test(message)) return "hook-undeclared";
+    if (/^Unknown hook /.test(message)) return "unknown-hook";
+    if (/^hook '[^']*' rejected: /.test(message)) return "hook-refused";
+    return "host-error";
+  }
+
+  function hostError(raw) {
+    if (raw instanceof Error) {
+      if (!raw.code) raw.code = codeOf(String(raw.message));
+      return raw;
+    }
+    const message =
+      typeof raw === "string" ? raw : raw && typeof raw.message === "string" ? raw.message : String(raw);
+    const err = versaillesError(codeOf(message), message);
+    // Host rejections used to be the bare message string: `String(err)` and
+    // `${err}` still read exactly that.
+    Object.defineProperty(err, "toString", { value: () => message, enumerable: false });
+    return err;
+  }
+
   async function invoke(cmd, args) {
     const t = tauri();
-    if (!t?.core?.invoke) throw new Error("Versailles API not available in this window");
-    return t.core.invoke(cmd, args);
+    if (!t?.core?.invoke) throw versaillesError("no-host", "Versailles API not available in this window");
+    try {
+      return await t.core.invoke(cmd, args);
+    } catch (raw) {
+      throw hostError(raw);
+    }
+  }
+
+  /** Deprecated names keep working through 1.x; each says so once per page. */
+  const warned = new Set();
+  function deprecated(oldName, newName) {
+    if (warned.has(oldName)) return;
+    warned.add(oldName);
+    try {
+      console.warn("versailles: " + oldName + " is deprecated (still works through 1.x); use " + newName);
+    } catch {
+      /* no console */
+    }
   }
 
   /** Without a host (browser / file:) resolve a no-op unlisten so page boots finish. */
@@ -191,13 +241,16 @@
   }
 
   function undeclared(hook, id) {
-    const err = new Error(
+    return versaillesError(
+      "hook-undeclared",
       id
         ? "hook '" + hook + "' not declared on '" + id + "'"
         : "hook '" + hook + "' requires versailles.for(id) or data-hooks on the piece"
     );
-    err.code = "hook-undeclared";
-    return err;
+  }
+
+  function needsGesture(message) {
+    return versaillesError("needs-gesture", message);
   }
 
   function makeApi(fixedId) {
@@ -220,7 +273,7 @@
     async function power(action) {
       const activation = global.navigator && global.navigator.userActivation;
       if (activation && !activation.isActive) {
-        throw new Error("power." + action + " needs a click or key press");
+        throw needsGesture("power." + action + " needs a click or key press");
       }
       return hostInvoke("power", "power_action", { action });
     }
@@ -233,15 +286,21 @@
     async function quick(hook, action) {
       const activation = global.navigator && global.navigator.userActivation;
       if (activation && !activation.isActive) {
-        throw new Error(hook + ": changing a setting needs a click or key press");
+        throw needsGesture(hook + ": changing a setting needs a click or key press");
       }
       return hostInvoke(hook, "quick_set", { action });
+    }
+
+    /** One read of a state hook (`now()`). */
+    function readNow(hook) {
+      if (hook === "media") return hostInvoke("media", "media_now");
+      return hostInvoke(hook, "sense_now", { hook });
     }
 
     function sensor(hook) {
       return {
         async now() {
-          return hostInvoke(hook, "sense_now", { hook });
+          return readNow(hook);
         },
         /** `fn(value)` now and on every change. Returns an unsubscribe function. */
         async onChange(fn) {
@@ -252,12 +311,13 @@
 
     /**
      * `fn(data)` on each push of `name`: a hook (`media`, `battery`,
-     * `network`, `focus`, `audio`, `posture`, `clipboard`, `notify`, `tray`, `radios`,
+     * `network`, `focus`, `audio`, `posture`, `clipboard`, `windows`, `notify`, `tray`, `radios`,
      * `audio-control`, `display`, `power-mode`, `wifi`, `bluetooth`, `dnd`, `keyboard`, `vpn`, `hotspot`, `sharing`,
      * `accessibility`; must be declared) or a piece event
-     * (`shown`, `hidden`, `idle`, `active`, `theme-changed`). Sensor hooks
-     * also call `fn` with the current value right away. Returns a function
-     * that unsubscribes.
+     * (`shown`, `hiding`, `hidden`, `idle`, `active`, `theme-changed`, `monitor-changed`).
+     * State hooks (the sensors and `media`) also call `fn` with the current
+     * value right away; event hooks (`windows`, `tray`, `notify`,
+     * `clipboard`) only on changes. Returns a function that unsubscribes.
      */
     async function on(name, fn) {
       name = String(name);
@@ -265,8 +325,8 @@
         const own = await gate(name);
         const off = pushSubscribe(own, name, fn);
         let live = true;
-        if (SENSOR_HOOKS.has(name) && tauri()?.core?.invoke) {
-          hostInvoke(name, "sense_now", { hook: name }).then(
+        if (STATE_HOOKS.has(name) && tauri()?.core?.invoke) {
+          readNow(name).then(
             (value) => {
               if (live) fn(value, { name, data: value, initial: true });
             },
@@ -281,7 +341,7 @@
       if (PIECE_EVENTS.has(name)) {
         return pushSubscribe(fixedId || widgetIdFromLabel(), name, fn);
       }
-      throw new Error("unknown push '" + name + "'");
+      throw versaillesError("unknown-event", "unknown push '" + name + "'");
     }
 
     async function setKeyboard(id) {
@@ -327,7 +387,7 @@
       async preview(id, target) {
         if (id == null) return hostInvoke("windows", "windows_preview", {});
         const r = target && typeof target.getBoundingClientRect === "function" ? target.getBoundingClientRect() : target;
-        if (!r) throw new Error("windows.preview needs the hovered element or its rect");
+        if (!r) throw versaillesError("bad-argument", "windows.preview needs the hovered element or its rect");
         const rect = {
           x: Number(r.left != null ? r.left : r.x),
           y: Number(r.top != null ? r.top : r.y),
@@ -424,14 +484,23 @@
      * Explorer's tray has them and `active` is false. An icon: { id, tip,
      * showTip, app, exe, pid, guid, system, clickable, icon }.
      */
+    async function trayNow() {
+      const s = await hostInvoke("tray", "tray_list", {});
+      return s && Array.isArray(s.icons) ? s : { active: false, icons: [] };
+    }
+
     const tray = {
       /** `{ active, icons }`. */
+      async now() {
+        return trayNow();
+      },
+      /** Deprecated name of `now()`. */
       async state() {
-        const s = await hostInvoke("tray", "tray_list", {});
-        return s && Array.isArray(s.icons) ? s : { active: false, icons: [] };
+        deprecated("tray.state()", "tray.now()");
+        return trayNow();
       },
       async list() {
-        return (await tray.state()).icons;
+        return (await trayNow()).icons;
       },
       /**
        * `fn({ type: "added"|"changed"|"removed", id, icon })` per change, `{ type: "active", active }` when Versailles starts or stops holding them,
@@ -480,7 +549,7 @@
           apply(ev);
           emit();
         });
-        const s = await tray.state();
+        const s = await trayNow();
         list = s.icons.slice();
         active = !!s.active;
         pending.splice(0).forEach(apply);
@@ -499,7 +568,7 @@
       async click(id, button, x, y) {
         const activation = global.navigator && global.navigator.userActivation;
         if (activation && !activation.isActive) {
-          throw new Error("tray.click needs a click or key press");
+          throw needsGesture("tray.click needs a click or key press");
         }
         const args = { id: Number(id), button: String(button || "left") };
         if (Number.isFinite(x) && Number.isFinite(y)) Object.assign(args, { x: Math.round(x), y: Math.round(y) });
@@ -551,7 +620,12 @@
           return quick("audio-control", { kind: "mute", on: !!on });
         },
         /** Make an output from `now().outputs` the default. */
+        async setDefaultOutput(id) {
+          return quick("audio-control", { kind: "output", id: String(id) });
+        },
+        /** Deprecated name of `setDefaultOutput(id)`. */
         async setOutput(id) {
+          deprecated("audioControl.setOutput()", "audioControl.setDefaultOutput()");
           return quick("audio-control", { kind: "output", id: String(id) });
         },
         /** Default microphone volume, 0–100 (read it through `audio`'s `input`). */
@@ -582,8 +656,13 @@
         async setBrightness(id, level) {
           return quick("display", { kind: "brightness", id: String(id), level: Number(level) });
         },
-        /** Win+P: `"pc"`, `"duplicate"`, `"extend"` or `"second"`. */
+        /** Win+P: `"pc"`, `"duplicate"`, `"extend"` or `"second"` (read it as `projection`). */
+        async setProjection(mode) {
+          return quick("display", { kind: "project", mode: String(mode) });
+        },
+        /** Deprecated name of `setProjection(mode)`. */
         async project(mode) {
+          deprecated("display.project()", "display.setProjection()");
           return quick("display", { kind: "project", mode: String(mode) });
         },
       }),
@@ -640,7 +719,12 @@
           return quick("notify-control", { kind: "notifyOpen", aumid: String(aumid) });
         },
         /** Turn an app's own Windows pop-ups on or off; its notifications still arrive. */
+        async setBanners(aumid, on) {
+          return quick("notify-control", { kind: "notifyBanners", aumid: String(aumid), on: !!on });
+        },
+        /** Deprecated name of `setBanners(aumid, on)`. */
         async banners(aumid, on) {
+          deprecated("notifyControl.banners()", "notifyControl.setBanners()");
           return quick("notify-control", { kind: "notifyBanners", aumid: String(aumid), on: !!on });
         },
       },
@@ -724,17 +808,29 @@
         async now() {
           return hostInvoke("notify", "sense_now", { hook: "notify" });
         },
-        /** `fn(toast)` for each new toast. Returns an unsubscribe function. */
+        /** `fn(toast)` for each new toast (not on subscribe). Returns an unsubscribe function. */
+        async onChange(fn) {
+          return on("notify", fn);
+        },
+        /** Deprecated name of `onChange(fn)`. */
         async onToast(fn) {
+          deprecated("notify.onToast()", "notify.onChange()");
           return on("notify", fn);
         },
       },
       media: {
+        /** `{ title, artist, album, status, positionMs, durationMs, thumbnailDataUrl, source, hasSession }`. */
         async now() {
           return hostInvoke("media", "media_now");
         },
+        /** Deprecated name of `now()`. */
         async nowPlaying() {
+          deprecated("media.nowPlaying()", "media.now()");
           return hostInvoke("media", "media_now");
+        },
+        /** `fn(info)` now and on every change. Returns an unsubscribe function. */
+        async onChange(fn) {
+          return on("media", fn);
         },
         async playPause() {
           return hostInvoke("media", "media_play_pause_cmd");
@@ -745,7 +841,12 @@
         async previous() {
           return hostInvoke("media", "media_previous_cmd");
         },
+        /**
+         * Deprecated: `onChange(fn)`. Listens to the `media://update`
+         * broadcast (no current value first).
+         */
         async onUpdate(handler) {
+          deprecated("media.onUpdate()", "media.onChange()");
           await gate("media");
           if (!tauri()?.event?.listen) return () => {};
           return listen("media://update", handler);
@@ -983,6 +1084,8 @@
     "vpn", "hotspot", "sharing", "accessibility"];
   const PUSH_HOOKS = new Set(["media", "battery", "network", "focus", "audio", "posture", "clipboard", "windows", "notify", "tray"].concat(QUICK_HOOKS));
   const SENSOR_HOOKS = new Set(["battery", "network", "focus", "audio", "posture"].concat(QUICK_HOOKS));
+  /** Pushes carry the whole current value: `on()` / `onChange()` call `fn` with it first. */
+  const STATE_HOOKS = new Set([...SENSOR_HOOKS, "media"]);
   // On the wallpaper this page runs in an iframe of the host shell, which
   // forwards bus messages and pushes here. Only the parent may send them.
   if (global.parent && global.parent !== global && typeof global.addEventListener === "function") {
@@ -1055,7 +1158,11 @@
     widgetId: widgetIdFromLabel,
     enableNativeChrome,
     drag: {
-      enable: enableNativeChrome,
+      /** Deprecated name of `enableNativeChrome(el)`. */
+      enable(el) {
+        deprecated("drag.enable()", "enableNativeChrome()");
+        return enableNativeChrome(el);
+      },
     },
     for(id) {
       return makeApi(String(id || ""));
@@ -1084,12 +1191,16 @@
     dnd: scoped.dnd,
     notifyControl: scoped.notifyControl,
     keyboard: scoped.keyboard,
+    vpn: scoped.vpn,
+    hotspot: scoped.hotspot,
+    sharing: scoped.sharing,
+    accessibility: scoped.accessibility,
     windows: scoped.windows,
     tray: scoped.tray,
     notify: scoped.notify,
-    /** Data the last `spawn(id, data)` handed this spawnable (or undefined). */
     monitors,
     monitor,
+    /** Data the last `spawn(id, data)` handed this spawnable (or undefined). */
     spawnData() {
       return global.__VERSAILLES_SPAWN_DATA__;
     },
@@ -1105,5 +1216,7 @@
   };
 
   global.versailles = versailles;
+  // Deprecated global from before the rename; the same object (no warning:
+  // `window.versailles || window.deck` guards still read it).
   global.deck = versailles;
 })(typeof window !== "undefined" ? window : globalThis);

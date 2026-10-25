@@ -9,7 +9,8 @@
  * folder so it never shares processes with a running Versailles) three
  * times: wallpaper only; + a docked bar; + an open overlay. For each it
  * waits for the pages to settle and prints the private memory of the host
- * process and of every WebView2 process by type.
+ * process and of every WebView2 process by type (scripts/perf.mjs, shared
+ * with the e2e performance phase).
  */
 import { execFileSync, spawn } from "node:child_process";
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -17,6 +18,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { formatByType, sampleProcesses, summarize } from "./perf.mjs";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
@@ -70,23 +72,6 @@ function makeDesktop(extra) {
   return dest;
 }
 
-/** Private MB of the host and of each WebView2 process using `dataDir`. */
-function sample(hostPid, dataDir) {
-  const ps = `
-$data = '${dataDir.replace(/'/g, "''")}'
-$h = Get-Process -Id ${hostPid} -ErrorAction SilentlyContinue
-$rows = Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" | Where-Object { $_.CommandLine -like "*$data*" } | ForEach-Object {
-  $p = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue
-  if ($p) {
-    $type = if ($_.CommandLine -match '--type=([a-z-]+)') { $matches[1] } else { 'browser' }
-    [pscustomobject]@{ type = $type; mb = [math]::Round($p.PrivateMemorySize64 / 1MB) }
-  }
-}
-@{ host = $(if ($h) { [math]::Round($h.PrivateMemorySize64 / 1MB) } else { $null }); webview = @($rows) } | ConvertTo-Json -Depth 3 -Compress`;
-  const out = execFileSync("powershell", ["-NoProfile", "-Command", ps], { encoding: "utf8" });
-  return JSON.parse(out.trim());
-}
-
 async function run(label, extra) {
   const dest = makeDesktop(extra);
   const dataDir = join(dest, "webview2");
@@ -103,15 +88,8 @@ async function run(label, extra) {
   });
   try {
     await sleep(settleMs);
-    const s = sample(child.pid, dataDir);
-    const by = {};
-    for (const r of s.webview) {
-      by[r.type] = by[r.type] || { n: 0, mb: 0 };
-      by[r.type].n += 1;
-      by[r.type].mb += r.mb;
-    }
-    const total = s.webview.reduce((a, r) => a + r.mb, 0);
-    return { label, host: s.host, webviewTotal: total, by };
+    const s = summarize(sampleProcesses(child.pid, dataDir));
+    return { label, host: s.host, webviewTotal: s.webviewTotal, by: s.byType };
   } finally {
     try {
       execFileSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore" });
@@ -138,9 +116,7 @@ async function main() {
   rows.push(await run("+ docked bar", BAR));
   rows.push(await run("+ bar + open overlay", BAR + OVERLAY));
   for (const r of rows) {
-    const parts = Object.entries(r.by)
-      .map(([t, v]) => `${t} ${v.n}× ${v.mb}`)
-      .join(", ");
+    const parts = formatByType(r.by);
     console.log(`${r.label.padEnd(22)} host ${String(r.host).padStart(4)} MB · WebView2 ${String(r.webviewTotal).padStart(4)} MB (${parts})`);
   }
 }

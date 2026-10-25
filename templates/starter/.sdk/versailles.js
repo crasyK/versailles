@@ -359,9 +359,11 @@
     /**
      * App windows (`windows` hook to read, `windows-control` to act). A
      * window: { id, title, app, exe, pid, monitor, minimized, maximized,
-     * focused, attention, rect, icon? }. `rect` and `move` use physical
-     * screen pixels; `attention`: it flashed its taskbar button and has not
-     * been activated since.
+     * focused, attention, rect, icon?, progress?, badge? }. `rect` and `move`
+     * use physical screen pixels; `attention`: it flashed its taskbar button
+     * and has not been activated since. `progress` ({ state, value }) and
+     * `badge` ({ icon, label }) are what the app set for its taskbar button,
+     * only while Versailles hides the Windows taskbar.
      */
     const windows = {
       async list(opts) {
@@ -475,6 +477,27 @@
       /** `{ x, y }`, `{ width, height }` or all four, physical px. */
       move(id, to) {
         return windowControl(id, "move", to || {});
+      },
+      /**
+       * The window's jump list, as a right click on its taskbar button shows
+       * it: `{ appId, tasks, categories: [{ name, items }], recent, frequent,
+       * known }`; an item is `{ key, title, path, separator?, icon? }`.
+       * `{ icons: true }` adds 16×16 icons. Read with `windows`.
+       */
+      async jumpList(id, opts) {
+        const icons = !!(opts && opts.icons);
+        return hostInvoke("windows", "windows_jumplist", { id: Number(id), icons });
+      },
+      /**
+       * Open a jump list entry (its `key`), as clicking it in Explorer does.
+       * `windows-control`; only inside a click or key press.
+       */
+      async openJump(id, key) {
+        const activation = global.navigator && global.navigator.userActivation;
+        if (activation && !activation.isActive) {
+          throw new Error("windows.openJump needs a click or key press");
+        }
+        return hostInvoke("windows-control", "windows_jump", { id: Number(id), key: String(key) });
       },
     };
 
@@ -693,6 +716,34 @@
         },
         async disconnect(id) {
           return quick("bluetooth", { kind: "bluetoothDisconnect", id: String(id) });
+        },
+        /**
+         * Look for devices to pair (`seconds`, 10 by default, 3–30; resolves
+         * when done): `{ devices: [{ id, name, kind: "classic"|"le", signal }] }`.
+         * Bars and overlays only; no click needed.
+         */
+        async scan(opts) {
+          const action = { kind: "bluetoothScan" };
+          if (opts && Number.isFinite(opts.seconds)) action.seconds = Number(opts.seconds);
+          return hostInvoke("bluetooth", "quick_set", { action });
+        },
+        /**
+         * Pair a device from `scan()`; `{ pin }` for one with a fixed PIN.
+         * Resolves `{ status, id, pin? }`: `"paired"`, `"cancelled"`,
+         * `"confirm"` (show `pin`, ask whether it matches the device),
+         * `"display"` (type `pin` on the device), `"pin"` (ask for the
+         * device's PIN) or `"waiting"`; answer the last four with `pairReply`.
+         */
+        async pair(id, opts) {
+          const action = { kind: "bluetoothPair", id: String(id) };
+          if (opts && opts.pin != null && opts.pin !== "") action.pin = String(opts.pin);
+          return quick("bluetooth", action);
+        },
+        /** Answer a pairing step: `accept` (the PIN matches, or was typed), with `pin` when asked for one. */
+        async pairReply(id, accept, pin) {
+          const action = { kind: "bluetoothPairReply", id: String(id), accept: !!accept };
+          if (pin != null && pin !== "") action.pin = String(pin);
+          return quick("bluetooth", action);
         },
       }),
       /** Do Not Disturb: `{ supported, mode }`; `mode`: `"off"`, `"priority"`, `"alarms"`. */

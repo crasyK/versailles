@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-windows-jumplist"
+description = "Enables the windows_jumplist command without any pre-configured scope."
+commands.allow = ["windows_jumplist"]
+
+[[permission]]
+identifier = "deny-windows-jumplist"
+description = "Denies the windows_jumplist command without any pre-configured scope."
+commands.deny = ["windows_jumplist"]

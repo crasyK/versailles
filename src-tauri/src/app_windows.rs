@@ -45,6 +45,13 @@ pub struct WindowInfo {
     /// `data:image/png;base64,…` (32×32) when asked for, if the window has one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
+    /// Taskbar progress its app set (`ITaskbarList3`, see `taskband`):
+    /// only while Versailles holds the hidden taskbar; absent when none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress: Option<crate::taskband::Progress>,
+    /// Overlay badge its app set (an unread count): same conditions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub badge: Option<crate::taskband::Badge>,
 }
 
 impl WindowInfo {
@@ -57,6 +64,8 @@ impl WindowInfo {
             && self.focused == other.focused
             && self.monitor == other.monitor
             && self.attention == other.attention
+            && self.progress == other.progress
+            && self.badge == other.badge
     }
 }
 
@@ -66,7 +75,8 @@ pub enum ChangeKind {
     Opened,
     Closed,
     Focused,
-    /// Title, minimized / maximized, focus lost, monitor, or attention.
+    /// Title, minimized / maximized, focus lost, monitor, attention,
+    /// progress or badge.
     Changed,
 }
 
@@ -566,6 +576,8 @@ mod imp {
             rect: rect_of(h, minimized),
             attention: false,
             icon: if icons { icon_for(h, exe.as_deref()) } else { None },
+            progress: None,
+            badge: None,
         }
     }
 
@@ -614,7 +626,11 @@ mod imp {
                 crate::attention::clear(w.id);
             }
             w.attention = crate::attention::flagged(w.id);
+            w.progress = crate::taskband::progress(w.id);
+            w.badge = crate::taskband::badge(w.id);
         }
+        // Windows that closed (one hidden for now keeps its progress).
+        crate::taskband::retain(|id| unsafe { IsWindow(Some(hwnd(id))) }.as_bool());
         // Forget processes and icons of windows that are gone.
         {
             let mut exes = exe_cache().lock().unwrap();
@@ -915,6 +931,8 @@ mod tests {
             rect: Rect { x: 0, y: 0, width: 800, height: 600 },
             attention: false,
             icon: None,
+            progress: None,
+            badge: None,
         }
     }
 
@@ -952,6 +970,23 @@ mod tests {
         let answered = WindowInfo { focused: true, ..a.clone() };
         assert_eq!(kinds(&diff(&[flashing], &[answered])), vec![(ChangeKind::Focused, 1)]);
 
+        // Taskbar progress and badges are changes too.
+        let busy = WindowInfo {
+            progress: Some(crate::taskband::Progress { state: "normal", value: Some(0.25) }),
+            ..a.clone()
+        };
+        assert_eq!(kinds(&diff(&[a.clone()], &[busy.clone()])), vec![(ChangeKind::Changed, 1)]);
+        let further = WindowInfo {
+            progress: Some(crate::taskband::Progress { state: "normal", value: Some(0.5) }),
+            ..a.clone()
+        };
+        assert_eq!(kinds(&diff(&[busy], &[further])), vec![(ChangeKind::Changed, 1)]);
+        let badged = WindowInfo {
+            badge: Some(crate::taskband::Badge { icon: "data:x".into(), label: None }),
+            ..a.clone()
+        };
+        assert_eq!(kinds(&diff(&[a.clone()], &[badged])), vec![(ChangeKind::Changed, 1)]);
+
         let renamed = WindowInfo { title: "a — saved".into(), ..a.clone() };
         let min = WindowInfo { minimized: true, ..b.clone() };
         let other_monitor = WindowInfo { monitor: Some(2), ..c.clone() };
@@ -970,6 +1005,9 @@ mod tests {
         assert_eq!(v["window"]["rect"]["width"], 800);
         assert!(v["window"].get("icon").is_none());
         assert_eq!(v["window"]["attention"], false);
+        // Absent unless the app set one.
+        assert!(v["window"].get("progress").is_none());
+        assert!(v["window"].get("badge").is_none());
     }
 
     #[test]

@@ -33,6 +33,8 @@ fn main() {
                 "windows_icon",
                 "windows_control",
                 "windows_preview",
+                "windows_jumplist",
+                "windows_jump",
                 "tray_list",
                 "tray_click",
                 "tray_hover",

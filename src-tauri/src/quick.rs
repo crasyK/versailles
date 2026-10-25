@@ -58,6 +58,16 @@ pub enum QuickAction {
     /// `id` from `bluetooth`'s `devices`; audio devices only.
     BluetoothConnect { id: String },
     BluetoothDisconnect { id: String },
+    /// Look for devices to pair for `seconds` (10 by default, 3–30); answers
+    /// `{ devices: [{ id, name, kind, signal }] }` instead of the paired list.
+    BluetoothScan { seconds: Option<f64> },
+    /// Pair a device from the last scan (`pin` for one that asks for a
+    /// fixed PIN); answers the pairing's step (`wireless::PairStep`).
+    BluetoothPair { id: String, pin: Option<String> },
+    /// Answer a pairing that waits for the user: the PIN matches / was typed
+    /// (`accept`), or the `pin` it asked for.
+    #[serde(rename_all = "camelCase")]
+    BluetoothPairReply { id: String, accept: bool, pin: Option<String> },
     /// Do Not Disturb: `"off"`, `"priority"` (priority only) or `"alarms"` (alarms only).
     Dnd { mode: String },
     /// Remove one notification (an `id` from `notify`).
@@ -92,6 +102,13 @@ impl QuickAction {
             QuickAction::WifiConnect { ssid, password } => {
                 format!("WifiConnect {{ ssid: {ssid:?}, password: {} }}", if password.is_some() { "<set>" } else { "none" })
             }
+            QuickAction::BluetoothPair { id, pin } => {
+                format!("BluetoothPair {{ id: {id:?}, pin: {} }}", if pin.is_some() { "<set>" } else { "none" })
+            }
+            QuickAction::BluetoothPairReply { id, accept, pin } => format!(
+                "BluetoothPairReply {{ id: {id:?}, accept: {accept}, pin: {} }}",
+                if pin.is_some() { "<set>" } else { "none" }
+            ),
             other => format!("{other:?}"),
         }
     }
@@ -111,7 +128,11 @@ impl QuickAction {
             QuickAction::Brightness { .. } | QuickAction::Project { .. } | QuickAction::NightLight { .. } => "display",
             QuickAction::PowerMode { .. } => "power-mode",
             QuickAction::WifiScan | QuickAction::WifiConnect { .. } | QuickAction::WifiDisconnect => "wifi",
-            QuickAction::BluetoothConnect { .. } | QuickAction::BluetoothDisconnect { .. } => "bluetooth",
+            QuickAction::BluetoothConnect { .. }
+            | QuickAction::BluetoothDisconnect { .. }
+            | QuickAction::BluetoothScan { .. }
+            | QuickAction::BluetoothPair { .. }
+            | QuickAction::BluetoothPairReply { .. } => "bluetooth",
             QuickAction::Dnd { .. } => "dnd",
             QuickAction::NotifyDismiss { .. }
             | QuickAction::NotifyClear
@@ -134,6 +155,9 @@ pub fn answer(action: &QuickAction) -> AppResult<Value> {
     let opened = match action {
         QuickAction::VpnConnect { name } => crate::vpn::connect(name)?,
         QuickAction::Accessibility { name, on } => crate::accessibility::set(name, *on)?,
+        QuickAction::BluetoothScan { .. } | QuickAction::BluetoothPair { .. } | QuickAction::BluetoothPairReply { .. } => {
+            Some(bluetooth_answer(action)?)
+        }
         other => {
             apply(other)?;
             None
@@ -142,6 +166,18 @@ pub fn answer(action: &QuickAction) -> AppResult<Value> {
     match opened {
         Some(value) => Ok(value),
         None => read(action.hook()),
+    }
+}
+
+/// The answer of a scan or pairing step (not the paired list).
+fn bluetooth_answer(action: &QuickAction) -> AppResult<Value> {
+    match action {
+        QuickAction::BluetoothScan { seconds } => crate::wireless::bluetooth_scan(*seconds),
+        QuickAction::BluetoothPair { id, pin } => crate::wireless::bluetooth_pair(id, pin.as_deref()),
+        QuickAction::BluetoothPairReply { id, accept, pin } => {
+            crate::wireless::bluetooth_pair_reply(id, *accept, pin.as_deref())
+        }
+        _ => Err(AppError::msg("bluetooth: not a pairing action")),
     }
 }
 
@@ -220,6 +256,9 @@ pub fn apply(action: &QuickAction) -> AppResult<()> {
         QuickAction::WifiDisconnect => crate::wireless::wifi_disconnect(),
         QuickAction::BluetoothConnect { id } => crate::wireless::bluetooth_connect(id, true),
         QuickAction::BluetoothDisconnect { id } => crate::wireless::bluetooth_connect(id, false),
+        QuickAction::BluetoothScan { .. } | QuickAction::BluetoothPair { .. } | QuickAction::BluetoothPairReply { .. } => {
+            bluetooth_answer(action).map(drop)
+        }
         QuickAction::Dnd { mode } => imp::set_dnd(mode),
         QuickAction::NotifyDismiss { id } => crate::toasts::dismiss(*id),
         QuickAction::NotifyClear => crate::toasts::clear(),
@@ -1017,6 +1056,16 @@ mod tests {
         assert_eq!(a.hook(), "wifi");
         let a: QuickAction = serde_json::from_str(r#"{ "kind": "bluetoothDisconnect", "id": "{x}" }"#).unwrap();
         assert_eq!(a.hook(), "bluetooth");
+        let a: QuickAction = serde_json::from_str(r#"{ "kind": "bluetoothScan" }"#).unwrap();
+        assert_eq!(a.hook(), "bluetooth");
+        let a: QuickAction = serde_json::from_str(r#"{ "kind": "bluetoothPair", "id": "BT#1", "pin": "0000" }"#).unwrap();
+        assert_eq!(a.hook(), "bluetooth");
+        // A PIN never reaches the log.
+        assert_eq!(a.describe(), r#"BluetoothPair { id: "BT#1", pin: <set> }"#);
+        let a: QuickAction =
+            serde_json::from_str(r#"{ "kind": "bluetoothPairReply", "id": "BT#1", "accept": true, "pin": "1234" }"#).unwrap();
+        assert_eq!(a.describe(), r#"BluetoothPairReply { id: "BT#1", accept: true, pin: <set> }"#);
+        assert!(serde_json::from_str::<QuickAction>(r#"{ "kind": "bluetoothPairReply", "id": "x" }"#).is_err());
         let a: QuickAction = serde_json::from_str(r#"{ "kind": "dnd", "mode": "priority" }"#).unwrap();
         assert_eq!(a.hook(), "dnd");
         let a: QuickAction = serde_json::from_str(r#"{ "kind": "notifyDismiss", "id": 7 }"#).unwrap();

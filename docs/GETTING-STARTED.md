@@ -52,7 +52,7 @@ Everything that is yours lives in `%USERPROFILE%\Documents\Widgets`:
 | `desktop\index.html` | Your page: widgets, bars, overlays and the `#versailles` config block. Versailles never rewrites it. |
 | `desktop\bar.js` | The starter's command bar. It is part of your page now: Versailles never updates it. |
 | `.sdk\versailles.js` | The page SDK. Versailles replaces an unchanged older copy when it updates (keeping `versailles.js.bak`) and leaves a copy you edited alone. |
-| `.sdk\versailles.d.ts` | Types for the SDK, for your editor. A folder set up before 0.12 does not have it: copy it from [`templates/starter/.sdk/`](../templates/starter/.sdk/versailles.d.ts). |
+| `.sdk\versailles.d.ts` | Types for the SDK, for your editor. Versailles keeps it next to the SDK (a folder set up before 0.12 gets it at the next start). |
 | `.versailles\` | Versailles' own state: the API token, each piece's storage (`storage\<id>.json`). Do not share `config.json`. |
 
 Keep the folder in git or another backup: it is your desktop.

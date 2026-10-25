@@ -10,8 +10,8 @@ It is a small Tauri v2 host (Rust, WebView2) that lives in the notification area
 - **Wallpaper widgets** on every monitor or on the ones you name.
 - **Overlays and slide-outs** as native always-on-top windows, anchored to a corner, an edge, the centre or the cursor, each with its own hotkey, including the **Windows and Copilot keys**.
 - **Docked bars** (top bar, taskbar, dock, side rail) that reserve their strip like the Windows taskbar, float, or auto-hide; one copy per monitor if you like.
-- **Replace the taskbar**: hide Explorer's taskbar while your bar takes its place, with window buttons, live hover previews, attention, the tray icons and a keyboard-layout pill. The taskbar always comes back (Quit, a crash, the next logon).
-- **Quick settings** from your page: Wi-Fi networks, Bluetooth devices, volume, microphone and a per-app mixer, brightness, night light, projection, power mode, Do Not Disturb, notifications, Windows VPN profiles, the mobile hotspot, Cast and nearby sharing, accessibility toggles.
+- **Replace the taskbar**: hide Explorer's taskbar while your bar takes its place, with window buttons, live hover previews, attention, apps' progress bars and badges, jump lists, the tray icons and a keyboard-layout pill. The taskbar always comes back (Quit, a crash, the next logon).
+- **Quick settings** from your page: Wi-Fi networks, Bluetooth devices (and pairing new ones), volume, microphone and a per-app mixer, brightness, night light, projection, power mode, Do Not Disturb, notifications, Windows VPN profiles, the mobile hotspot, Cast and nearby sharing, accessibility toggles.
 - **System readings**: battery, network, the focused window, audio, media (now playing), notifications, the tablet posture of a convertible, the keyboard layout.
 - **A command bar** in the starter page: apps (Store apps included), Settings pages by name in English and German, the Windows Search index, recent files, shortcuts, PowerShell and a terminal.
 - **Between pieces**: per-piece storage, a message bus, data handed to an overlay as it opens.

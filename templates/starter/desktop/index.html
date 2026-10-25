@@ -1081,10 +1081,12 @@
           var date = root.querySelector('.tb-date');
           var net = root.querySelector('.tb-net');
           var bat = root.querySelector('.tb-bat');
+          // Writing the same text still repaints: write only what changed.
+          function put(el, text) { if (el.textContent !== text) el.textContent = text; }
           function tick() {
             var n = new Date();
-            time.textContent = String(n.getHours()).padStart(2, '0') + ':' + String(n.getMinutes()).padStart(2, '0');
-            date.textContent = n.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+            put(time, String(n.getHours()).padStart(2, '0') + ':' + String(n.getMinutes()).padStart(2, '0'));
+            put(date, n.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }));
           }
           tick();
           setInterval(tick, 1000);
@@ -1161,11 +1163,13 @@
         .taskbar .tk-win.attention { border-style: solid; }
         .taskbar .tk-win.attention::after {
           content: ""; position: absolute; top: 4px; right: 4px; width: 7px; height: 7px; border-radius: 50%;
-          background: var(--ink); box-shadow: 0 0 0 2px var(--paper); animation: tk-attention 1.2s steps(1) infinite;
+          background: var(--ink); box-shadow: 0 0 0 2px var(--paper);
         }
         .taskbar .tk-win.focused.attention::after { background: var(--paper); box-shadow: 0 0 0 2px var(--ink); }
-        @keyframes tk-attention { 50% { opacity: 0.2; } }
-        @media (prefers-reduced-motion: reduce) { .taskbar .tk-win.attention::after { animation: none; } }
+        /* The blink is a class the script flips every 0.6 s while a window
+           wants attention: an infinite CSS animation, even a stepped one,
+           makes the window draw 60 frames a second. */
+        .taskbar.blink-off .tk-win.attention::after { opacity: 0.2; }
         .taskbar .tk-win.minimized { opacity: 0.55; }
         .taskbar .tk-win img { width: 18px; height: 18px; flex: none; }
         .taskbar .tk-win span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1255,6 +1259,21 @@
                 if (previewId === w.id) wins.preview(w.id, b).catch(function () {});
               });
               if (previewId != null && !list.some(function (w) { return w.id === previewId; })) previewOff();
+              blink(!!bar.querySelector('.tk-win.attention'));
+            }
+            // Attention dot: blinks only while some window wants it (steady
+            // with reduced motion); no timer runs otherwise.
+            var blinkTimer = 0;
+            var still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            function blink(on) {
+              var box = root.querySelector('.taskbar');
+              if (on && !still && !blinkTimer) {
+                blinkTimer = setInterval(function () { box.classList.toggle('blink-off'); }, 600);
+              } else if (!on && blinkTimer) {
+                clearInterval(blinkTimer);
+                blinkTimer = 0;
+                box.classList.remove('blink-off');
+              }
             }
             v.monitor().then(function (m) {
               var here = m ? m.number : null;
@@ -1745,10 +1764,13 @@
             function refreshToasts() { me.notify.now().then(renderToasts, function () {}); }
             $('.q-clear').onclick = function () { act(me.notifyControl.clear()).then(function (r) { if (r) renderToasts(r); }); };
             me.on('notify', refreshToasts).catch(function () {});
-            me.on('shown', refreshToasts).catch(function () {});
+            // Closed, the panel does nothing: no reads, no repaints.
+            var open = true;
+            me.on('shown', function () { open = true; refreshToasts(); }).catch(function () {});
+            me.on('hidden', function () { open = false; }).catch(function () {});
             refreshToasts();
             // Notifications removed in Windows are not pushed: look again now and then.
-            setInterval(refreshToasts, 10000);
+            setInterval(function () { if (open) refreshToasts(); }, 10000);
 
             me.on('power-mode', function (p) {
               if (!p) return;
@@ -1962,11 +1984,13 @@
         const d = document.getElementById('clk-date');
         if (!t) return;
         const pad = function (n) { return String(n).padStart(2, '0'); };
+        // Writing the same text still repaints: write only what changed.
+        const put = function (el, text) { if (el.textContent !== text) el.textContent = text; };
         function tick() {
           const n = new Date();
-          t.textContent = pad(n.getHours()) + ':' + pad(n.getMinutes());
-          s.textContent = pad(n.getSeconds());
-          d.textContent = n.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+          put(t, pad(n.getHours()) + ':' + pad(n.getMinutes()));
+          put(s, pad(n.getSeconds()));
+          put(d, n.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }));
         }
         tick();
         setInterval(tick, 1000);

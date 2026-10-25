@@ -348,6 +348,43 @@ pub fn classify_invoker(
     }
 }
 
+/// Commands a floating folder widget (`widget.json`) may call (SECURITY.md
+/// L1). It shares the page's origin but is not the page: it gets the commands
+/// that check a hook themselves (its `widget.json` permissions decide there),
+/// two read-only ones, and [`FOLDER_OWN`]. Every other host command (the API
+/// token, the page's HTML, layouts, the launcher, other widgets, …) is refused,
+/// including any command added later that is not listed here.
+pub const FOLDER_ALLOWED: &[&str] = &[
+    // Gated by their hook (`require_hook`, `gate_shell`, `gate_pty`).
+    "move_widget_cmd", "layout_update", "storage_op", "clipboard_read", "clipboard_write",
+    "power_action", "quick_set", "bus_publish", "sense_now", "windows_list", "windows_icon",
+    "windows_control", "windows_jumplist", "windows_jump", "windows_preview", "tray_list",
+    "tray_click", "tray_hover", "get_mouse_position_cmd", "media_now", "media_play_pause_cmd",
+    "media_next_cmd", "media_previous_cmd", "toggle_slideout", "cli_exec", "cli_exec_term",
+    "cli_open", "cli_search_files", "cli_search", "cli_recent_files", "pty_open", "pty_write",
+    "pty_resize", "pty_is_alive", "pty_close",
+    // Read-only.
+    "monitor_info", "get_monitors", "sys_stats",
+];
+
+/// Commands a folder widget may call only for its own window (`id`).
+pub const FOLDER_OWN: &[&str] = &["close_widget", "set_widget_always_on_top", "set_widget_opacity", "popup_widget_menu"];
+
+/// Whether folder widget `folder` may call `command` with the `id` argument
+/// `arg_id`. `Err` carries the message the page sees.
+pub fn folder_may_call(command: &str, folder: &str, arg_id: Option<&str>) -> Result<(), String> {
+    if FOLDER_ALLOWED.contains(&command) {
+        return Ok(());
+    }
+    if FOLDER_OWN.contains(&command) {
+        if arg_id.is_some_and(|id| id.eq_ignore_ascii_case(folder)) {
+            return Ok(());
+        }
+        return Err(format!("folder widget '{folder}' may use {command} only for itself"));
+    }
+    Err(format!("folder widget '{folder}' cannot use {command}"))
+}
+
 /// `taskbar:2` → `("taskbar", 2)`: the part of a window label after `widget-`
 /// for a bar's copy on display 2. `None` without a `:<number>` suffix.
 pub fn split_monitor_copy(rest: &str) -> Option<(&str, u32)> {
@@ -639,6 +676,23 @@ fn split_accelerators(value: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn folder_widgets_get_only_listed_commands() {
+        assert!(folder_may_call("storage_op", "clock", None).is_ok());
+        assert!(folder_may_call("monitor_info", "clock", None).is_ok());
+        assert!(folder_may_call("get_api_info", "clock", None).is_err());
+        assert!(folder_may_call("get_desktop_html", "clock", None).is_err());
+        assert!(folder_may_call("some_future_command", "clock", None).is_err());
+        assert!(folder_may_call("close_widget", "clock", Some("Clock")).is_ok());
+        assert!(folder_may_call("close_widget", "clock", Some("weather")).is_err());
+        assert!(folder_may_call("set_widget_opacity", "clock", None).is_err());
+        // Every listed name is a real command (build.rs lists them all).
+        let build = include_str!("../build.rs");
+        for name in FOLDER_ALLOWED.iter().chain(FOLDER_OWN) {
+            assert!(build.contains(&format!("\"{name}\"")), "{name} is not a command in build.rs");
+        }
+    }
 
     #[test]
     fn parses_widgets_and_spawnables() {

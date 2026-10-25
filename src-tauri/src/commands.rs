@@ -38,7 +38,16 @@ pub(crate) fn require_hook(
     class: HookClass,
 ) -> AppResult<String> {
     let cat = crate::desktop::page_catalog(state);
-    let invoker = crate::page::classify_invoker(webview.label(), &cat, |id| {
+    let invoker = invoker_of(state, &cat, webview.label());
+    crate::page::authorize_hook(&cat, &invoker, caller, hook, class).map_err(|err| {
+        tracing::warn!("{} ({}): {err}", webview.label(), hook);
+        err
+    })
+}
+
+/// Who a window label is (see `page::classify_invoker`).
+fn invoker_of(state: &AppState, cat: &crate::page::PageCatalog, label: &str) -> crate::page::Invoker {
+    crate::page::classify_invoker(label, cat, |id| {
         state.registry.lock().unwrap().get(id).map(|w| {
             w.manifest
                 .permissions
@@ -46,9 +55,32 @@ pub(crate) fn require_hook(
                 .map(|p| p.hook_name().to_string())
                 .collect()
         })
-    });
-    crate::page::authorize_hook(&cat, &invoker, caller, hook, class).map_err(|err| {
-        tracing::warn!("{} ({}): {err}", webview.label(), hook);
+    })
+}
+
+/// Runs before every app command (lib.rs `invoke_handler`): a floating folder
+/// widget gets only `page::FOLDER_ALLOWED`, and `page::FOLDER_OWN` for its own
+/// window (SECURITY.md L1). Other windows pass untouched.
+pub(crate) fn folder_gate(invoke: &tauri::ipc::Invoke) -> Result<(), String> {
+    let command = invoke.message.command();
+    if crate::page::FOLDER_ALLOWED.contains(&command) {
+        return Ok(());
+    }
+    let webview = invoke.message.webview_ref();
+    if !webview.label().starts_with("widget-") {
+        return Ok(());
+    }
+    let state = webview.state::<AppState>();
+    let cat = crate::desktop::page_catalog(&state);
+    let crate::page::Invoker::Folder { id, .. } = invoker_of(&state, &cat, webview.label()) else {
+        return Ok(());
+    };
+    let arg_id = match invoke.message.payload() {
+        tauri::ipc::InvokeBody::Json(v) => v.get("id").and_then(|v| v.as_str()).map(str::to_string),
+        _ => None,
+    };
+    crate::page::folder_may_call(command, &id, arg_id.as_deref()).map_err(|err| {
+        tracing::warn!("{}: {err}", webview.label());
         err
     })
 }
@@ -335,6 +367,7 @@ pub async fn power_action(
     caller: Option<String>,
 ) -> AppResult<()> {
     let acting = require_hook(&state, &webview, caller.as_deref(), "power", HookClass::Plain)?;
+    crate::gesture::require(&webview, "power").await?;
     tracing::info!("power: '{acting}' requested {action:?}");
     tokio::task::spawn_blocking(move || crate::power::run(action))
         .await
@@ -441,6 +474,7 @@ pub async fn windows_jump(
     caller: Option<String>,
 ) -> AppResult<()> {
     let acting = require_hook(&state, &webview, caller.as_deref(), "windows-control", HookClass::Plain)?;
+    crate::gesture::require(&webview, "windows.openJump").await?;
     tracing::info!("windows: '{acting}' opens jump list entry {key} of {id}");
     tokio::task::spawn_blocking(move || crate::jumplist::open(id, &key))
         .await
@@ -460,6 +494,7 @@ pub async fn windows_control(
     caller: Option<String>,
 ) -> AppResult<()> {
     let acting = require_hook(&state, &webview, caller.as_deref(), "windows-control", HookClass::Plain)?;
+    crate::gesture::require(&webview, "windows-control").await?;
     tracing::debug!("windows: '{acting}' {action:?} {id}");
     tokio::task::spawn_blocking(move || crate::app_windows::control(id, action, to))
         .await
@@ -536,6 +571,7 @@ pub async fn tray_click(
     caller: Option<String>,
 ) -> AppResult<()> {
     let acting = require_hook(&state, &webview, caller.as_deref(), "tray", HookClass::Plain)?;
+    crate::gesture::require(&webview, "tray.click").await?;
     let button = button.unwrap_or(crate::tray::Button::Left);
     tracing::debug!("tray: '{acting}' {button:?} click on {id}");
     let at = x.zip(y);

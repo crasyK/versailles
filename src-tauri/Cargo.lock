@@ -5063,6 +5063,7 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+ "webview2-com",
  "windows 0.61.3",
  "windows-collections",
  "windows-core 0.61.2",

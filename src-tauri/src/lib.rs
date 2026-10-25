@@ -17,6 +17,7 @@ mod docks;
 mod engine_runtime;
 mod error;
 mod first_run;
+mod gesture;
 mod page;
 mod placement;
 mod power;
@@ -254,6 +255,9 @@ pub fn run() {
             // Bind file/API server BEFORE session restore so widget URLs work.
             match start_api_server(app.handle().clone(), &mut config) {
                 Ok(port) => {
+                    if let Err(err) = api::allow_pages_on(app.handle(), port) {
+                        tracing::error!("pages get no host access on port {port}: {err}");
+                    }
                     if let Err(err) = store.save_runtime_from_app(&config) {
                         tracing::warn!("Failed to persist runtime state for API port {port}: {err}");
                     }
@@ -459,7 +463,8 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler({
+            let handle: fn(tauri::ipc::Invoke) -> bool = tauri::generate_handler![
             commands::list_widgets,
             commands::open_widget,
             commands::close_widget,
@@ -534,7 +539,16 @@ pub fn run() {
             pty::pty_close,
             first_run::welcome_setup,
             first_run::welcome_skip,
-        ])
+            ];
+            // Folder widgets get only some commands (SECURITY.md L1).
+            move |invoke: tauri::ipc::Invoke| {
+                if let Err(err) = commands::folder_gate(&invoke) {
+                    invoke.resolver.reject(err);
+                    return true;
+                }
+                handle(invoke)
+            }
+        })
         .build(tauri::generate_context!());
     match app {
         Ok(app) => app.run(|app, event| match event {

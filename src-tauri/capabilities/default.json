@@ -3,9 +3,6 @@
   "identifier": "default",
   "description": "Default capabilities for Versailles widgets, launcher, desktop, and guides",
   "windows": ["launcher-dim", "desktop", "desktop-*", "guides", "widget-*"],
-  "remote": {
-    "urls": ["http://(127\\.0\\.0\\.1|localhost):478(3[1-9]|4[01])/*"]
-  },
   "permissions": [
     "core:default",
     "core:window:allow-close",

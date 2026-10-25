@@ -24,6 +24,39 @@ struct ApiState {
     token: String,
 }
 
+/// Give pages served by this server (`http://127.0.0.1:<port>/files/…`) the
+/// page capability, for the bound port only (SECURITY.md L3). The static
+/// `capabilities/default.json` has no remote URLs: a fixed port range would
+/// also cover a port another account holds. Same windows and permissions.
+pub fn allow_pages_on(app: &AppHandle, port: u16) -> AppResult<()> {
+    let cap = page_capability(port)?;
+    app.add_capability(cap).map_err(|e| AppError::msg(e.to_string()))
+}
+
+fn page_capability(port: u16) -> AppResult<tauri::ipc::CapabilityBuilder> {
+    let file: serde_json::Value = serde_json::from_str(include_str!("../capabilities/default.json"))
+        .map_err(|e| AppError::msg(format!("capabilities/default.json: {e}")))?;
+    let list = |key: &str| -> Vec<String> {
+        file[key]
+            .as_array()
+            .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+            .unwrap_or_default()
+    };
+    let permissions = list("permissions");
+    if permissions.is_empty() {
+        return Err(AppError::msg("capabilities/default.json has no permissions"));
+    }
+    let mut cap = tauri::ipc::CapabilityBuilder::new("pages-on-port")
+        .local(false)
+        .remote(format!("http://127.0.0.1:{port}/*"))
+        .remote(format!("http://localhost:{port}/*"))
+        .windows(list("windows"));
+    for p in permissions {
+        cap = cap.permission(p);
+    }
+    Ok(cap)
+}
+
 /// Bind the localhost listener (with port fallback) and spawn the HTTP server.
 /// `/files` + `/health` always run so widgets can load even when control API is disabled.
 /// Returns the port that was successfully bound.
@@ -314,7 +347,28 @@ async fn lookup_weather(q: WeatherQuery) -> Result<crate::weather::WeatherPayloa
     .await
 }
 
-async fn weather(Query(q): Query<WeatherQuery>) -> Response {
+/// `save=1` changes the stored location, so it needs the API token like the
+/// control routes: loopback is shared by every account on the PC (SECURITY.md
+/// L2). Reading the weather stays open.
+fn save_refused(q: &WeatherQuery, headers: &HeaderMap, token: &str) -> Option<Response> {
+    if !weather_save_flag(q.save.as_deref()) || authorize(headers, token).is_ok() {
+        return None;
+    }
+    Some(
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(crate::weather::error_json(
+                "saving the weather location needs the API token (Authorization: Bearer, from get_api_info)",
+            )),
+        )
+            .into_response(),
+    )
+}
+
+async fn weather(State(state): State<ApiState>, headers: HeaderMap, Query(q): Query<WeatherQuery>) -> Response {
+    if let Some(refused) = save_refused(&q, &headers, &state.token) {
+        return refused;
+    }
     match lookup_weather(q).await {
         Ok(payload) => Json(payload).into_response(),
         Err(err) => (
@@ -336,7 +390,10 @@ async fn quote() -> Response {
     }
 }
 
-async fn weather_text(Query(q): Query<WeatherQuery>) -> Response {
+async fn weather_text(State(state): State<ApiState>, headers: HeaderMap, Query(q): Query<WeatherQuery>) -> Response {
+    if let Some(refused) = save_refused(&q, &headers, &state.token) {
+        return refused;
+    }
     match lookup_weather(q).await {
         Ok(payload) => (
             StatusCode::OK,

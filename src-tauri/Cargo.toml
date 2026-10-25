@@ -29,6 +29,8 @@ tracing = "0.1"
 log = "0.4"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 uuid = { version = "1", features = ["v4"] }
+# The same WebView2 bindings Tauri uses: ask a page about its click / key press (gesture.rs).
+webview2-com = "0.38"
 axum = "0.8"
 tower-http = { version = "0.6", features = ["cors"] }
 base64 = "0.22"

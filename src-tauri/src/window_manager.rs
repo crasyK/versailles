@@ -865,6 +865,7 @@ fn open_widget_window_as(
         .visible(false)
         .focused(false)
         .shadow(false)
+        .initialization_script(&crate::gesture::init_script())
         .initialization_script(&inject)
         .build()
     {
@@ -2190,6 +2191,7 @@ fn ensure_desktop_window_on(app: &AppHandle, label: &str, work: Option<Rect>) ->
         .skip_taskbar(true)
         .visible(false)
         .shadow(false)
+        .initialization_script(&crate::gesture::init_script())
         .build()?;
     let _ = window.set_skip_taskbar(true);
     let pin_win = window.clone();

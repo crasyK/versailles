@@ -53,6 +53,8 @@
     if (/^hook '[^']*' not declared on /.test(message)) return "hook-undeclared";
     if (/^Unknown hook /.test(message)) return "unknown-hook";
     if (/^hook '[^']*' rejected: /.test(message)) return "hook-refused";
+    // The host checks the click too (power, windows-control, tray.click).
+    if (/ needs a click or key press$/.test(message)) return "needs-gesture";
     return "host-error";
   }
 

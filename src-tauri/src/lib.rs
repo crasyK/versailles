@@ -186,7 +186,9 @@ pub fn run() {
         let mut b = tauri_plugin_log::Builder::new()
             .level(log::LevelFilter::Info)
             .max_file_size(1_000_000)
-            .rotation_strategy(RotationStrategy::KeepSome(3));
+            .rotation_strategy(RotationStrategy::KeepSome(3))
+            // Local time, like supervisor.log and taskbar.log (the default is UTC).
+            .timezone_strategy(tauri_plugin_log::TimezoneStrategy::UseLocal);
         #[cfg(debug_assertions)]
         {
             b = b.targets([

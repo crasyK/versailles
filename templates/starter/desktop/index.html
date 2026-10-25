@@ -1129,7 +1129,10 @@
          hook. Click a window to bring it up, click the focused one to minimize
          it, middle-click to close it (windows-control). A window that asks
          for attention (it flashed its taskbar button) gets a blinking dot;
-         resting the pointer on a window shows Versailles' preview card. On the
+         an app's progress (a download, a copy) is a line under its button and
+         its badge (an unread count) sits on its icon, while Versailles hides
+         the Windows taskbar; resting the pointer on a window shows
+         Versailles' preview card. On the
          right, a language pill when more than one keyboard layout is installed
          (keyboard: click it to switch the app in front to the next one), then
          the notification-area icons (tray): click, right-click, double-click or
@@ -1168,6 +1171,22 @@
         @media (prefers-reduced-motion: reduce) { .taskbar .tk-win.attention::after { animation: none; } }
         .taskbar .tk-win.minimized { opacity: 0.55; }
         .taskbar .tk-win img { width: 18px; height: 18px; flex: none; }
+        /* Progress the app shows on its button (a download, a copy): a line
+           along the bottom. And its badge (an unread count) on the icon. */
+        .taskbar .tk-win .tk-progress {
+          position: absolute; left: 8px; right: 8px; bottom: 3px; height: 3px; border-radius: 2px; background: var(--chip);
+        }
+        .taskbar .tk-win .tk-progress i { display: block; height: 100%; border-radius: 2px; background: var(--ink); }
+        .taskbar .tk-win.focused .tk-progress i { background: var(--paper); }
+        .taskbar .tk-progress[data-state="paused"] i { opacity: 0.45; }
+        .taskbar .tk-progress[data-state="error"] i {
+          background: repeating-linear-gradient(135deg, var(--ink) 0 3px, transparent 3px 5px);
+        }
+        .taskbar .tk-progress[data-state="indeterminate"] i { width: 30%; animation: tk-busy 1.1s ease-in-out infinite alternate; }
+        @keyframes tk-busy { from { margin-left: 0; } to { margin-left: 70%; } }
+        @media (prefers-reduced-motion: reduce) { .taskbar .tk-progress[data-state="indeterminate"] i { width: 100%; animation: none; opacity: 0.45; } }
+        .taskbar .tk-win span.tk-icon { position: relative; flex: none; display: grid; overflow: visible; }
+        .taskbar .tk-win img.tk-badge { position: absolute; right: -6px; bottom: -5px; width: 13px; height: 13px; }
         .taskbar .tk-win span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .taskbar .tk-wins { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; overflow: hidden; }
         .taskbar .tk-tray { flex: none; display: flex; align-items: center; gap: 2px; }
@@ -1224,16 +1243,38 @@
                 b.className = 'tk-win' + (w.focused ? ' focused' : '') + (w.minimized ? ' minimized' : '') +
                   (w.attention ? ' attention' : '');
                 // No title tooltip: the preview card shows the title.
-                b.setAttribute('aria-label', w.title + (w.attention ? ' (wants attention)' : ''));
+                var p = w.progress; // { state, value } while Versailles hides the Windows taskbar
+                b.setAttribute('aria-label', w.title + (w.attention ? ' (wants attention)' : '') +
+                  (p && p.value != null ? ' (' + Math.round(p.value * 100) + ' %)' : '') +
+                  (w.badge && w.badge.label ? ' (' + w.badge.label + ')' : ''));
                 if (w.icon) {
+                  var icon = document.createElement('span');
+                  icon.className = 'tk-icon';
                   var img = document.createElement('img');
                   img.src = w.icon;
                   img.alt = '';
-                  b.appendChild(img);
+                  icon.appendChild(img);
+                  if (w.badge) { // the app's overlay badge (an unread count)
+                    var badge = document.createElement('img');
+                    badge.className = 'tk-badge';
+                    badge.src = w.badge.icon;
+                    badge.alt = '';
+                    icon.appendChild(badge);
+                  }
+                  b.appendChild(icon);
                 }
                 var label = document.createElement('span');
                 label.textContent = w.title; // titles come from other apps: text only
                 b.appendChild(label);
+                if (p) {
+                  var track = document.createElement('span');
+                  track.className = 'tk-progress';
+                  track.dataset.state = p.state;
+                  var fill = document.createElement('i');
+                  if (p.value != null && p.state !== 'indeterminate') fill.style.width = Math.round(p.value * 100) + '%';
+                  track.appendChild(fill);
+                  b.appendChild(track);
+                }
                 b.addEventListener('click', function () {
                   previewOff();
                   (w.focused && !w.minimized ? wins.minimize(w.id) : wins.focus(w.id)).catch(function () {});
@@ -1351,7 +1392,8 @@
     <!-- ===== end of the taskbar example ===== -->
 
     <!-- ===== Example: quick settings =====
-         A slide-out with Wi-Fi networks, Bluetooth devices, airplane mode, volume,
+         A slide-out with Wi-Fi networks, Bluetooth devices (and pairing a new
+         one), airplane mode, volume,
          the output, the microphone, per-app volume, brightness, night light,
          projection, Do Not Disturb, recent notifications, power mode, VPN,
          mobile hotspot, cast, nearby sharing and accessibility toggles, opened
@@ -1409,6 +1451,8 @@
         <div class="row"><button class="q-scan">scan</button></div>
         <h3>bluetooth <button class="q-bt">on</button></h3>
         <div class="list q-devs"></div>
+        <div class="row"><button class="q-bt-add">add a device</button></div>
+        <div class="list q-bt-new"></div>
         <h3>sound</h3>
         <div class="row"><input class="q-vol" type="range" min="0" max="100"><button class="q-mute">mute</button></div>
         <div class="row"><select class="q-out"></select></div>
@@ -1601,6 +1645,60 @@
               if (!((b && b.devices) || []).length) box.appendChild(el('div', 'note', 'no paired devices'));
             }
             me.on('bluetooth', renderDevs).catch(function () {});
+
+            // Add a device: look for devices in pairing mode (about 10 s), then
+            // pair one. A PIN to compare or to type on the device shows here.
+            var newBox = $('.q-bt-new');
+            function btNote(text) { newBox.innerHTML = ''; newBox.appendChild(el('div', 'note', text)); }
+            function pairStep(s) {
+              newBox.innerHTML = '';
+              if (!s || s.host === false) return; // refused: the reason is in .err
+              if (s.status === 'paired') { btNote('paired'); return; }
+              if (s.status === 'cancelled') { btNote('pairing cancelled'); return; }
+              if (s.status === 'waiting') { btNote('waiting for the device…'); act(me.bluetooth.pairReply(s.id, true)).then(pairStep); return; }
+              if (s.status === 'pin') {
+                var form = el('form', 'join'), pin = el('input'), go = el('button', null, 'pair');
+                pin.placeholder = 'PIN of the device';
+                go.type = 'submit';
+                form.appendChild(pin);
+                form.appendChild(go);
+                form.onsubmit = function (e) {
+                  e.preventDefault();
+                  btNote('pairing…');
+                  act(me.bluetooth.pairReply(s.id, true, pin.value)).then(pairStep);
+                };
+                newBox.appendChild(form);
+                pin.focus();
+                return;
+              }
+              // confirm: the same PIN on both screens? display: type it on the device.
+              var row = el('div', 'item static');
+              row.appendChild(el('span', 'name', (s.status === 'confirm' ? 'same PIN on the device? ' : 'type on the device: ') + s.pin));
+              var yes = el('button', null, s.status === 'confirm' ? 'yes' : 'done');
+              yes.onclick = function () { btNote('pairing…'); act(me.bluetooth.pairReply(s.id, true)).then(pairStep); };
+              row.appendChild(yes);
+              if (s.status === 'confirm') {
+                var no = el('button', null, 'no');
+                no.onclick = function () { act(me.bluetooth.pairReply(s.id, false)).then(pairStep); };
+                row.appendChild(no);
+              }
+              newBox.appendChild(row);
+            }
+            $('.q-bt-add').onclick = function () {
+              btNote('looking for devices in pairing mode…');
+              act(me.bluetooth.scan()).then(function (r) {
+                newBox.innerHTML = '';
+                if (!r || r.host === false) return;
+                (r.devices || []).forEach(function (d) {
+                  var row = el('div', 'item');
+                  row.appendChild(el('span', 'name', d.name)); // names come from other devices: text only
+                  row.appendChild(el('span', 'meta', d.kind === 'le' ? 'LE' : 'classic'));
+                  row.onclick = function () { btNote('pairing ' + d.name + '…'); act(me.bluetooth.pair(d.id)).then(pairStep); };
+                  newBox.appendChild(row);
+                });
+                if (!(r.devices || []).length) btNote('none found: put the device in pairing mode and try again');
+              });
+            };
 
             // Volume and mute of the output and the microphone (`input`: null without one).
             var muted = false, micMuted = false;

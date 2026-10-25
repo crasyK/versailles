@@ -807,6 +807,15 @@ fn icon_for_id(id: &str) -> Option<String> {
 
 const ICON_PX: i32 = 32;
 
+/// The shell's icon for a local path, `px`×`px`, as a PNG data URL (jump
+/// list items). Network paths get none, as for catalog apps.
+pub fn path_icon(path: &str, px: i32) -> Option<String> {
+    if denied_target(path).is_some() {
+        return None;
+    }
+    imp::shell_icon(path, px)
+}
+
 /// A catalog app's icon as a 32×32 PNG data URL (`null` when it has none).
 /// Same reach as `list_catalog`: only apps in the catalog, by id.
 #[tauri::command]

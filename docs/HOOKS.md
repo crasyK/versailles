@@ -25,15 +25,15 @@ The host never grants more than that list. The catalog is fixed in [`src-tauri/s
 | `network` | Online state, connectivity level, profile name, Wi-Fi and signal bars |
 | `focus` | The active window: title, app, exe path, pid |
 | `audio` | Default output device, volume (0–100), mute; the default microphone, its volume and mute |
-| `windows` | The app windows a taskbar would show, their icons, which ones ask for attention, pushed changes, and a hover preview card from a bar or overlay (`windows_list`, `windows_icon`, `windows_preview`) |
-| `windows-control` | Focus, minimize, restore, maximize, close, move / resize one of those windows (`windows_control`) |
+| `windows` | The app windows a taskbar would show, their icons, which ones ask for attention, their taskbar progress and badges, pushed changes, a hover preview card from a bar or overlay, and each window's jump list (`windows_list`, `windows_icon`, `windows_preview`, `windows_jumplist`) |
+| `windows-control` | Focus, minimize, restore, maximize, close, move / resize one of those windows, open an entry of its jump list (`windows_control`, `windows_jump`) |
 | `notify` | Windows toast notifications, read-only: the recent ones and each new one (see [Notifications](#notifications)) |
 | `radios` | Wi-Fi, Bluetooth and airplane mode on / off; switch them from a bar or overlay (see [Quick settings](#quick-settings)) |
 | `audio-control` | The active outputs and microphones, and the apps playing sound (per-app volume); set volume, mute, the default output and microphone, and each app's volume and mute from a bar or overlay. The app list reveals which apps play audio: declare it only where needed |
 | `display` | Projection mode, brightness per screen and night light; change them from a bar or overlay |
 | `power-mode` | Power mode (efficiency / balanced / performance), energy saver; change the mode from a bar or overlay |
 | `wifi` | Wi-Fi networks in range; scan, join (with a password for a new one), disconnect from a bar or overlay. Network names reveal where you are: declare it only where needed |
-| `bluetooth` | Paired Bluetooth devices and whether they are connected; connect / disconnect audio devices from a bar or overlay |
+| `bluetooth` | Paired Bluetooth devices and whether they are connected; connect / disconnect audio devices, look for new devices and pair one from a bar or overlay |
 | `dnd` | Do Not Disturb: off, priority only, alarms only; change it from a bar or overlay |
 | `notify-control` | Dismiss one notification, clear all, open the app that raised one, turn an app's own banners on / off (from a bar or overlay; read them with `notify`) |
 | `vpn` | Windows' own VPN profiles and whether they are connected; connect / disconnect from a bar or overlay (see [Connections and accessibility](#connections-and-accessibility)) |
@@ -222,12 +222,15 @@ A window:
 | `attention` | It flashed its taskbar button (a chat message, a finished download, an app Windows kept from coming to the front) and has not been in front since |
 | `rect` | `{ x, y, width, height }` in physical screen pixels; where a minimized window restores to |
 | `icon` | 32×32 PNG data URL, only with `{ icons: true }` or from `icon(id)`; `null` / absent if the app has none |
+| `progress` | `{ state, value }`: the progress the app shows on its taskbar button (a download, a copy). `state` is `"normal"`, `"indeterminate"` (busy, `value: null`), `"paused"` or `"error"`; `value` 0–1. Absent when there is none, and whenever Versailles does not hold the taskbar (see [Progress and badges](#progress-and-badges)) |
+| `badge` | `{ icon, label }`: the overlay badge the app puts on its button (an unread count). `icon` is a PNG data URL at its own size (16 px at 100 %), `label` what the app says it means (or `null`). Same conditions as `progress` |
 
 Read (`windows`):
 
 - `windows.list({ icons })`: every window, top of the z-order first.
 - `windows.icon(id)`: one window's icon. Icons are cached by the host.
-- `windows.onChange(fn)` / `on("windows", fn)`: `fn({ type, id, window })` for each change. `closed` carries the last known window. `changed` covers title, minimized / maximized, focus lost, monitor and attention; moving or resizing alone sends nothing (read `rect` with `list()` when you need it).
+- `windows.onChange(fn)` / `on("windows", fn)`: `fn({ type, id, window })` for each change. `closed` carries the last known window. `changed` covers title, minimized / maximized, focus lost, monitor, attention, progress and badge; moving or resizing alone sends nothing (read `rect` with `list()` when you need it).
+- `windows.jumpList(id, { icons })`: the window's jump list (see [Jump lists](#jump-lists)).
 - `windows.track(fn, { icons })`: `fn(list)` now and after every change, in a stable order (new windows last). Returns a function that stops tracking.
 - `windows.preview(id, element)` / `windows.preview(null)`: Versailles' preview card for a window (see below).
 
@@ -248,13 +251,57 @@ button.onmouseleave = () => (clearTimeout(timer), wins.preview(null));
 - It hides about 0.1 s after `preview(null)` (moving to the next button and calling `preview` again keeps it up), when the pointer has left both the bar and the card for 0.3 s, when the window closes, and a minute after the last call. Call `preview` again when the button moves.
 - Only from a bar or overlay (a spawn window), never from the wallpaper: the card is a topmost window placed from the calling window's position. It is display only, so `windows` is enough and no click is needed. At most 30 calls a second; only listed windows.
 
-Control (`windows-control`): `focus(id)` (restores a minimized window), `minimize(id)`, `restore(id)`, `maximize(id)`, `close(id)` (posts `WM_CLOSE`: the app may still ask to save), `move(id, { x, y, width, height })` (physical px; `x` / `y` alone moves, `width` / `height` alone resizes; a maximized or minimized window is restored first).
+Control (`windows-control`): `focus(id)` (restores a minimized window), `minimize(id)`, `restore(id)`, `maximize(id)`, `close(id)` (posts `WM_CLOSE`: the app may still ask to save), `move(id, { x, y, width, height })` (physical px; `x` / `y` alone moves, `width` / `height` alone resizes; a maximized or minimized window is restored first), `openJump(id, key)` (see [Jump lists](#jump-lists)).
+
+### Progress and badges
+
+Apps show progress and overlay badges on their taskbar button through `ITaskbarList3` (`SetProgressValue`, `SetProgressState`, `SetOverlayIcon`). That object runs inside each app and sends its messages to the window named by the `TaskbandHWND` property of the first `Shell_TrayWnd` it finds. While Versailles hides the Windows taskbar and some piece declares `windows` or `tray`, Versailles' own `Shell_TrayWnd` is that window (see [Tray](#tray)): it names a window of Versailles there, reads progress and badges into `progress` / `badge`, and passes every message on to Explorer's taskband unchanged, so Explorer has the same state when its taskbar comes back. This is how ManagedShell (Cairo, RetroBar) does it; nothing is injected into Explorer.
+
+```js
+const bar = versailles.for("taskbar");
+await bar.windows.track((list) => list.forEach((w) => {
+  const fill = button(w).querySelector(".progress");
+  fill.hidden = !w.progress;
+  if (w.progress) fill.style.width = `${(w.progress.value ?? 1) * 100}%`;   // indeterminate: full, animate it
+  fill.dataset.state = w.progress?.state ?? "";
+  badge(w).src = w.badge?.icon ?? "";
+  badge(w).title = w.badge?.label ?? "";
+}));
+```
+
+- When Versailles starts holding the taskbar it tells the listed windows' apps their taskbar button is new (`TaskbarButtonCreated`, as Explorer does after a restart), and most set their progress and badge again right away. An app that ignores it shows its badge the next time it changes it.
+- Without a hidden taskbar, Explorer's taskbar draws progress and badges itself and windows have neither field.
+- Changes arrive with the 0.25 s window poll as `changed` pushes.
+
+### Jump lists
+
+`windows.jumpList(id, { icons })` reads what a right click on the window's taskbar button shows in Explorer:
+
+```js
+const jl = await bar.windows.jumpList(w.id, { icons: true });
+// { appId, tasks: [item], categories: [{ name, items: [item] }], recent: [item], frequent: [item], known: ["recent"] }
+// item: { key, title, path, separator?, icon? }
+menuItem.onclick = () => bar.windows.openJump(w.id, item.key);   // windows-control, inside a click
+```
+
+| Field | |
+| ----- | - |
+| `appId` | The app's id (its AppUserModelID, or the one Windows derives from its path), the same for all its windows |
+| `tasks` | The app's own tasks ("New window", "New private window"); `separator: true` entries are lines between them |
+| `categories` | The app's own categories ("Pinned", "Most visited"), in its order |
+| `recent`, `frequent` | Windows' lists of files and folders the app opened (up to 12 each, newest / most used first) |
+| `known` | Which of `recent` / `frequent` the app shows, in its order. An app that set no list of its own shows `recent` |
+| `key` | Pass it to `openJump`; it points at the entry's place, so read the list again when the menu opens |
+| `title`, `path` | The entry's name, and the file, folder or program it opens (`null` when it has no path) |
+| `icon` | 16×16 PNG data URL of `path`, only with `{ icons: true }` |
+
+`openJump(id, key)` opens the entry as Explorer does: a task or link runs with its arguments and folder, a recent or frequent file opens with its default app. It needs `windows-control` and a click or key press. Windows has no API for reading another app's jump list, so Versailles puts it together: the app id from the shell's application resolver (undocumented, what Explorer groups buttons with; else the window's own `AppUserModelID`), recent and frequent items through `IApplicationDocumentLists` (documented), and tasks and categories from the app's `CustomDestinations` file, each entry read back by Windows' own `ShellLink` object. Store apps, pinned items and apps whose list Windows keeps elsewhere may show fewer entries than Explorer. Recent files can be private: read the jump list only when the user opens it.
 
 Listed are visible, titled top-level windows without a tool-window style or owner (or with `WS_EX_APPWINDOW`). Never listed: Versailles' own windows, the shell's desktop and taskbars, and cloaked windows (other virtual desktops, suspended store apps). Control calls only accept a listed window and refuse Versailles' own. Store apps show as `ApplicationFrameHost`. The list is only read while a piece on the page declares `windows`.
 
 ## Tray
 
-`tray` lists the notification-area icons apps put in the system tray and clicks them. Windows has no API for another app to read them, so Versailles becomes the tray: while it hides the Windows taskbar (`"shell": { "hideTaskbar": true }`) and some piece declares `tray`, it runs a `Shell_TrayWnd` window of its own in front of Explorer's, the way Cairo and RetroBar do (nothing is injected into Explorer). Apps then send their icons to Versailles. Every message also goes on to Explorer's taskbar, so Explorer keeps the same icons (balloons still become Windows notifications), and when Versailles stops, quits or crashes, nothing is lost. Without a hidden taskbar, Explorer's tray has the icons and `active` is false.
+`tray` lists the notification-area icons apps put in the system tray and clicks them. Windows has no API for another app to read them, so Versailles becomes the tray: while it hides the Windows taskbar (`"shell": { "hideTaskbar": true }`) and some piece declares `tray` (or `windows`, for [progress and badges](#progress-and-badges)), it runs a `Shell_TrayWnd` window of its own in front of Explorer's, the way Cairo and RetroBar do (nothing is injected into Explorer). Apps then send their icons to Versailles. Every message also goes on to Explorer's taskbar, so Explorer keeps the same icons (balloons still become Windows notifications), and when Versailles stops, quits or crashes, nothing is lost. Without a hidden taskbar, Explorer's tray has the icons and `active` is false.
 
 ```html
 <template class="spawnable" data-id="taskbar" data-anchor="bottom" data-h="44"
@@ -410,12 +457,17 @@ await qs.wifi.connect("Café", "password");                     // a new secured
 await qs.wifi.disconnect();
 const { devices } = await qs.bluetooth.now();                  // [{ id, name, connected, audio }]
 await qs.bluetooth.connect(devices[0].id);                     // audio devices only
+
+const found = (await qs.bluetooth.scan()).devices;            // [{ id, name, kind, signal }], after ~10 s
+let step = await qs.bluetooth.pair(found[0].id);               // { status, id, pin? }
+if (step.status === "confirm") step = await qs.bluetooth.pairReply(step.id, confirm(`PIN ${step.pin}?`));
 ```
 
 - **Radios:** Windows' radio switches. Wi-Fi and Bluetooth only.
 - **Airplane mode** is Windows' own switch (the undocumented radio manager behind the Quick Settings tile, no admin needed). `airplane` reads `null` where Windows has no radio manager or the switch cannot be changed (a hardware slider); `setAirplane` then rejects. Offer `versailles.shell.open("ms-settings:network-airplanemode")` instead.
 - **Wi-Fi** uses the WLAN API. Joining a new network saves a Windows profile (WPA2 / WPA3 personal or open; enterprise sign-in is not supported). Windows 11 24H2 may hide networks until location access is on: the read then says `access: "location-denied"`. Windows only refreshes the list on a scan, so call `scan()` when the panel opens.
 - **Bluetooth** lists paired devices (classic and LE) from a device watcher, so a read is instant and changes are pushed. Windows has no public call to connect a device; headphones and speakers are connected and disconnected through their audio driver (as Windows' own audio flyout does). Mice and keyboards reconnect by themselves and show their state only.
+- **Pairing a new device:** `scan({ seconds })` listens for devices in pairing mode (10 s by default, 3–30; classic and LE; unnamed devices are left out) and resolves with them, strongest signal first. `pair(id, { pin })` pairs one of them through Windows' custom pairing, which works for a desktop app without admin rights or a package (Windows' plain `PairAsync` does not outside the Store). It resolves with the step the pairing is at: `"paired"` (done; the device shows up in `now()`), `"cancelled"`, `"confirm"` (show `pin` and ask whether the device shows the same; answer `pairReply(id, true|false)`), `"display"` (show `pin` to type on the device, then `pairReply(id, true)` waits for the end), `"pin"` (the device wants its PIN: `pairReply(id, true, "0000")`, or pass `{ pin }` to `pair` up front) or `"waiting"` (the device has not answered within 30 s: `pairReply(id, true)` waits on). A simple device (headphones, a mouse) pairs on the first call. An unanswered question is dropped after 90 s. Errors say why in words (`the device is not ready to pair (is it in pairing mode?)`, `authentication failed (wrong PIN?)`). One pairing at a time; scanning and pairing are control class like the rest, and the log never holds a PIN.
 - **Volume and mute** act on the default output; read them through `audio`. **The default output** uses the same undocumented call as Windows' sound settings and takes only ids from `outputs`.
 - **Microphone:** `setInputVolume` and `setInputMute` act on the default microphone (Windows' default recording device); read them through `audio`'s `input`. `setDefaultInput` makes a microphone from `inputs` the default for every use (as Windows' sound settings do), through the same undocumented call as the default output, and takes only ids from `inputs`.
 - **Per-app volume** is Windows' volume mixer for the default output: one entry per audio session (an app can have several). `id` is the session's instance identifier and stays the same while the session lives; a closed session drops out. `app` is the name the app gives its session, else its executable's description (`Firefox`), else the file name; `icon` is a 32×32 PNG data URL of the executable's icon, or `null`; `active` is whether it is playing now; the system sounds session (`system: true`, `app: "System sounds"`, no `exe` or `icon`) comes last. The list is read every 3 s and after each change, so a change made in Windows' mixer shows up within 3 s. **Privacy:** the list reveals which apps play or played sound; declare `audio-control` only on the piece that needs it.

@@ -38,7 +38,9 @@ mod search;
 mod sensors;
 mod sharing;
 mod settings_pages;
+mod taskband;
 mod taskbar;
+mod jumplist;
 mod pty;
 mod nightlight;
 mod quick;
@@ -470,6 +472,8 @@ pub fn run() {
             commands::windows_list,
             commands::windows_icon,
             commands::windows_control,
+            commands::windows_jumplist,
+            commands::windows_jump,
             commands::windows_preview,
             commands::tray_list,
             commands::tray_click,

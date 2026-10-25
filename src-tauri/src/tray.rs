@@ -13,6 +13,11 @@
 //!
 //! Explorer draws Windows' own volume / network / battery icons itself; two
 //! of them still come through `Shell_NotifyIcon` and are marked `system`.
+//!
+//! The same window carries the `TaskbandHWND` property apps' TaskbarList
+//! objects look for, naming a window of ours: taskbar progress and overlay
+//! badges (`taskband`) reach Versailles and go on to Explorer's taskband.
+//! So the tray also runs for a page that declares only `windows`.
 
 use crate::error::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
@@ -641,17 +646,19 @@ pub fn hover(id: u32, over: bool, at: Option<(i32, i32)>) -> AppResult<()> {
     imp::hover(id, over, at)
 }
 
-/// Whether some piece on the page declares `tray`.
+/// Whether some piece on the page declares `tray`, or `windows` (taskbar
+/// progress and badges come through the tray window, see `taskband`).
 fn declared(app: &AppHandle) -> bool {
     let state = app.state::<crate::state::AppState>();
     crate::desktop::page_catalog(&state)
         .pieces
         .iter()
-        .any(|p| p.hooks.iter().any(|h| h == "tray"))
+        .any(|p| p.hooks.iter().any(|h| h == "tray" || h == "windows"))
 }
 
 /// Background watcher: run the tray while this Versailles hides the Windows
-/// taskbar and some piece declares `tray`; otherwise Explorer keeps it.
+/// taskbar and some piece declares `tray` or `windows`; otherwise Explorer
+/// keeps it.
 pub fn start_watcher(app: AppHandle) {
     std::thread::spawn(move || loop {
         std::thread::sleep(Duration::from_secs(1));
@@ -688,9 +695,10 @@ mod imp {
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::UI::WindowsAndMessaging::{
         AllowSetForegroundWindow, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, FindWindowW,
-        GetCursorPos, GetWindowLongW, GetWindowThreadProcessId, IsWindow, MsgWaitForMultipleObjects, PeekMessageW,
-        PostMessageW, RegisterClassW, RegisterWindowMessageW, SendMessageTimeoutW, SendNotifyMessageW,
-        SetWindowLongW, SetWindowPos, TranslateMessage, CS_DBLCLKS, GWL_STYLE, HWND_BROADCAST, HWND_TOPMOST, MSG,
+        GetCursorPos, GetPropW, GetWindowLongW, GetWindowThreadProcessId, IsWindow, MsgWaitForMultipleObjects,
+        PeekMessageW, PostMessageW, RegisterClassW, RegisterWindowMessageW, RemovePropW, SendMessageTimeoutW,
+        SendNotifyMessageW, SetPropW, SetWindowLongW, SetWindowPos, TranslateMessage, CS_DBLCLKS, GWL_STYLE,
+        HWND_BROADCAST, HWND_TOPMOST, MSG,
         PM_REMOVE, QS_ALLINPUT, SMTO_ABORTIFHUNG, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW,
         WINDOWPOS, WINDOW_EX_STYLE, WM_ACTIVATEAPP, WM_COMMAND, WM_COPYDATA, WM_USER, WM_WINDOWPOSCHANGED,
         WNDCLASSW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
@@ -991,6 +999,73 @@ mod imp {
         DefWindowProcW(h, msg, w, l)
     }
 
+    /// Explorer's taskband (`MSTaskSwWClass`), named by the `TaskbandHWND`
+    /// property of Explorer's own `Shell_TrayWnd`.
+    fn explorer_band(ours: HWND) -> Option<HWND> {
+        let tray = explorer()?;
+        let band = HWND(unsafe { GetPropW(tray, w!("TaskbandHWND")) }.0);
+        (!band.is_invalid() && band != ours && unsafe { IsWindow(Some(band)) }.as_bool()).then_some(band)
+    }
+
+    /// The overlay description: a NUL-terminated string in memory the app
+    /// shared (`SHAllocShared`) with the taskbar.
+    unsafe fn shared_text(app_window: HWND, handle: isize) -> Option<String> {
+        if handle == 0 {
+            return None;
+        }
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(app_window, Some(&mut pid));
+        if pid == 0 {
+            return None;
+        }
+        let p = SHLockShared(HANDLE(handle as *mut _), pid) as *const u16;
+        if p.is_null() {
+            return None;
+        }
+        // At most 1024 characters: well inside the block's first page.
+        let mut units = Vec::new();
+        for i in 0..1024 {
+            let c = *p.add(i);
+            if c == 0 {
+                break;
+            }
+            units.push(c);
+        }
+        let _ = SHUnlockShared(p as *const _);
+        Some(String::from_utf16_lossy(&units))
+    }
+
+    /// The window apps' TaskbarList objects talk to while ours is the first
+    /// `Shell_TrayWnd` (see `taskband`): note progress and badges, then pass
+    /// every message on to Explorer's taskband and answer what it answers.
+    unsafe extern "system" fn band_proc(h: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
+        use crate::taskband::{self, Message};
+        if msg < WM_USER {
+            return DefWindowProcW(h, msg, w, l);
+        }
+        let id = w.0 as isize as i64;
+        let message = match msg {
+            taskband::SET_PROGRESS_VALUE => Some(Message::Value { id, value: l.0 as u32 }),
+            taskband::SET_PROGRESS_STATE => Some(Message::State { id, flags: l.0 as u32 }),
+            // The app may destroy the icon once the call returns: draw it now.
+            taskband::SET_OVERLAY_ICON => Some(Message::Overlay {
+                id,
+                icon: if l.0 == 0 { None } else { crate::app_windows::icon_handle_url(l.0) },
+            }),
+            taskband::SET_OVERLAY_LABEL => Some(Message::Label { id, label: shared_text(hwnd(id), l.0) }),
+            _ => None,
+        };
+        if let Some(m) = message {
+            taskband::apply(m);
+        }
+        let Some(band) = explorer_band(h) else {
+            return LRESULT(0);
+        };
+        let mut result = 0usize;
+        SendMessageTimeoutW(band, msg, w, l, SMTO_ABORTIFHUNG, 4000, Some(&mut result));
+        LRESULT(result as isize)
+    }
+
     /// Our `Shell_TrayWnd` with its `TrayNotifyWnd` child (some apps look
     /// for it). Never visible.
     fn create() -> Option<(HWND, Option<HWND>)> {
@@ -1000,6 +1075,7 @@ mod imp {
             for (class, proc) in [
                 (w!("Shell_TrayWnd"), tray_proc as unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT),
                 (w!("TrayNotifyWnd"), notify_proc),
+                (w!("VersaillesTaskband"), band_proc),
             ] {
                 RegisterClassW(&WNDCLASSW {
                     style: CS_DBLCLKS,
@@ -1041,6 +1117,51 @@ mod imp {
             )
             .ok();
             Some((tray, child))
+        }
+    }
+
+    /// The window named by our tray's `TaskbandHWND` property (see
+    /// `taskband`). Never visible.
+    fn create_band(tray: HWND) -> Option<HWND> {
+        unsafe {
+            let instance = HINSTANCE(GetModuleHandleW(None).ok()?.0);
+            let band = CreateWindowExW(
+                WS_EX_TOOLWINDOW,
+                w!("VersaillesTaskband"),
+                w!(""),
+                WS_POPUP,
+                0,
+                0,
+                0,
+                0,
+                None,
+                None,
+                Some(instance),
+                None,
+            )
+            .map_err(|err| tracing::warn!("tray: taskband window failed: {err}"))
+            .ok()?;
+            if let Err(err) = SetPropW(tray, w!("TaskbandHWND"), Some(HANDLE(band.0))) {
+                tracing::warn!("tray: TaskbandHWND not set: {err}");
+                let _ = DestroyWindow(band);
+                return None;
+            }
+            Some(band)
+        }
+    }
+
+    /// Tell the apps behind the listed windows their taskbar button is new,
+    /// as Explorer does after a restart (and ManagedShell on start): they set
+    /// their progress and overlay badges again, now through us.
+    fn announce_buttons() {
+        let msg = unsafe { RegisterWindowMessageW(w!("TaskbarButtonCreated")) };
+        if msg == 0 {
+            return;
+        }
+        for w in crate::app_windows::list(false).unwrap_or_default() {
+            unsafe {
+                let _ = SendNotifyMessageW(hwnd(w.id), msg, WPARAM(0), LPARAM(0));
+            }
         }
     }
 
@@ -1091,10 +1212,17 @@ mod imp {
             return;
         };
         raise(tray);
+        let band = create_band(tray);
         ACTIVE.store(true, Ordering::SeqCst);
         emit(json!({ "type": "active", "active": true }));
         broadcast_taskbar_created();
-        tracing::info!("tray: holding the notification icons");
+        if band.is_some() {
+            announce_buttons();
+        }
+        tracing::info!(
+            "tray: holding the notification icons{}",
+            if band.is_some() { " and taskbar progress" } else { "" }
+        );
 
         let started = Instant::now();
         let mut rebroadcast = true;
@@ -1117,10 +1245,20 @@ mod imp {
         }
 
         unsafe {
+            if let Some(band) = band {
+                let _ = RemovePropW(tray, w!("TaskbandHWND"));
+                let _ = DestroyWindow(band);
+            }
             if let Some(child) = child {
                 let _ = DestroyWindow(child);
             }
             let _ = DestroyWindow(tray);
+        }
+        // Explorer got every message too and draws them again; apps that
+        // kept our window find Explorer's when they set up their button anew.
+        crate::taskband::clear();
+        if band.is_some() {
+            announce_buttons();
         }
         let held = {
             let mut t = table().lock().unwrap();

@@ -9,6 +9,9 @@
 //!   state. Windows has no public "connect" call; audio devices (headphones,
 //!   speakers) are connected and disconnected through their audio driver's
 //!   `KSPROPSETID_BtAudio` one-shot properties, the way ToothTray does it.
+//! - Pairing a new device (#69): a scan (device watcher for unpaired
+//!   association endpoints), then custom pairing, with the PIN to compare
+//!   or type handed to the page step by step.
 
 use crate::error::{AppError, AppResult};
 use serde_json::Value;
@@ -35,6 +38,113 @@ pub fn wifi_disconnect() -> AppResult<()> {
 
 pub fn bluetooth_connect(id: &str, on: bool) -> AppResult<()> {
     imp::bluetooth_connect(id, on)
+}
+
+/// How long a Bluetooth scan listens by default, and its bounds (seconds).
+pub const SCAN_SECONDS: (f64, f64, f64) = (10.0, 3.0, 30.0);
+
+/// Look for Bluetooth devices that can be paired, for `seconds` (see
+/// [`SCAN_SECONDS`]): `{ devices: [{ id, name, kind, signal }] }`.
+pub fn bluetooth_scan(seconds: Option<f64>) -> AppResult<Value> {
+    let (default, min, max) = SCAN_SECONDS;
+    let seconds = seconds.filter(|s| s.is_finite()).unwrap_or(default).clamp(min, max);
+    imp::bluetooth_scan(std::time::Duration::from_secs_f64(seconds))
+}
+
+/// Pair a device from the last scan; `pin` for a device that asks for one
+/// (old keyboards, modules with a fixed PIN). Answers a [`PairStep`].
+pub fn bluetooth_pair(id: &str, pin: Option<&str>) -> AppResult<Value> {
+    imp::bluetooth_pair(id, pin.map(str::trim).filter(|p| !p.is_empty()))
+}
+
+/// Answer the pairing of `id` that waits for the user: `accept` (the PIN
+/// matches, or was typed on the device), with `pin` when it asked for one.
+pub fn bluetooth_pair_reply(id: &str, accept: bool, pin: Option<&str>) -> AppResult<Value> {
+    imp::bluetooth_pair_reply(id, accept, pin.map(str::trim).filter(|p| !p.is_empty()))
+}
+
+/// Where a pairing stands, as a page sees it: `{ status, id, pin? }`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PairStep {
+    /// Done: the device is paired (or already was).
+    Paired,
+    /// The user declined, or Windows cancelled.
+    Cancelled,
+    /// Both screens show `pin`: the user confirms it matches (`pairReply`).
+    Confirm(String),
+    /// Type `pin` on the device (a keyboard), then `pairReply(id, true)`.
+    Display(String),
+    /// The device wants a PIN: `pairReply(id, true, pin)`.
+    NeedPin,
+    /// Still going (the device has not answered yet): `pairReply(id, true)` waits on.
+    Waiting,
+}
+
+pub fn step_json(id: &str, step: &PairStep) -> Value {
+    let (status, pin) = match step {
+        PairStep::Paired => ("paired", None),
+        PairStep::Cancelled => ("cancelled", None),
+        PairStep::Confirm(p) => ("confirm", Some(p)),
+        PairStep::Display(p) => ("display", Some(p)),
+        PairStep::NeedPin => ("pin", None),
+        PairStep::Waiting => ("waiting", None),
+    };
+    let mut v = serde_json::json!({ "status": status, "id": id });
+    if let Some(pin) = pin {
+        v["pin"] = serde_json::json!(pin);
+    }
+    v
+}
+
+/// `DevicePairingResultStatus` in words, for the error a failed pairing gives.
+pub fn pair_failure(status: i32) -> &'static str {
+    match status {
+        1 => "the device is not ready to pair (is it in pairing mode?)",
+        2 => "not paired",
+        4 => "the device refused the connection",
+        5 => "the device has too many connections",
+        6 => "hardware failure",
+        7 => "the device did not answer in time",
+        8 => "authentication not allowed",
+        9 => "authentication failed (wrong PIN?)",
+        10 => "the device offers nothing Windows can use",
+        11 => "the device cannot pair securely enough",
+        12 => "Windows denied access",
+        13 => "the device sent bad pairing data",
+        15 => "another pairing is in progress",
+        18 => "the device is paired with something else",
+        _ => "pairing failed",
+    }
+}
+
+/// One device a scan found.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Found {
+    pub id: String,
+    pub name: String,
+    /// Bluetooth LE (else classic).
+    pub le: bool,
+    /// Signal strength in dBm, when Windows reports one.
+    pub signal: Option<i32>,
+}
+
+/// The scan answer: named devices, strongest first.
+pub fn scan_json(found: &[Found]) -> Value {
+    let mut list: Vec<&Found> = found.iter().filter(|f| !f.name.trim().is_empty()).collect();
+    list.sort_by(|a, b| {
+        b.signal
+            .unwrap_or(i32::MIN)
+            .cmp(&a.signal.unwrap_or(i32::MIN))
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+    serde_json::json!({
+        "devices": list.iter().map(|f| serde_json::json!({
+            "id": f.id,
+            "name": f.name.trim(),
+            "kind": if f.le { "le" } else { "classic" },
+            "signal": f.signal,
+        })).collect::<Vec<_>>(),
+    })
 }
 
 /// `<`, `>`, `&`, quotes: a profile is XML and the SSID / key come from a page.
@@ -576,6 +686,293 @@ mod imp {
         }
         Ok(())
     }
+
+    // ── Pairing (#69) ──────────────────────────────────────────────────
+    //
+    // Custom pairing (`DeviceInformationCustomPairing`), which works in an
+    // unpackaged, unelevated app; plain `DeviceInformationPairing.PairAsync`
+    // does not outside UWP (it needs the app's own pairing UI). As
+    // PolarGoose's BluetoothDevicePairing does, but a PIN to compare or
+    // type is handed to the page instead of accepted blindly.
+
+    use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
+    use std::sync::{Arc, Mutex, OnceLock};
+    use std::time::{Duration, Instant};
+    use windows::Devices::Enumeration::{
+        DeviceInformationCustomPairing, DevicePairingKinds, DevicePairingRequestedEventArgs, DevicePairingResultStatus,
+    };
+
+    /// Unpaired Bluetooth devices (classic and LE), as association endpoints.
+    const UNPAIRED_AQS: &str = "(System.Devices.Aep.ProtocolId:=\"{e0cbf06c-cd8b-4647-bb8a-263b43f0f974}\" OR \
+        System.Devices.Aep.ProtocolId:=\"{bb7bb05e-5972-42b5-94fc-76eaa7084d49}\") AND \
+        System.Devices.Aep.IsPaired:=System.StructuredQueryType.Boolean#False";
+    const LE_PROTOCOL: &str = "bb7bb05e-5972-42b5-94fc-76eaa7084d49";
+
+    /// How long one call waits for the pairing to finish or ask something.
+    const STEP_WAIT: Duration = Duration::from_secs(30);
+    /// How long Windows waits for the user's answer before giving up.
+    const ANSWER_WAIT: Duration = Duration::from_secs(90);
+
+    /// The devices the last scan found, by id: only these can be paired.
+    fn scanned() -> &'static Mutex<std::collections::HashMap<String, DeviceInformation>> {
+        static S: OnceLock<Mutex<std::collections::HashMap<String, DeviceInformation>>> = OnceLock::new();
+        S.get_or_init(Default::default)
+    }
+
+    pub fn bluetooth_scan(duration: Duration) -> AppResult<Value> {
+        use windows::Foundation::TypedEventHandler;
+        com();
+        let props: windows_collections::IIterable<HSTRING> = vec![
+            HSTRING::from("System.Devices.Aep.SignalStrength"),
+            HSTRING::from("System.Devices.Aep.ProtocolId"),
+        ]
+        .into();
+        let watcher = DeviceInformation::CreateWatcherWithKindAqsFilterAndAdditionalProperties(
+            &HSTRING::from(UNPAIRED_AQS),
+            &props,
+            DeviceInformationKind::AssociationEndpoint,
+        )
+        .map_err(err)?;
+        type Seen = Arc<Mutex<std::collections::HashMap<String, (DeviceInformation, Found)>>>;
+        let seen: Seen = Arc::default();
+        let signal_of = |props: Option<windows_collections::IMapView<HSTRING, windows::core::IInspectable>>| {
+            props.as_ref().and_then(|m| prop(m, "System.Devices.Aep.SignalStrength")).and_then(|v| v.GetInt32().ok())
+        };
+        let on_added = seen.clone();
+        let added = TypedEventHandler::<DeviceWatcher, DeviceInformation>::new(move |_, info| {
+            if let Ok(info) = info.ok() {
+                let props = info.Properties().ok();
+                let le = props
+                    .as_ref()
+                    .and_then(|m| prop(m, "System.Devices.Aep.ProtocolId"))
+                    .and_then(|v| v.GetGuid().ok())
+                    .is_some_and(|g| guid_text(&g).contains(LE_PROTOCOL));
+                let found = Found {
+                    id: info.Id()?.to_string(),
+                    name: info.Name().map(|n| n.to_string()).unwrap_or_default(),
+                    le,
+                    signal: signal_of(props),
+                };
+                on_added.lock().unwrap().insert(found.id.clone(), (info.clone(), found));
+            }
+            Ok(())
+        });
+        let on_updated = seen.clone();
+        let updated = TypedEventHandler::<DeviceWatcher, DeviceInformationUpdate>::new(move |_, update| {
+            if let Ok(update) = update.ok() {
+                let id = update.Id()?.to_string();
+                if let Some((info, found)) = on_updated.lock().unwrap().get_mut(&id) {
+                    let _ = info.Update(update);
+                    if let Some(s) = signal_of(update.Properties().ok()) {
+                        found.signal = Some(s);
+                    }
+                    if let Ok(name) = info.Name() {
+                        if !name.is_empty() {
+                            found.name = name.to_string();
+                        }
+                    }
+                }
+            }
+            Ok(())
+        });
+        let on_removed = seen.clone();
+        let removed = TypedEventHandler::<DeviceWatcher, DeviceInformationUpdate>::new(move |_, update| {
+            if let Ok(update) = update.ok() {
+                on_removed.lock().unwrap().remove(&update.Id()?.to_string());
+            }
+            Ok(())
+        });
+        watcher.Added(&added).map_err(err)?;
+        watcher.Updated(&updated).map_err(err)?;
+        watcher.Removed(&removed).map_err(err)?;
+        watcher.Start().map_err(err)?;
+        std::thread::sleep(duration);
+        let _ = watcher.Stop();
+        let seen = std::mem::take(&mut *seen.lock().unwrap());
+        let mut cache = scanned().lock().unwrap();
+        cache.clear();
+        let mut found = Vec::new();
+        for (id, (info, f)) in seen {
+            cache.insert(id, info);
+            found.push(f);
+        }
+        tracing::info!("bluetooth: scan found {} devices to pair", found.len());
+        Ok(scan_json(&found))
+    }
+
+    /// What the pairing thread tells the waiting call.
+    enum Event {
+        Ask(PairStep),
+        Done(Result<(), String>),
+    }
+
+    /// The user's answer to an `Ask`: accept (with a PIN), or decline.
+    type Reply = Option<Option<String>>;
+
+    struct Pending {
+        id: String,
+        events: Receiver<Event>,
+        reply: Sender<Reply>,
+        started: Instant,
+    }
+
+    fn pending() -> &'static Mutex<Option<Pending>> {
+        static P: OnceLock<Mutex<Option<Pending>>> = OnceLock::new();
+        P.get_or_init(Default::default)
+    }
+
+    /// Wait for the pairing's next step; a finished pairing is forgotten.
+    fn next_step(id: &str) -> AppResult<Value> {
+        let mut slot = pending().lock().unwrap();
+        let Some(p) = slot.as_ref().filter(|p| p.id == id) else {
+            return Err(AppError::msg("bluetooth: no pairing in progress for this device"));
+        };
+        let step = match p.events.recv_timeout(STEP_WAIT) {
+            Ok(Event::Ask(step)) => return Ok(step_json(id, &step)),
+            Err(RecvTimeoutError::Timeout) => return Ok(step_json(id, &PairStep::Waiting)),
+            Ok(Event::Done(result)) => result,
+            Err(RecvTimeoutError::Disconnected) => Err("pairing stopped".into()),
+        };
+        *slot = None;
+        match step {
+            Ok(()) => {
+                tracing::info!("bluetooth: paired {id}");
+                Ok(step_json(id, &PairStep::Paired))
+            }
+            Err(e) if e == "cancelled" => Ok(step_json(id, &PairStep::Cancelled)),
+            Err(e) => Err(AppError::msg(format!("bluetooth: {e}"))),
+        }
+    }
+
+    /// The pairing ceremony's question, answered by Windows' handler thread.
+    fn on_request(
+        args: &DevicePairingRequestedEventArgs,
+        pin: Option<&str>,
+        events: &Sender<Event>,
+        replies: &Mutex<Receiver<Reply>>,
+    ) -> windows::core::Result<()> {
+        let kind = args.PairingKind()?;
+        let ask = |step: PairStep| -> Reply {
+            let replies = replies.lock().unwrap();
+            // Replies to steps that asked nothing (display, waiting) are not answers.
+            while replies.try_recv().is_ok() {}
+            let _ = events.send(Event::Ask(step));
+            replies.recv_timeout(ANSWER_WAIT).unwrap_or(None)
+        };
+        if kind == DevicePairingKinds::ConfirmOnly {
+            // The user asked for this device by clicking it.
+            args.Accept()
+        } else if kind == DevicePairingKinds::ProvidePin {
+            let pin = match pin {
+                Some(p) => Some(p.to_string()),
+                None => ask(PairStep::NeedPin).flatten(),
+            };
+            match pin {
+                Some(p) => args.AcceptWithPin(&HSTRING::from(p)),
+                None => Ok(()),
+            }
+        } else if kind == DevicePairingKinds::ConfirmPinMatch {
+            match ask(PairStep::Confirm(args.Pin()?.to_string())) {
+                Some(_) => args.Accept(),
+                None => Ok(()),
+            }
+        } else if kind == DevicePairingKinds::DisplayPin {
+            // The PIN goes to the page; the device's keyboard answers.
+            let _ = events.send(Event::Ask(PairStep::Display(args.Pin()?.to_string())));
+            args.Accept()
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn bluetooth_pair(id: &str, pin: Option<&str>) -> AppResult<Value> {
+        use windows::Foundation::TypedEventHandler;
+        {
+            let mut slot = pending().lock().unwrap();
+            if slot.as_ref().is_some_and(|p| p.started.elapsed() < ANSWER_WAIT * 2) {
+                return Err(AppError::msg("bluetooth: another pairing is in progress"));
+            }
+            *slot = None;
+        }
+        let info = scanned()
+            .lock()
+            .unwrap()
+            .get(id)
+            .cloned()
+            .ok_or_else(|| AppError::msg("bluetooth: not a device from the last scan (scan first)"))?;
+        com();
+        let pairing = info.Pairing().map_err(err)?;
+        if pairing.IsPaired().unwrap_or(false) {
+            return Ok(step_json(id, &PairStep::Paired));
+        }
+        if !pairing.CanPair().unwrap_or(false) {
+            return Err(AppError::msg("bluetooth: this device cannot be paired now (is it in pairing mode?)"));
+        }
+        let custom: DeviceInformationCustomPairing = pairing.Custom().map_err(err)?;
+        // A device with a fixed PIN can ask for DisplayPin instead of
+        // ProvidePin when both are offered (PolarGoose): with a PIN, offer
+        // no DisplayPin.
+        let mut kinds = DevicePairingKinds::ConfirmOnly | DevicePairingKinds::ProvidePin | DevicePairingKinds::ConfirmPinMatch;
+        if pin.is_none() {
+            kinds = kinds | DevicePairingKinds::DisplayPin;
+        }
+        let (event_tx, event_rx) = channel::<Event>();
+        let (reply_tx, reply_rx) = channel::<Reply>();
+        let replies = Arc::new(Mutex::new(reply_rx));
+        let handler_events = event_tx.clone();
+        let handler_pin = pin.map(str::to_string);
+        let handler = TypedEventHandler::<DeviceInformationCustomPairing, DevicePairingRequestedEventArgs>::new(
+            move |_, args| {
+                if let Ok(args) = args.ok() {
+                    let deferral = args.GetDeferral()?;
+                    let r = on_request(args, handler_pin.as_deref(), &handler_events, &replies);
+                    let _ = deferral.Complete();
+                    r?;
+                }
+                Ok(())
+            },
+        );
+        let token = custom.PairingRequested(&handler).map_err(err)?;
+        tracing::info!("bluetooth: pairing {id}");
+        let name = id.to_string();
+        std::thread::Builder::new()
+            .name("versailles-bluetooth-pair".into())
+            .spawn(move || {
+                com();
+                let result = custom
+                    .PairAsync(kinds)
+                    .and_then(|op| op.get())
+                    .and_then(|r| r.Status())
+                    .map_err(|e| e.to_string())
+                    .and_then(|status| match status {
+                        DevicePairingResultStatus::Paired | DevicePairingResultStatus::AlreadyPaired => Ok(()),
+                        DevicePairingResultStatus::RejectedByHandler | DevicePairingResultStatus::PairingCanceled => {
+                            Err("cancelled".to_string())
+                        }
+                        other => Err(pair_failure(other.0).to_string()),
+                    });
+                let _ = custom.RemovePairingRequested(token);
+                if let Err(e) = &result {
+                    tracing::info!("bluetooth: pairing {name} ended: {e}");
+                }
+                let _ = event_tx.send(Event::Done(result));
+            })
+            .map_err(|e| AppError::msg(format!("bluetooth: {e}")))?;
+        *pending().lock().unwrap() = Some(Pending { id: id.to_string(), events: event_rx, reply: reply_tx, started: Instant::now() });
+        next_step(id)
+    }
+
+    pub fn bluetooth_pair_reply(id: &str, accept: bool, pin: Option<&str>) -> AppResult<Value> {
+        {
+            let slot = pending().lock().unwrap();
+            let Some(p) = slot.as_ref().filter(|p| p.id == id) else {
+                return Err(AppError::msg("bluetooth: no pairing in progress for this device"));
+            };
+            // Display and waiting steps ask nothing: the reply only waits on.
+            let _ = p.reply.send(if accept { Some(pin.map(str::to_string)) } else { None });
+        }
+        next_step(id)
+    }
 }
 
 #[cfg(not(windows))]
@@ -602,11 +999,57 @@ mod imp {
     pub fn bluetooth_connect(_: &str, _: bool) -> AppResult<()> {
         unavailable()
     }
+    pub fn bluetooth_scan(_: std::time::Duration) -> AppResult<Value> {
+        unavailable()
+    }
+    pub fn bluetooth_pair(_: &str, _: Option<&str>) -> AppResult<Value> {
+        unavailable()
+    }
+    pub fn bluetooth_pair_reply(_: &str, _: bool, _: Option<&str>) -> AppResult<Value> {
+        unavailable()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pairing_steps_and_scan_answers() {
+        assert_eq!(step_json("a", &PairStep::Paired), serde_json::json!({ "status": "paired", "id": "a" }));
+        assert_eq!(
+            step_json("a", &PairStep::Confirm("123456".into())),
+            serde_json::json!({ "status": "confirm", "id": "a", "pin": "123456" })
+        );
+        assert_eq!(step_json("a", &PairStep::NeedPin)["status"], "pin");
+        assert_eq!(step_json("a", &PairStep::Display("0042".into()))["pin"], "0042");
+        assert_eq!(step_json("a", &PairStep::Waiting)["status"], "waiting");
+        assert!(pair_failure(9).contains("PIN"));
+        assert_eq!(pair_failure(999), "pairing failed");
+
+        let found = [
+            Found { id: "1".into(), name: "Mouse".into(), le: true, signal: Some(-70) },
+            Found { id: "2".into(), name: " ".into(), le: true, signal: Some(-40) },
+            Found { id: "3".into(), name: "Headset".into(), le: false, signal: Some(-50) },
+            Found { id: "4".into(), name: "Speaker".into(), le: false, signal: None },
+        ];
+        let v = scan_json(&found);
+        let ids: Vec<&str> = v["devices"].as_array().unwrap().iter().map(|d| d["id"].as_str().unwrap()).collect();
+        assert_eq!(ids, ["3", "1", "4"]);
+        assert_eq!(v["devices"][0]["kind"], "classic");
+        assert_eq!(v["devices"][1]["kind"], "le");
+        assert!(v["devices"][2]["signal"].is_null());
+    }
+
+    /// Looks for unpaired devices nearby (no pairing, nothing changed):
+    /// `cargo test --lib live_bluetooth_scan -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn live_bluetooth_scan() {
+        let t = std::time::Instant::now();
+        let v = bluetooth_scan(Some(10.0));
+        println!("scan ({} ms): {v:?}", t.elapsed().as_millis());
+    }
 
     #[test]
     fn profile_escapes_ssid_and_key() {

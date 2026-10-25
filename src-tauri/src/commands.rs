@@ -411,6 +411,42 @@ pub async fn windows_icon(
         .map_err(|e| crate::error::AppError::msg(e.to_string()))?
 }
 
+/// `windows` hook: one window's jump list (tasks, custom categories, recent
+/// and frequent items), as Explorer shows it on a right click. `icons` adds a
+/// 16×16 PNG data URL per item.
+#[tauri::command]
+pub async fn windows_jumplist(
+    webview: Webview,
+    state: State<'_, AppState>,
+    id: i64,
+    icons: Option<bool>,
+    caller: Option<String>,
+) -> AppResult<crate::jumplist::JumpList> {
+    require_hook(&state, &webview, caller.as_deref(), "windows", HookClass::Plain)?;
+    let icons = icons.unwrap_or(false);
+    tokio::task::spawn_blocking(move || crate::jumplist::read(id, icons))
+        .await
+        .map_err(|e| crate::error::AppError::msg(e.to_string()))?
+}
+
+/// `windows-control` hook: open one entry of a window's jump list (a `key`
+/// from `windows_jumplist`), as clicking it in Explorer's jump list does.
+/// Plain class like `windows_control`; the SDK asks for a click or key press.
+#[tauri::command]
+pub async fn windows_jump(
+    webview: Webview,
+    state: State<'_, AppState>,
+    id: i64,
+    key: String,
+    caller: Option<String>,
+) -> AppResult<()> {
+    let acting = require_hook(&state, &webview, caller.as_deref(), "windows-control", HookClass::Plain)?;
+    tracing::info!("windows: '{acting}' opens jump list entry {key} of {id}");
+    tokio::task::spawn_blocking(move || crate::jumplist::open(id, &key))
+        .await
+        .map_err(|e| crate::error::AppError::msg(e.to_string()))?
+}
+
 /// `windows-control` hook: focus / minimize / restore / maximize / close /
 /// move another app's window. Only windows `windows_list` would show; never
 /// one of Versailles' own.

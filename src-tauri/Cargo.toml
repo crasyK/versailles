@@ -79,6 +79,8 @@ windows = { version = "0.61", features = [
   "Foundation_Collections",
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_Shell",
+  # Jump lists (jumplist.rs): IObjectArray, item id lists.
+  "Win32_UI_Shell_Common",
   "Win32_UI_HiDpi",
   "Win32_Graphics_Gdi",
   "Win32_Graphics_Dwm",

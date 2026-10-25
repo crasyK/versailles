@@ -2,6 +2,21 @@
 
 What changed in each release of Versailles, newest first. Full notes and installers: [GitHub releases](https://github.com/crasyK/versailles/releases). Each release commit updates this file.
 
+## 0.12.0 — 2026-10-25
+
+The last release before 1.0. The API is frozen, the docs are written, and Versailles does less while nothing happens.
+
+- **Frozen for 1.x:** the dialect, the hook names and the SDK stay as they are through every 1.x release ([COMPATIBILITY.md](COMPATIBILITY.md)). Every refused or failed call throws one error shape with a `.code` (`hook-undeclared`, `needs-gesture`, `bad-argument`, …). Names that did not match the rest were renamed (`media.onChange`, `notify.onChange`, `audioControl.setDefaultOutput`, `display.setProjection`, `notifyControl.setBanners`, `tray.now`, `drag.enableNativeChrome`); the old names keep working. `on("media", fn)` now delivers the current track first, like the other hooks. TypeScript types (`.sdk/versailles.d.ts`) arrive with the SDK update, also on existing desktops (an edited copy is left alone). (#47)
+- **Docs:** [Getting started](docs/GETTING-STARTED.md), a [cookbook](docs/cookbook/README.md) of seven recipes (top bar, taskbar, quick settings, command bar, tablet posture, storage, bus) and a new README. (#48)
+- **Less work while idle:** a hook is read only while a piece that declares it can be seen (the wallpaper for a widget, the piece's own window for a bar or overlay), and nothing is read while the PC is locked or the display is off. Showing a piece again pushes what changed meanwhile. `media` polls slowly while no one sees it and reads cover art once per track; the accessibility and hotspot reads cost a fraction of before. The starter no longer repaints while idle. The starter with its top bar, taskbar and quick-settings examples went from about 7 % to 3 % of one core. `npm run e2e` now checks a performance budget (memory, idle CPU, start-up time). (#49)
+- **Taskbar progress and badges:** while Versailles holds the tray, a window's download or copy progress and its badge (unread counts) appear in `windows` as `progress` and `badge`, and Explorer still gets them for when its taskbar comes back. Before, they could be lost while the tray was held. (#67)
+- **Jump lists:** `windows.jumpList(id)` reads a window's tasks and recent files, `windows.openJump(id, key)` opens one. (#68)
+- **Bluetooth pairing:** `bluetooth.scan()` finds new devices, `pair(id)` and `pairReply(id, accept, pin)` pair them, PIN steps included. (#69)
+- **Security review:** pages can no longer create windows or register global shortcuts (a page could have opened a window that passed for one of its bars and skipped the click rule), terminal output reaches only the piece that opened it, media updates only pieces with `media`, and the localhost API compares its token in constant time. The threat model is in [docs/SECURITY.md](docs/SECURITY.md). (#51)
+- Uninstalling while Versailles hides the Windows taskbar gives the taskbar back.
+- `Versailles.log` uses local time, like the other logs, and no longer reports a missing `favicon.ico` many times an hour.
+- SDK 0.12.0.
+
 ## 0.11.1 — 2026-10-25
 
 The last 0.11 release: the gaps that still sent you to Windows' Start menu, taskbar and quick settings. The first release installed copies get from the tray.

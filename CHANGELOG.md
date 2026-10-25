@@ -2,6 +2,19 @@
 
 What changed in each release of Versailles, newest first. Full notes and installers: [GitHub releases](https://github.com/crasyK/versailles/releases). Each release commit updates this file.
 
+## 1.0.0 — 2026-10-25
+
+Versailles 1.0. The dialect, the hook names and the SDK are now promised for every 1.x release: [COMPATIBILITY.md](COMPATIBILITY.md) says what that covers. Four security changes from the 1.0 review come first, because after this they could only come in 2.0 ([docs/SECURITY.md](docs/SECURITY.md)):
+
+- **Clicks, checked by the host:** `power.*`, `windows-control` (focus, minimize, close, move, `openJump`) and `tray.click` run only inside a click or key press, wherever the call comes from. The SDK already asked for that; now calling the host directly does not get around it. A button or a typed command with Enter works; a script that rearranges windows on a timer gets `needs-gesture`. (#51)
+- **Folder widgets are not the page:** a floating folder widget (`widget.json`) no longer gets the API token, the page's HTML, layouts, the launcher or other widgets; it keeps the hooks its `widget.json` grants and close / menu / opacity / always-on-top for its own window. (#51)
+- **Saving the weather location needs the API token:** `/weather?save=1` wants `Authorization: Bearer <token>` (from `versailles.invoke("get_api_info")`), since every account on the PC shares 127.0.0.1. Reading the weather stays open. The weather examples send it. (#51)
+- **Only the port in use:** pages get host access on the port Versailles bound (on `127.0.0.1`), not on the whole range 47831–47841. It also saves memory: the host idles at about 34 MB instead of 40. (#51)
+- `npm run e2e` checks all four.
+- SDK 1.0.0: a host refusal for a missing click gets the `needs-gesture` code too.
+
+**Upgrading from 0.12:** a page that saves the weather location must send the token (see above). A page that controls windows, the power state or tray icons without a click must call them from a click or key press.
+
 ## 0.12.1 — 2026-10-25
 
 - Fixed: quitting Versailles, or updating it from the tray, stalled for 45 s and was then ended by the watchdog while Versailles held the tray: the update never started. On exit the tray thread listed the app windows (to hand taskbar progress back to Explorer) and asked Versailles' own windows for their titles, which needed the main thread it was blocking. The exit now also waits at most 5 s for the tray.

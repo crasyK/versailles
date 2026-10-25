@@ -2,6 +2,17 @@
 
 What changed in each release of Versailles, newest first. Full notes and installers: [GitHub releases](https://github.com/crasyK/versailles/releases). Each release commit updates this file.
 
+## 0.11.1 — 2026-10-25
+
+The last 0.11 release: the gaps that still sent you to Windows' Start menu, taskbar and quick settings. The first release installed copies get from the tray.
+
+- **Start menu in the command bar:** Store apps (Settings, Calculator, Photos, Store installs) with their icons; search through the Windows Search index, file names and contents, in milliseconds; Settings pages by name in English or German ("bluetooth", "anzeige"); recently opened files when the bar is empty. SDK: `shell.search`, `shell.recent`. (#54, #55, #56, #57)
+- **Taskbar:** an app that wants attention marks its window (`attention` in `windows`), hovering a button shows Versailles' preview card with a live thumbnail (`windows.preview`), and a new `keyboard` hook shows and switches the input language. (#58, #59, #60)
+- **Quick settings:** the microphone (mute, volume, input device) and a per-app volume mixer in `audio` / `audio-control`; new hooks `vpn` (Windows' own VPN profiles), `hotspot`, `sharing` (Windows' Cast panel and nearby sharing) and `accessibility` (magnifier, contrast theme, live captions, colour filters, sticky keys). Starting a cast is not possible for apps; Versailles opens Windows' Cast panel. (#61, #62, #63, #64, #65, #66)
+- **`posture` hook:** whether a convertible is folded into tablet posture, docked, and its touch screen and pen, pushed when it changes. (#70)
+- The starter's quick-settings and taskbar examples show all of it. SDK 0.11.1.
+- Fixed: parts of the starter's commented-out quick-settings example showed on the page (an inner comment ended it early).
+
 ## 0.11.0 — 2026-10-24
 
 - **Updates from the tray.** A minute after start and then once a day, Versailles looks for a newer release on GitHub and offers **Update to x.y.z** at the top of the tray menu. Nothing downloads before you click it. The download is checked against a key built into the app, then Versailles gives back the taskbar, the tray icons and the bars' screen space, runs the installer (a progress bar, no questions) and starts the new version. `"updates": { "check": false }` in `#versailles` turns the check off; pages get no access to it. This release is installed by hand; later ones arrive this way. (#41)

@@ -19,6 +19,10 @@
   <img src="docs/media/conversation.gif" alt="A desktop shaped in a conversation: 'A calm background with a big clock.' 'A little quieter.' 'Move the clock to the left.' 'Add what's playing and my calendar.' 'Put my daily apps along the top.' 'And a keyboard launcher on the Windows key.' After each request the desktop on the laptop changes." width="100%">
 </p>
 
+https://github.com/user-attachments/assets/a2f267a1-759f-41fb-976c-d0d3c57481f5
+
+
+
 Versailles puts your own design on the Windows desktop: the wallpaper and what sits on it, the bars along the edges, and the windows a key brings up. Windows and your apps stay as they are.
 
 ## Change as little or as much as you like

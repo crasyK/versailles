@@ -85,7 +85,7 @@
       .quote .mark { font: 600 30px/0.7 var(--font-sans); letter-spacing: -0.06em; opacity: 0.16; }
       .quote .text { font: 500 16px/1.35 var(--font-sans); letter-spacing: -0.02em; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; }
       .quote .who { font: 600 11px/1 var(--font-sans); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-mut); }
-      .quote .who::before { content: "â€” "; color: var(--ink); }
+      .quote .who::before { content: "— "; color: var(--ink); }
 
       .top-right {
         grid-column: 3;
@@ -335,18 +335,18 @@
   <body>
     <section id="desktop" class="stage">
       <article class="widget quote" data-id="quote">
-        <div class="mark" aria-hidden="true">â€œ</div>
+        <div class="mark" aria-hidden="true">“</div>
         <p class="text" id="quote-text"></p>
         <div class="who" id="quote-who"></div>
       </article>
       <div class="top-right">
         <article class="widget weather" data-id="weather" id="wx-shell">
           <div class="wx-top">
-            <div class="wx-place" id="wx-place">â€”</div>
+            <div class="wx-place" id="wx-place">—</div>
             <input class="wx-loc" id="wx-loc" type="text" placeholder="City" spellcheck="false" autocomplete="off" data-no-drag />
             <div class="wx-glyph" id="wx-glyph" aria-hidden="true"></div>
           </div>
-          <div class="wx-temp" id="wx-temp">--Â°</div>
+          <div class="wx-temp" id="wx-temp">--°</div>
           <div class="wx-meta" id="wx-meta"></div>
         </article>
         <article class="widget watch" data-id="watch">
@@ -369,7 +369,7 @@
       <div class="left-stack">
         <article class="widget todo" data-id="todo">
           <div class="todo-add" data-no-drag>
-            <input id="todo-in" type="text" placeholder="Add a taskâ€¦" maxlength="60" autocomplete="off" data-no-drag />
+            <input id="todo-in" type="text" placeholder="Add a task…" maxlength="60" autocomplete="off" data-no-drag />
             <button id="todo-btn" aria-label="Add" data-no-drag>+</button>
           </div>
           <ul class="todo-list" id="todo-list"></ul>
@@ -432,17 +432,17 @@
       <div class="calc-display" id="calc-out">0</div>
       <div class="calc-grid">
         <button class="calc-key fn" data-k="C">AC</button>
-        <button class="calc-key fn" data-k="Â±">Â±</button>
+        <button class="calc-key fn" data-k="±">±</button>
         <button class="calc-key fn" data-k="%">%</button>
-        <button class="calc-key op" data-k="/">Ã·</button>
+        <button class="calc-key op" data-k="/">÷</button>
         <button class="calc-key" data-k="7">7</button>
         <button class="calc-key" data-k="8">8</button>
         <button class="calc-key" data-k="9">9</button>
-        <button class="calc-key op" data-k="*">Ã—</button>
+        <button class="calc-key op" data-k="*">×</button>
         <button class="calc-key" data-k="4">4</button>
         <button class="calc-key" data-k="5">5</button>
         <button class="calc-key" data-k="6">6</button>
-        <button class="calc-key op" data-k="-">âˆ’</button>
+        <button class="calc-key op" data-k="-">−</button>
         <button class="calc-key" data-k="1">1</button>
         <button class="calc-key" data-k="2">2</button>
         <button class="calc-key" data-k="3">3</button>
@@ -470,7 +470,7 @@
               if (/[0-9]/.test(v)) { cur = fresh || cur === '0' ? v : cur + v; fresh = false; }
               else if (v === '.') { if (fresh) { cur = '0.'; fresh = false; } else if (cur.indexOf('.') < 0) cur += '.'; }
               else if (v === 'C') { cur = '0'; prev = null; op = null; fresh = true; }
-              else if (v === 'Â±') { cur = fmt(-parseFloat(cur)); }
+              else if (v === '±') { cur = fmt(-parseFloat(cur)); }
               else if (v === '%') { cur = fmt(parseFloat(cur) / 100); }
               else if (v === '=') {
                 if (op && prev !== null) { cur = fmt(apply(prev, parseFloat(cur), op)); prev = null; op = null; fresh = true; }
@@ -489,8 +489,8 @@
       <div class="cal-head">
         <span class="cal-month" id="cal-month">August 2026</span>
         <div class="cal-nav">
-          <button id="cal-prev" aria-label="Previous month">â€¹</button>
-          <button id="cal-next" aria-label="Next month">â€º</button>
+          <button id="cal-prev" aria-label="Previous month">‹</button>
+          <button id="cal-next" aria-label="Next month">›</button>
         </div>
       </div>
       <div class="cal-grid" id="cal-grid"></div>
@@ -538,7 +538,7 @@
     </template>
 
     <template class="spawnable" data-id="notes" data-w="320" data-h="230" data-anchor="tr" data-hooks="layout">
-      <textarea class="notes-area" id="notes-area" placeholder="Jot something downâ€¦" spellcheck="false" data-no-drag></textarea>
+      <textarea class="notes-area" id="notes-area" placeholder="Jot something down…" spellcheck="false" data-no-drag></textarea>
       <script>
         (function () {
           const root = document.querySelector('.spawn-surface[data-id="notes"]');
@@ -567,12 +567,12 @@
               data-h="420">
       <div class="cli" id="cli-root" data-mode="action">
         <div class="cli-head">
-          <i></i><span id="cli-title">versailles actions Â· pwsh</span>
+          <i></i><span id="cli-title">versailles actions · pwsh</span>
           <span class="pid" id="cli-mode-label">actions</span>
         </div>
         <div class="cli-action" id="cli-action">
           <div class="cli-line">
-            <span class="cli-ps" id="cli-ps">PS â€¦&gt;</span>
+            <span class="cli-ps" id="cli-ps">PS …&gt;</span>
             <span class="cli-typed">
               <span class="cli-echo" id="cli-echo"></span><span class="cli-caret"></span>
             </span>
@@ -585,8 +585,8 @@
           <div class="cli-term" id="cli-term"></div>
         </div>
         <div class="cli-foot" id="cli-foot">
-          <span id="cli-foot-l">enter run</span><span id="cli-foot-m">â†‘â†“ history</span><span id="cli-foot-r-hint">tab complete</span>
-          <span class="r" id="cli-foot-r">term Â· config Â· desktopfile Â· ? web Â· !! paste ok in terminal</span>
+          <span id="cli-foot-l">enter run</span><span id="cli-foot-m">↑↓ history</span><span id="cli-foot-r-hint">tab complete</span>
+          <span class="r" id="cli-foot-r">term · config · desktopfile · ? web · !! paste ok in terminal</span>
         </div>
       </div>
     </template>
@@ -716,7 +716,7 @@
             if (!data || data.ok === false || !data.text) throw new Error();
             show(data.text, data.author);
           })
-          .catch(function () { show('Could not load todayâ€™s quote.', ''); });
+          .catch(function () { show('Could not load today’s quote.', ''); });
       })();
 
       (function weatherWidget() {
@@ -740,16 +740,16 @@
         function render(data) {
           shell.classList.remove('is-error');
           placeEl.textContent = data.place || 'Local';
-          tempEl.textContent = (data.tempC != null) ? (data.tempC + 'Â°') : '--Â°';
-          const range = (data.highC != null && data.lowC != null) ? ('H ' + data.highC + 'Â°  L ' + data.lowC + 'Â°') : '';
-          metaEl.textContent = range ? ((data.desc || '') + ' Â· ' + range) : (data.desc || '');
+          tempEl.textContent = (data.tempC != null) ? (data.tempC + '°') : '--°';
+          const range = (data.highC != null && data.lowC != null) ? ('H ' + data.highC + '°  L ' + data.lowC + '°') : '';
+          metaEl.textContent = range ? ((data.desc || '') + ' · ' + range) : (data.desc || '');
           glyphEl.innerHTML = SVG[data.glyph] || SVG.cloud;
           if (data.place && !locEl.value) locEl.placeholder = data.place;
         }
         function showUnavailable(msg) {
           shell.classList.add('is-error');
           placeEl.textContent = 'Weather';
-          tempEl.textContent = 'â€”';
+          tempEl.textContent = '—';
           metaEl.textContent = msg || 'weather unavailable';
           glyphEl.innerHTML = '';
         }
@@ -784,7 +784,7 @@
           load(locEl.value.trim());
         });
         placeEl.addEventListener('click', function () {
-          locEl.value = placeEl.textContent === 'â€”' ? '' : placeEl.textContent;
+          locEl.value = placeEl.textContent === '—' ? '' : placeEl.textContent;
           shell.classList.add('is-editing');
           locEl.focus();
           locEl.select();
@@ -865,7 +865,7 @@
             s.textContent = it.text;
             const x = document.createElement('button');
             x.className = 'todo-x';
-            x.textContent = 'Ã—';
+            x.textContent = '×';
             x.onclick = function () { tasks.splice(i, 1); persist(); render(); };
             li.append(b, s, x);
             list.appendChild(li);
@@ -1004,7 +1004,7 @@
         function stepper(key, min, max, suffix, title) {
           const col = document.createElement('div');
           col.className = 'counter';
-          col.innerHTML = '<span>' + title + '</span><div class="stepper"><button type="button" class="step" data-d="-1">âˆ’</button><b></b><button type="button" class="step" data-d="1">+</button></div>';
+          col.innerHTML = '<span>' + title + '</span><div class="stepper"><button type="button" class="step" data-d="-1">−</button><b></b><button type="button" class="step" data-d="1">+</button></div>';
           const b = col.querySelector('b');
           function show() { b.textContent = s[key] + suffix; }
           col.querySelectorAll('.step').forEach(function (btn) {
@@ -1088,7 +1088,7 @@
           idleHits = 0; lastInfo = info; shell.classList.remove('idle');
           titleEl.textContent = info.title || 'Untitled';
           const bits = [info.artist, info.album].filter(Boolean);
-          artistEl.textContent = bits.length ? bits.join(' Â· ') : (info.source || info.status || 'Playing');
+          artistEl.textContent = bits.length ? bits.join(' · ') : (info.source || info.status || 'Playing');
           if (info.thumbnailDataUrl && info.thumbnailDataUrl !== lastArt) { art.src = info.thumbnailDataUrl; lastArt = info.thumbnailDataUrl; }
           const pct = info.durationMs > 0 ? Math.min(100, (info.positionMs / info.durationMs) * 100) : 0;
           progress.style.width = pct + '%';

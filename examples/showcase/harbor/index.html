@@ -1,0 +1,852 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Harbor</title>
+    <!--
+      Harbor: a Versailles showcase desktop.
+      A dawn harbour for a wallpaper, glass pieces floating over it.
+
+        harbor-clock     widget      the time, large, straight on the sky
+        harbor-weather   widget      /weather from the host (place, temperature, high / low)
+        harbor-music     widget      now playing with album art (media)
+        harbor-menubar   top bar     focused app, now playing, Wi-Fi, battery, time (reserves 34 px)
+        harbor-dock      bottom bar  floating dock of the open app windows (windows, windows-control)
+        harbor-control   slide-out   Ctrl+Alt+H: Wi-Fi, Bluetooth, volume, music, battery
+
+      Copy to Documents\Widgets\desktop\index.html. Preview: ?m=desktop | widgets | spawn | spawn&id=harbor-dock
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Geist:wght@200..700&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --sans: "Geist", "Segoe UI Variable Display", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+        /* Dawn over the water */
+        --night: #1d2a5e;
+        --dusk: #4c4f98;
+        --lilac: #9a86c6;
+        --rose: #e3a0ae;
+        --peach: #f6c3a1;
+        --glow: #ffe6c4;
+        --sea: #5d86b0;
+        --deep: #13284a;
+        --seaglass: #9ef0dc;
+        --coral: #ff8f7e;
+        --ink: #1b2350;
+        --text: #ffffff;
+        --text-soft: rgba(255, 255, 255, 0.74);
+        --glass: rgba(255, 255, 255, 0.14);
+        --glass-edge: rgba(255, 255, 255, 0.38);
+      }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body { width: 100%; height: 100%; }
+      body {
+        font-family: var(--sans);
+        color: var(--text);
+        background: var(--deep);
+        overflow: hidden;
+        -webkit-font-smoothing: antialiased;
+        font-variant-numeric: tabular-nums;
+      }
+      html.overlay, html.overlay body { background: transparent; }
+      button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+      button:focus-visible { outline: 2px solid var(--seaglass); outline-offset: 2px; }
+
+      /* ---------- The wallpaper: sky, sun, far shore, water ---------- */
+      #desktop { position: relative; width: 100%; height: 100%; overflow: hidden; }
+      .scene { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
+      .sky {
+        position: absolute; left: 0; right: 0; top: 0; height: 64%; overflow: hidden;
+        background: linear-gradient(180deg, var(--night) 0%, #33397a 18%, var(--dusk) 34%, var(--lilac) 56%, var(--rose) 76%, var(--peach) 92%, var(--glow) 100%);
+      }
+      .ribbon {
+        position: absolute; border-radius: 50%; filter: blur(70px); opacity: 0.55; will-change: transform;
+        animation: drift 70s ease-in-out infinite alternate;
+      }
+      .ribbon.r1 { width: 1100px; height: 260px; left: -6%; top: 9%; background: #67d9c8; opacity: 0.32; transform: rotate(-9deg); }
+      .ribbon.r2 { width: 900px; height: 220px; left: 34%; top: 4%; background: #a98cff; opacity: 0.42; transform: rotate(7deg); animation-duration: 90s; animation-direction: alternate-reverse; }
+      .ribbon.r3 { width: 760px; height: 200px; right: -8%; top: 26%; background: #ff9fc0; opacity: 0.3; transform: rotate(-4deg); animation-duration: 80s; }
+      @keyframes drift {
+        from { translate: 0 0; }
+        to { translate: 140px 26px; }
+      }
+      .sun {
+        position: absolute; left: 63%; bottom: -88px; width: 190px; height: 190px; border-radius: 50%;
+        background: radial-gradient(circle at 50% 42%, #fffaf0 0%, #ffeccc 48%, #ffd4a8 100%);
+        box-shadow: 0 0 80px 30px rgba(255, 220, 180, 0.55), 0 0 260px 120px rgba(255, 190, 170, 0.35);
+      }
+      .shore { position: absolute; left: 0; right: 0; bottom: 0; width: 100%; height: 120px; }
+      .lighthouse { position: absolute; left: calc(15.4% - 12px); bottom: 54px; width: 24px; height: 50px; }
+      .lamp {
+        position: absolute; left: calc(15.4% - 60px); bottom: 69px; width: 120px; height: 46px; border-radius: 50%;
+        background: radial-gradient(closest-side, rgba(255, 246, 220, 0.95), rgba(255, 230, 190, 0.35) 40%, transparent);
+        animation: beam 7s ease-in-out infinite; will-change: opacity;
+      }
+      @keyframes beam { 0%, 60%, 100% { opacity: 0.25; } 68%, 78% { opacity: 1; } }
+      .water {
+        position: absolute; left: 0; right: 0; top: 64%; bottom: 0; overflow: hidden;
+        background: linear-gradient(180deg, #b7a6cf 0%, #7d8fc0 6%, var(--sea) 22%, #2e5687 52%, var(--deep) 100%);
+      }
+      .water::before { /* long low swells */
+        content: ""; position: absolute; inset: 0;
+        background: repeating-linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0 1px, transparent 1px 7px, rgba(10, 20, 60, 0.07) 7px 9px, transparent 9px 16px);
+        -webkit-mask-image: linear-gradient(180deg, #000 0%, rgba(0, 0, 0, 0.4) 100%);
+                mask-image: linear-gradient(180deg, #000 0%, rgba(0, 0, 0, 0.4) 100%);
+      }
+      .glitter {
+        position: absolute; left: calc(63% - 80px); top: 0; width: 350px; height: 100%;
+        background: repeating-linear-gradient(180deg, rgba(255, 234, 204, 0.85) 0 2px, transparent 2px 7px, rgba(255, 220, 190, 0.5) 7px 8px, transparent 8px 15px);
+        -webkit-mask-image: radial-gradient(42% 92% at 50% 0%, #000 0%, rgba(0, 0, 0, 0.55) 40%, transparent 78%);
+                mask-image: radial-gradient(42% 92% at 50% 0%, #000 0%, rgba(0, 0, 0, 0.55) 40%, transparent 78%);
+        animation: glitter 5s ease-in-out infinite alternate; will-change: opacity;
+      }
+      @keyframes glitter { from { opacity: 0.75; } to { opacity: 1; } }
+      .grain {
+        position: absolute; inset: 0; opacity: 0.09; mix-blend-mode: overlay;
+        background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+      }
+      html.still .ribbon, html.still .lamp, html.still .glitter { animation-play-state: paused; }
+      @media (prefers-reduced-motion: reduce) { .ribbon, .lamp, .glitter { animation: none; } }
+
+      /* ---------- Widgets ---------- */
+      article.widget { position: absolute; z-index: 2; }
+      .glass {
+        background: linear-gradient(150deg, rgba(255, 255, 255, 0.24), rgba(255, 255, 255, 0.08));
+        border: 1px solid var(--glass-edge);
+        -webkit-backdrop-filter: blur(26px) saturate(150%);
+                backdrop-filter: blur(26px) saturate(150%);
+        box-shadow: 0 30px 60px -24px rgba(12, 18, 60, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+      }
+
+      .clock { left: 112px; top: 76px; }
+      .clock .time {
+        display: flex; align-items: baseline;
+        font-size: 236px; font-weight: 200; line-height: 0.86; letter-spacing: -0.045em;
+        text-shadow: 0 8px 50px rgba(30, 30, 100, 0.25);
+      }
+      .clock .colon { opacity: 0.55; margin: 0 0.02em; transform: translateY(-0.06em); }
+      .clock .date { margin-top: 26px; padding-left: 10px; font-size: 30px; font-weight: 400; letter-spacing: -0.01em; }
+      .clock .greet { margin-top: 8px; padding-left: 10px; font-size: 19px; font-weight: 300; color: var(--text-soft); }
+
+      .weather { right: 112px; top: 84px; width: 380px; padding: 26px 28px 24px; border-radius: 30px; }
+      .wx-head { display: flex; justify-content: space-between; align-items: center; font-size: 17px; font-weight: 500; }
+      .wx-head .pin { display: inline-flex; align-items: center; gap: 7px; }
+      .wx-head svg { width: 15px; height: 15px; }
+      .wx-head .when { font-weight: 400; color: var(--text-soft); font-size: 15px; }
+      .wx-body { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; }
+      .wx-temp { font-size: 108px; font-weight: 200; line-height: 1; letter-spacing: -0.05em; }
+      .wx-glyph { width: 104px; height: 104px; margin-right: -6px; }
+      .wx-glyph svg { width: 100%; height: 100%; display: block; }
+      .wx-foot { display: flex; justify-content: space-between; align-items: baseline; margin-top: 12px; font-size: 18px; }
+      .wx-foot .hl { color: var(--text-soft); font-size: 16px; }
+      .weather.is-error .wx-temp { font-size: 56px; color: var(--text-soft); }
+
+      .music { left: 112px; bottom: 150px; width: 560px; height: 200px; border-radius: 34px; overflow: hidden; }
+      .music .wash {
+        position: absolute; inset: -40px; background-size: cover; background-position: center;
+        filter: blur(48px) saturate(160%); opacity: 0.55; transform: scale(1.1);
+      }
+      .music .inner { position: relative; display: flex; gap: 26px; align-items: center; height: 100%; padding: 22px; }
+      .music .art {
+        flex: none; width: 156px; height: 156px; border-radius: 22px; overflow: hidden;
+        background: linear-gradient(135deg, var(--dusk), var(--rose));
+        box-shadow: 0 18px 34px -12px rgba(10, 14, 50, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.25);
+      }
+      .music .art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+      .music .art img:not([src]) { display: none; }
+      .music .meta { flex: 1; min-width: 0; display: flex; flex-direction: column; height: 100%; padding: 6px 4px 4px 0; }
+      .music .src { font-size: 14px; color: var(--text-soft); display: flex; align-items: center; gap: 8px; }
+      .music .eq { display: inline-flex; gap: 2px; align-items: flex-end; height: 11px; }
+      .music .eq i { width: 2.5px; border-radius: 2px; background: var(--seaglass); }
+      .music .eq i:nth-child(1) { height: 55%; } .music .eq i:nth-child(2) { height: 100%; } .music .eq i:nth-child(3) { height: 35%; } .music .eq i:nth-child(4) { height: 75%; }
+      .music .title { margin-top: 8px; font-size: 32px; font-weight: 500; letter-spacing: -0.02em; line-height: 1.05; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .music .artist { margin-top: 4px; font-size: 18px; color: var(--text-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .music .row { margin-top: auto; display: flex; align-items: center; gap: 14px; }
+      .music .bar { flex: 1; height: 5px; border-radius: 9px; background: rgba(255, 255, 255, 0.25); overflow: hidden; }
+      .music .bar i { display: block; height: 100%; width: 0; border-radius: 9px; background: #fff; }
+      .music .t { font-size: 13px; color: var(--text-soft); min-width: 34px; }
+      .music .ctl { display: flex; gap: 4px; }
+      .music .ctl button { width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; }
+      .music .ctl button:hover { background: rgba(255, 255, 255, 0.16); }
+      .music .ctl .pp { background: #fff; color: var(--ink); }
+      .music .ctl .pp:hover { background: #fff; }
+      .music .ctl svg { width: 18px; height: 18px; }
+      .music.idle .eq, .music.idle .row { visibility: hidden; }
+
+      /* ---------- Previews (?m=widgets / ?m=spawn) ---------- */
+      #preview-root { display: none; }
+      body.preview { background: linear-gradient(180deg, var(--dusk), var(--rose)); overflow: auto; }
+      body.preview #preview-root { display: flex; flex-wrap: wrap; gap: 24px; padding: 32px; align-items: flex-start; }
+      body.preview #preview-root > article.widget { position: relative; inset: auto; }
+      html.overlay body.preview { background: transparent; overflow: hidden; }
+      html.overlay body.preview #preview-root { display: block; padding: 0; width: 100%; height: 100%; }
+      .spawn-surface { position: relative; }
+      .spawn-surface.solo { width: 100%; height: 100%; }
+      .unknown-spawn { padding: 18px; font: 500 14px var(--sans); }
+    </style>
+  </head>
+  <body>
+    <section id="desktop">
+      <div class="scene" aria-hidden="true">
+        <div class="sky">
+          <div class="ribbon r1"></div>
+          <div class="ribbon r2"></div>
+          <div class="ribbon r3"></div>
+          <div class="sun"></div>
+          <svg class="shore" viewBox="0 0 1920 120" preserveAspectRatio="none">
+            <path d="M0 120 V82 C110 74 190 62 296 64 C380 66 440 82 560 89 C700 97 810 104 950 108 C1070 111 1170 112 1270 110 C1390 107 1470 97 1570 95 C1670 93 1770 100 1920 95 V120 Z" fill="#6c5f9e" opacity="0.5" />
+            <path d="M0 120 V104 C160 100 300 104 420 108 C540 112 680 118 840 120 Z M1400 120 C1560 113 1740 104 1920 106 V120 Z" fill="#54498a" opacity="0.45" />
+          </svg>
+          <svg class="lighthouse" viewBox="0 0 24 50" aria-hidden="true">
+            <path d="M9 14 L15 14 L17 50 L7 50 Z" fill="#5d5191" opacity="0.85" />
+            <path d="M8.4 22 L15.6 22 L15.9 26 L8.1 26 Z M7.8 33 L16.2 33 L16.5 37 L7.5 37 Z" fill="#8d7fbe" opacity="0.7" />
+            <rect x="9.5" y="8" width="5" height="6" rx="1" fill="#fff6e0" />
+            <path d="M8 8 L12 3 L16 8 Z" fill="#5d5191" />
+          </svg>
+          <span class="lamp"></span>
+        </div>
+        <div class="water"><div class="glitter"></div></div>
+        <div class="grain"></div>
+      </div>
+
+      <article class="widget clock" data-id="harbor-clock">
+        <div class="time"><span class="hh">--</span><span class="colon">:</span><span class="mm">--</span></div>
+        <div class="date"></div>
+        <div class="greet"></div>
+      </article>
+
+      <article class="widget weather glass" data-id="harbor-weather">
+        <div class="wx-head">
+          <span class="pin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.4"/></svg><span class="place">Weather</span></span>
+        </div>
+        <div class="wx-body">
+          <div class="wx-temp">--°</div>
+          <div class="wx-glyph"></div>
+        </div>
+        <div class="wx-foot"><span class="desc">Looking outside</span><span class="hl"></span></div>
+      </article>
+
+      <article class="widget music glass idle" data-id="harbor-music" data-hooks="media">
+        <div class="wash"></div>
+        <div class="inner">
+          <div class="art"><img alt="" /></div>
+          <div class="meta">
+            <div class="src"><span class="eq" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span class="from">Nothing playing</span></div>
+            <div class="title">Quiet water</div>
+            <div class="artist">Play something and it shows up here</div>
+            <div class="row">
+              <span class="t cur">0:00</span>
+              <div class="bar"><i></i></div>
+              <span class="t dur">0:00</span>
+              <div class="ctl">
+                <button type="button" class="prev" aria-label="Previous track"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 5h2v14H6zM20 5v14L9.5 12z"/></svg></button>
+                <button type="button" class="pp" aria-label="Play or pause"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></button>
+                <button type="button" class="next" aria-label="Next track"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 5h2v14h-2zM4 5v14l10.5-7z"/></svg></button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <!-- ===== Menubar: a slim frosted strip along the top. It reserves its
+         34 px like the taskbar does, so maximized apps stop below it. ===== -->
+    <template class="spawnable" data-id="harbor-menubar" data-anchor="top" data-h="34"
+              data-hooks="battery,network,media,focus,spawn">
+      <style>
+        .hm {
+          position: relative; height: 100%; display: flex; align-items: center; gap: 22px; padding: 0 18px 0 16px;
+          background:
+            linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.08)),
+            linear-gradient(90deg, #26306b 0%, #3a3d86 38%, #403f8a 62%, #2d3573 100%);
+          border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+          font: 500 14px/1 var(--sans); color: #fff; white-space: nowrap; overflow: hidden;
+        }
+        .hm svg { width: 17px; height: 17px; flex: none; display: block; }
+        .hm .mark { display: grid; place-items: center; width: 22px; height: 22px; }
+        .hm .app { font-weight: 650; letter-spacing: -0.005em; }
+        .hm .title { color: rgba(255, 255, 255, 0.62); font-weight: 400; overflow: hidden; text-overflow: ellipsis; max-width: 520px; }
+        .hm .right { margin-left: auto; display: flex; align-items: center; gap: 20px; }
+        .hm .chip { display: inline-flex; align-items: center; gap: 8px; }
+        .hm .np img { width: 20px; height: 20px; border-radius: 5px; object-fit: cover; }
+        .hm .np img:not([src]) { display: none; }
+        .hm .np .by { color: rgba(255, 255, 255, 0.62); font-weight: 400; }
+        .hm .np[hidden] { display: none; }
+        .hm .batt { display: inline-flex; align-items: center; gap: 7px; }
+        .hm .cell { position: relative; width: 25px; height: 12px; border: 1.5px solid rgba(255, 255, 255, 0.85); border-radius: 4px; padding: 1.5px; }
+        .hm .cell::after { content: ""; position: absolute; right: -4px; top: 3px; width: 2px; height: 4px; border-radius: 0 2px 2px 0; background: rgba(255, 255, 255, 0.85); }
+        .hm .cell i { display: block; height: 100%; width: 50%; border-radius: 2px; background: #fff; }
+        .hm .batt.low .cell i { background: var(--coral); }
+        .hm .batt.charging .cell i { background: var(--seaglass); }
+        .hm .cc { width: 30px; height: 26px; border-radius: 8px; display: grid; place-items: center; }
+        .hm .cc:hover { background: rgba(255, 255, 255, 0.16); }
+        .hm .clockline { font-weight: 600; }
+        .hm .clockline span { font-weight: 400; color: rgba(255, 255, 255, 0.75); margin-right: 8px; }
+        .hm .wifi .bars path { opacity: 0.3; }
+        .hm .wifi[data-bars="1"] .bars path:nth-child(-n+1),
+        .hm .wifi[data-bars="2"] .bars path:nth-child(-n+2),
+        .hm .wifi[data-bars="3"] .bars path:nth-child(-n+3),
+        .hm .wifi[data-bars="4"] .bars path,
+        .hm .wifi[data-bars="5"] .bars path { opacity: 1; }
+      </style>
+      <div class="hm">
+        <span class="mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 15c2.2 0 2.2-2 4.5-2s2.3 2 4.5 2 2.2-2 4.5-2 2.3 2 4.5 2"/><path d="M3 19.5c2.2 0 2.2-2 4.5-2s2.3 2 4.5 2 2.2-2 4.5-2 2.3 2 4.5 2" opacity=".55"/><circle cx="12" cy="7" r="3.2" fill="currentColor" stroke="none"/></svg></span>
+        <span class="app">Desktop</span>
+        <span class="title"></span>
+        <span class="right">
+          <span class="chip np" hidden><img alt="" /><span class="song"></span><span class="by"></span></span>
+          <span class="chip wifi" data-bars="0"><svg class="bars" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 19.5h.01"/><path d="M8.6 16a4.8 4.8 0 0 1 6.8 0"/><path d="M5.4 12.7a9.4 9.4 0 0 1 13.2 0"/><path d="M2.3 9.4a14 14 0 0 1 19.4 0"/></svg><span class="net">Offline</span></span>
+          <span class="batt"><span class="cell"><i></i></span><span class="pct">--</span></span>
+          <button type="button" class="cc" aria-label="Open control center"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2.2"/><circle cx="9" cy="17" r="2.2"/></svg></button>
+          <span class="clockline"><span class="d"></span><b class="tm" style="font-weight:600">--:--</b></span>
+        </span>
+      </div>
+      <script>
+        (function harborMenubar() {
+          var root = document.currentScript && document.currentScript.closest('.spawn-surface');
+          if (!root) return;
+          var $ = function (s) { return root.querySelector(s); };
+          function put(el, text) { if (el.textContent !== text) el.textContent = text; }
+          function tick() {
+            var n = new Date();
+            put($('.tm'), String(n.getHours()).padStart(2, '0') + ':' + String(n.getMinutes()).padStart(2, '0'));
+            put($('.d'), n.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }));
+          }
+          tick();
+          setInterval(tick, 1000);
+          (function whenSdk(fn) { window.versailles && typeof window.versailles.for === 'function' ? fn(window.versailles) : setTimeout(function () { whenSdk(fn); }, 50); })(function (v) {
+            var me = v.for('harbor-menubar');
+            me.on('focus', function (f) {
+              if (!f || f.host === false || f.self) return;
+              var parts = String(f.title || '').split(' - ');
+              var app = parts.length > 1 ? parts.pop() : (f.app || 'Desktop');
+              put($('.app'), app);
+              put($('.title'), parts.join(' - '));
+            }).catch(function () {});
+            me.on('network', function (n) {
+              if (!n || n.host === false) return;
+              var w = $('.wifi');
+              w.dataset.bars = n.online ? String(n.wifi ? (n.signalBars == null ? 4 : n.signalBars) : 4) : '0';
+              put($('.net'), n.online ? (n.name || 'Online') : 'Offline');
+            }).catch(function () {});
+            me.on('battery', function (b) {
+              if (!b || b.host === false) return;
+              var box = $('.batt');
+              box.hidden = !b.present;
+              if (!b.present) return;
+              $('.cell i').style.width = Math.max(6, b.percent) + '%';
+              box.classList.toggle('low', b.percent <= 20 && !b.charging);
+              box.classList.toggle('charging', !!b.charging);
+              put($('.pct'), b.percent + '%');
+            }).catch(function () {});
+            me.on('media', function (m) {
+              var np = $('.np');
+              if (!m || m.host === false || m.hasSession === false || !m.title) { np.hidden = true; return; }
+              np.hidden = false;
+              put($('.song'), m.title);
+              put($('.by'), m.artist || '');
+              var img = $('.np img');
+              if (m.thumbnailDataUrl && img.getAttribute('src') !== m.thumbnailDataUrl) img.src = m.thumbnailDataUrl;
+            }).catch(function () {});
+            $('.cc').addEventListener('click', function () { me.spawn('harbor-control').catch(function () {}); });
+          });
+        })();
+      </script>
+    </template>
+
+    <!-- ===== Dock: floats over the bottom edge (no space reserved). Only the
+         glass pill takes clicks (layout.trackHits on [data-hit]); the rest of
+         the strip passes them to the app below. ===== -->
+    <template class="spawnable" data-id="harbor-dock" data-anchor="bottom" data-dock="float" data-h="112"
+              data-hooks="windows,windows-control,layout,spawn">
+      <style>
+        .hd { height: 100%; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 14px; }
+        .hd-pill {
+          display: flex; align-items: center; gap: 10px; padding: 11px 12px 13px; border-radius: 30px;
+          background: linear-gradient(180deg, rgba(255, 255, 255, 0.34), rgba(232, 236, 255, 0.2));
+          border: 1px solid rgba(255, 255, 255, 0.5);
+          box-shadow: 0 24px 50px -16px rgba(8, 14, 48, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+          -webkit-backdrop-filter: blur(24px) saturate(160%); backdrop-filter: blur(24px) saturate(160%);
+        }
+        .hd-apps { display: flex; align-items: center; gap: 10px; }
+        .hd-app { position: relative; width: 64px; height: 64px; padding: 0; border-radius: 19px; }
+        .hd-tile {
+          position: absolute; inset: 0; border-radius: 19px; display: grid; place-items: center;
+          background: linear-gradient(160deg, rgba(255, 255, 255, 0.96), rgba(236, 238, 252, 0.86));
+          box-shadow: 0 8px 18px -8px rgba(10, 16, 60, 0.55), inset 0 -1px 0 rgba(20, 30, 90, 0.08);
+          transition: transform 0.22s cubic-bezier(.3, 1.5, .5, 1);
+        }
+        .hd-app:hover .hd-tile { transform: translateY(-4px) scale(1.04); }
+        .hd-app:active .hd-tile { transform: translateY(0) scale(0.96); }
+        .hd-tile img { width: 36px; height: 36px; image-rendering: auto; }
+        .hd-tile b { font: 600 24px/1 var(--sans); color: var(--ink); }
+        .hd-app.minimized .hd-tile { background: rgba(255, 255, 255, 0.42); box-shadow: none; }
+        .hd-app.minimized .hd-tile img { opacity: 0.6; filter: grayscale(0.4); }
+        .hd-dot { position: absolute; left: 50%; bottom: -9px; width: 5px; height: 5px; margin-left: -2.5px; border-radius: 50%; background: rgba(255, 255, 255, 0.85); opacity: 0; }
+        .hd-app.running .hd-dot { opacity: 0.6; }
+        .hd-app.focused .hd-dot { opacity: 1; width: 16px; margin-left: -8px; border-radius: 4px; background: #fff; }
+        .hd-app.focused .hd-tile { box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.95), 0 10px 22px -8px rgba(10, 16, 60, 0.6); }
+        .hd-app.attention .hd-tile { box-shadow: 0 0 0 3px var(--coral), 0 0 22px 2px rgba(255, 143, 126, 0.65); }
+        .hd-app.attention::after {
+          content: ""; position: absolute; top: -4px; right: -4px; width: 14px; height: 14px; border-radius: 50%;
+          background: var(--coral); box-shadow: 0 0 0 2.5px #fff;
+        }
+        .hd-app.ping .hd-tile { animation: ping 0.9s cubic-bezier(.3, 1.6, .5, 1) 2; }
+        @keyframes ping { 0%, 100% { transform: translateY(0); } 40% { transform: translateY(-12px); } }
+        .hd-prog { position: absolute; left: 12px; right: 12px; bottom: 7px; height: 4px; border-radius: 3px; background: rgba(27, 35, 80, 0.14); overflow: hidden; }
+        .hd-prog i { display: block; height: 100%; border-radius: 3px; background: linear-gradient(90deg, #4fc7b1, #3a8fd9); }
+        .hd-prog[data-state="paused"] i { background: #e9b949; }
+        .hd-prog[data-state="error"] i { background: var(--coral); }
+        .hd-prog[data-state="indeterminate"] i { width: 40%; animation: busy 1.2s ease-in-out infinite alternate; }
+        @keyframes busy { from { margin-left: 0; } to { margin-left: 60%; } }
+        .hd-sep { width: 1px; height: 46px; background: rgba(255, 255, 255, 0.55); margin: 0 4px; }
+        .hd-cc { width: 64px; height: 64px; border-radius: 19px; display: grid; place-items: center; color: #fff;
+                 background: linear-gradient(160deg, rgba(76, 79, 152, 0.85), rgba(154, 134, 198, 0.75)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4); }
+        .hd-cc svg { width: 28px; height: 28px; }
+        .hd-cc:hover { filter: brightness(1.1); }
+        .hd-empty { font: 400 15px var(--sans); color: rgba(255, 255, 255, 0.8); padding: 0 14px; }
+        @media (prefers-reduced-motion: reduce) { .hd-tile { transition: none; } .hd-app.ping .hd-tile, .hd-prog i { animation: none !important; } }
+      </style>
+      <div class="hd">
+        <div class="hd-pill" data-hit>
+          <div class="hd-apps"><span class="hd-empty">No open windows</span></div>
+          <span class="hd-sep" aria-hidden="true"></span>
+          <button type="button" class="hd-cc" aria-label="Open control center"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2.2"/><circle cx="9" cy="17" r="2.2"/></svg></button>
+        </div>
+      </div>
+      <script>
+        (function harborDock() {
+          var root = document.currentScript && document.currentScript.closest('.spawn-surface');
+          if (!root) return;
+          var row = root.querySelector('.hd-apps');
+          (function whenSdk(fn) { window.versailles && typeof window.versailles.for === 'function' ? fn(window.versailles) : setTimeout(function () { whenSdk(fn); }, 50); })(function (v) {
+            var me = v.for('harbor-dock');
+            var wins = me.windows;
+            try { me.layout.trackHits('[data-hit]'); } catch (_) {}
+            root.querySelector('.hd-cc').addEventListener('click', function () { me.spawn('harbor-control').catch(function () {}); });
+            var seenAttention = {};
+            var previewTimer = 0, previewUp = false;
+            function previewOff() { clearTimeout(previewTimer); if (previewUp) wins.preview(null).catch(function () {}); previewUp = false; }
+            row.addEventListener('mouseleave', previewOff);
+            function render(list) {
+              if (!Array.isArray(list)) return;
+              row.replaceChildren();
+              if (!list.length) {
+                var e = document.createElement('span');
+                e.className = 'hd-empty';
+                e.textContent = 'No open windows';
+                row.appendChild(e);
+                return;
+              }
+              list.forEach(function (w) {
+                var b = document.createElement('button');
+                b.type = 'button';
+                b.className = 'hd-app running' + (w.focused ? ' focused' : '') + (w.minimized ? ' minimized' : '') + (w.attention ? ' attention' : '');
+                if (w.attention && !seenAttention[w.id]) b.classList.add('ping');
+                seenAttention[w.id] = !!w.attention;
+                b.setAttribute('aria-label', w.title + (w.attention ? ', wants attention' : '') + (w.minimized ? ', minimized' : ''));
+                var tile = document.createElement('span');
+                tile.className = 'hd-tile';
+                if (w.icon) {
+                  var img = document.createElement('img');
+                  img.src = w.icon; img.alt = '';
+                  tile.appendChild(img);
+                } else {
+                  var letter = document.createElement('b');
+                  letter.textContent = String(w.app || w.title || '?').charAt(0).toUpperCase();
+                  tile.appendChild(letter);
+                }
+                b.appendChild(tile);
+                var p = w.progress;
+                if (p) {
+                  var track = document.createElement('span');
+                  track.className = 'hd-prog';
+                  track.dataset.state = p.state;
+                  var fill = document.createElement('i');
+                  if (p.value != null && p.state !== 'indeterminate') fill.style.width = Math.round(p.value * 100) + '%';
+                  track.appendChild(fill);
+                  b.appendChild(track);
+                }
+                var dot = document.createElement('span');
+                dot.className = 'hd-dot';
+                b.appendChild(dot);
+                b.addEventListener('click', function () {
+                  previewOff();
+                  (w.focused && !w.minimized ? wins.minimize(w.id) : wins.focus(w.id)).catch(function () {});
+                });
+                b.addEventListener('auxclick', function (ev) { if (ev.button === 1) wins.close(w.id).catch(function () {}); });
+                b.addEventListener('mouseenter', function () {
+                  clearTimeout(previewTimer);
+                  previewTimer = setTimeout(function () { previewUp = true; wins.preview(w.id, b).catch(function () {}); }, previewUp ? 0 : 350);
+                });
+                row.appendChild(b);
+              });
+            }
+            wins.track(render, { icons: true }).catch(function () {});
+          });
+        })();
+      </script>
+    </template>
+
+    <!-- ===== Control center: a slide-out under the menubar (Ctrl+Alt+H, the
+         menubar's sliders button or the dock's). Switches and the volume
+         change settings, so they live here, in a spawn window. ===== -->
+    <template class="spawnable" data-id="harbor-control" data-anchor="tr" data-w="420" data-h="652"
+              data-hooks="hotkey,radios,network,audio,audio-control,bluetooth,media,battery" data-hotkey="Ctrl+Alt+H">
+      <style>
+        .hc { position: absolute; inset: 10px 14px 24px 18px; border-radius: 30px; overflow: hidden; color: #fff;
+              display: flex; flex-direction: column; gap: 12px; padding: 16px;
+              background:
+                radial-gradient(120% 60% at 100% 100%, rgba(255, 196, 168, 0.9), transparent 60%),
+                radial-gradient(90% 60% at 0% 0%, rgba(103, 217, 200, 0.45), transparent 60%),
+                linear-gradient(170deg, #2b3474 0%, #4c4f98 45%, #8e7cc0 100%);
+              border: 1px solid rgba(255, 255, 255, 0.4);
+              box-shadow: 0 14px 22px -14px rgba(8, 12, 44, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.4); }
+        .hc .pane { border-radius: 22px; background: rgba(255, 255, 255, 0.14); border: 1px solid rgba(255, 255, 255, 0.24); }
+        .hc .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .hc .tog { display: flex; flex-direction: column; align-items: flex-start; gap: 14px; padding: 15px 16px; text-align: left; border-radius: 22px;
+                   background: rgba(255, 255, 255, 0.14); border: 1px solid rgba(255, 255, 255, 0.24); }
+        .hc .tog .ic { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; background: rgba(255, 255, 255, 0.2); }
+        .hc .tog .ic svg { width: 20px; height: 20px; }
+        .hc .tog.on .ic { background: #fff; color: var(--ink); }
+        .hc .tog b { display: block; font-size: 16px; font-weight: 600; }
+        .hc .tog small { display: block; margin-top: 3px; font-size: 13.5px; color: rgba(255, 255, 255, 0.72); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 140px; }
+        .hc .vol { padding: 14px 16px 16px; }
+        .hc .vol .lbl { display: flex; justify-content: space-between; font-size: 14px; font-weight: 600; }
+        .hc .vol .lbl span { font-weight: 400; color: rgba(255, 255, 255, 0.72); }
+        .hc .slider { position: relative; margin-top: 12px; height: 34px; border-radius: 17px; background: rgba(255, 255, 255, 0.2); overflow: hidden; }
+        .hc .slider i { position: absolute; left: 0; top: 0; bottom: 0; width: 50%; background: #fff; border-radius: 17px; }
+        .hc .slider svg { position: absolute; left: 11px; top: 8px; width: 18px; height: 18px; color: var(--ink); z-index: 1; }
+        .hc .slider input { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer; margin: 0; }
+        .hc .np { display: flex; gap: 14px; align-items: center; padding: 12px; }
+        .hc .np img { width: 64px; height: 64px; border-radius: 14px; object-fit: cover; flex: none; background: rgba(255, 255, 255, 0.2); }
+        .hc .np img:not([src]) { visibility: hidden; }
+        .hc .np .m { flex: 1; min-width: 0; }
+        .hc .np b { display: block; font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .hc .np small { display: block; margin-top: 3px; font-size: 13.5px; color: rgba(255, 255, 255, 0.72); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .hc .np .k { display: flex; gap: 2px; }
+        .hc .np .k button { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; }
+        .hc .np .k button:hover { background: rgba(255, 255, 255, 0.18); }
+        .hc .np .k svg { width: 18px; height: 18px; }
+        .hc .bt { padding: 6px; }
+        .hc .bt h3 { font-size: 13.5px; font-weight: 500; color: rgba(255, 255, 255, 0.72); padding: 8px 10px 4px; }
+        .hc .dev { display: flex; align-items: center; gap: 12px; width: 100%; padding: 9px 10px; border-radius: 14px; text-align: left; font-size: 15px; }
+        .hc .dev:hover { background: rgba(255, 255, 255, 0.12); }
+        .hc .dev .di { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: rgba(255, 255, 255, 0.18); flex: none; }
+        .hc .dev.on .di { background: #fff; color: var(--ink); }
+        .hc .dev .di svg { width: 16px; height: 16px; }
+        .hc .dev span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .hc .dev em { font-style: normal; font-size: 13px; color: rgba(255, 255, 255, 0.7); }
+        .hc .foot { margin-top: auto; display: flex; justify-content: space-between; align-items: center; padding: 2px 6px 0; font-size: 14px; color: rgba(255, 255, 255, 0.85); }
+        .hc .foot b { font-weight: 600; color: #fff; }
+        .hc .err { color: #ffd1c9; font-size: 13px; padding: 0 6px; min-height: 0; }
+      </style>
+      <div class="hc" data-no-drag>
+        <div class="grid">
+          <button type="button" class="tog wifi"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 19.5h.01"/><path d="M8.6 16a4.8 4.8 0 0 1 6.8 0"/><path d="M5.4 12.7a9.4 9.4 0 0 1 13.2 0"/><path d="M2.3 9.4a14 14 0 0 1 19.4 0"/></svg></span><span><b>Wi-Fi</b><small>Off</small></span></button>
+          <button type="button" class="tog bluetooth"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7l10 10-5 4V3l5 4L7 17"/></svg></span><span><b>Bluetooth</b><small>Off</small></span></button>
+        </div>
+        <div class="pane vol">
+          <div class="lbl">Sound <span class="out">Speakers</span></div>
+          <div class="slider"><i></i><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16 8.5a5 5 0 0 1 0 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><input type="range" min="0" max="100" value="50" aria-label="Volume" /></div>
+        </div>
+        <div class="pane np">
+          <img alt="" />
+          <div class="m"><b>Nothing playing</b><small>Music you play shows up here</small></div>
+          <div class="k">
+            <button type="button" class="pp" aria-label="Play or pause"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></button>
+            <button type="button" class="nx" aria-label="Next track"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 5h2v14h-2zM4 5v14l10.5-7z"/></svg></button>
+          </div>
+        </div>
+        <div class="pane bt"><h3>Devices</h3><div class="devs"></div></div>
+        <div class="err" role="status"></div>
+        <div class="foot"><span class="bat">Battery</span><span class="left"></span></div>
+      </div>
+      <script>
+        (function harborControl() {
+          var root = document.currentScript && document.currentScript.closest('.spawn-surface');
+          if (!root) return;
+          var $ = function (s) { return root.querySelector(s); };
+          var PLAY = '<path d="M8 5v14l11-7z"/>', PAUSE = '<path d="M6 5h4v14H6zM14 5h4v14h-4z"/>';
+          var HEAD = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/></svg>';
+          var MOUSE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="6" y="3" width="12" height="18" rx="6"/><path d="M12 7v3"/></svg>';
+          (function whenSdk(fn) { window.versailles && typeof window.versailles.for === 'function' ? fn(window.versailles) : setTimeout(function () { whenSdk(fn); }, 50); })(function (v) {
+            var me = v.for('harbor-control');
+            var radios = null, netName = '', bt = null;
+            function oops(err) { $('.err').textContent = err && err.message ? err.message : ''; }
+            function paintRadios() {
+              var w = $('.wifi'), b = $('.bluetooth');
+              w.classList.toggle('on', !!(radios && radios.wifi));
+              b.classList.toggle('on', !!(radios && radios.bluetooth));
+              w.querySelector('small').textContent = radios && radios.wifi ? (netName || 'On') : 'Off';
+              var n = bt && bt.devices ? bt.devices.filter(function (d) { return d.connected; }).length : 0;
+              b.querySelector('small').textContent = radios && radios.bluetooth ? (n ? n + ' connected' : 'On') : 'Off';
+            }
+            me.on('radios', function (r) { if (r && r.host !== false) { radios = r; paintRadios(); } }).catch(function () {});
+            me.on('network', function (n) { if (n && n.host !== false) { netName = n.online ? (n.name || 'Connected') : 'Not connected'; paintRadios(); } }).catch(function () {});
+            $('.wifi').addEventListener('click', function () {
+              if (!radios) return;
+              me.radios.set('wifi', !radios.wifi).then(function (r) { if (r && r.wifi != null) { radios = r; paintRadios(); } }, oops);
+            });
+            $('.bluetooth').addEventListener('click', function () {
+              if (!radios) return;
+              me.radios.set('bluetooth', !radios.bluetooth).then(function (r) { if (r && r.bluetooth != null) { radios = r; paintRadios(); } }, oops);
+            });
+
+            var fill = $('.slider i'), range = $('.slider input');
+            function paintVol(level) { fill.style.width = 'calc(34px + (100% - 34px) * ' + (level / 100) + ')'; range.value = level; }
+            me.on('audio', function (a) {
+              if (!a || a.host === false) return;
+              if (document.activeElement !== range) paintVol(a.muted ? 0 : a.volume);
+              $('.out').textContent = a.device || 'Sound';
+            }).catch(function () {});
+            range.addEventListener('input', function () {
+              var level = Number(range.value);
+              paintVol(level);
+              me.audioControl.setVolume(level).catch(oops);
+            });
+
+            function paintDevices(b) {
+              bt = b;
+              var box = $('.devs');
+              box.replaceChildren();
+              (b && b.devices || []).slice(0, 4).forEach(function (d) {
+                var row = document.createElement('button');
+                row.type = 'button';
+                row.className = 'dev' + (d.connected ? ' on' : '');
+                row.innerHTML = '<span class="di">' + (d.audio ? HEAD : MOUSE) + '</span><span></span><em></em>';
+                row.children[1].textContent = d.name;
+                row.children[2].textContent = d.connected ? 'Connected' : (d.audio ? 'Connect' : 'Not connected');
+                if (d.audio) row.addEventListener('click', function () {
+                  (d.connected ? me.bluetooth.disconnect(d.id) : me.bluetooth.connect(d.id)).then(function (nb) { if (nb && nb.devices) paintDevices(nb); }, oops);
+                });
+                box.appendChild(row);
+              });
+              if (!box.children.length) box.innerHTML = '<div class="dev"><span>No paired devices</span></div>';
+              paintRadios();
+            }
+            me.on('bluetooth', function (b) { if (b && b.host !== false) paintDevices(b); }).catch(function () {});
+
+            me.on('media', function (m) {
+              var idle = !m || m.host === false || m.hasSession === false || !m.title;
+              $('.np b').textContent = idle ? 'Nothing playing' : m.title;
+              $('.np small').textContent = idle ? 'Music you play shows up here' : [m.artist, m.album].filter(Boolean).join(', ');
+              var img = $('.np img');
+              if (!idle && m.thumbnailDataUrl) { if (img.getAttribute('src') !== m.thumbnailDataUrl) img.src = m.thumbnailDataUrl; } else img.removeAttribute('src');
+              $('.np .pp svg').innerHTML = !idle && m.status === 'playing' ? PAUSE : PLAY;
+            }).catch(function () {});
+            $('.np .pp').addEventListener('click', function () { me.media.playPause().catch(oops); });
+            $('.np .nx').addEventListener('click', function () { me.media.next().catch(oops); });
+
+            me.on('battery', function (b) {
+              if (!b || b.host === false) return;
+              if (!b.present) { $('.bat').textContent = 'Plugged in'; $('.left').textContent = ''; return; }
+              $('.bat').innerHTML = 'Battery <b></b>';
+              $('.bat b').textContent = b.percent + '%';
+              var s = b.secondsLeft;
+              $('.left').textContent = b.charging ? 'Charging' : (s > 0 ? 'About ' + Math.floor(s / 3600) + ' h ' + Math.round((s % 3600) / 60) + ' min left' : '');
+            }).catch(function () {});
+          });
+        })();
+      </script>
+    </template>
+
+    <div id="preview-root" hidden></div>
+
+    <script>
+      (function boot() {
+        const params = new URLSearchParams(location.search || '');
+        let m = (params.get('m') || 'desktop').trim().toLowerCase().replace(/-/g, '_');
+        if (m === 'spawnables') m = 'spawn';
+        const id = (params.get('id') || '').trim();
+        document.documentElement.dataset.mode = m;
+        document.body.dataset.mode = m;
+
+        const desktop = document.getElementById('desktop');
+        const preview = document.getElementById('preview-root');
+
+        // Scripts cloned out of a <template> run once when the clone enters the document.
+        function mountSpawn(tpl, solo, parent) {
+          const wrap = document.createElement('section');
+          wrap.className = 'spawn-surface' + (solo ? ' solo' : '');
+          wrap.dataset.id = tpl.getAttribute('data-id') || '';
+          const hooks = tpl.getAttribute('data-hooks');
+          if (hooks) wrap.setAttribute('data-hooks', hooks);
+          wrap.appendChild(tpl.content.cloneNode(true));
+          parent.appendChild(wrap);
+          return wrap;
+        }
+        function spawnables() { return Array.prototype.slice.call(document.querySelectorAll('template.spawnable')); }
+        function findSpawn(needle) {
+          const want = (needle || '').toLowerCase();
+          return spawnables().find(function (t) { return (t.getAttribute('data-id') || '').toLowerCase() === want; });
+        }
+
+        if (m === 'desktop') return;
+        desktop.hidden = true;
+        preview.hidden = false;
+        document.body.classList.add('preview');
+
+        if (m === 'widgets') {
+          Array.prototype.slice.call(desktop.querySelectorAll('article.widget')).forEach(function (el) { preview.appendChild(el); });
+          return;
+        }
+        desktop.remove();
+        if (m === 'spawn') {
+          if (id) {
+            document.documentElement.classList.add('overlay');
+            const tpl = findSpawn(id);
+            if (!tpl) {
+              const p = document.createElement('p');
+              p.className = 'unknown-spawn';
+              p.textContent = 'unknown spawnable: ' + id;
+              preview.appendChild(p);
+              return;
+            }
+            const hosted = !!(window.__TAURI_INTERNALS__ || window.__TAURI__);
+            if (!hosted) {
+              document.body.style.width = (tpl.getAttribute('data-w') || (tpl.dataset.anchor === 'top' || tpl.dataset.anchor === 'bottom' ? '1280' : '400')) + 'px';
+              document.body.style.height = (tpl.getAttribute('data-h') || '200') + 'px';
+            }
+            mountSpawn(tpl, true, preview);
+            return;
+          }
+          spawnables().forEach(function (t) {
+            const w = mountSpawn(t, false, preview);
+            w.style.width = (t.getAttribute('data-w') || '1280') + 'px';
+            w.style.height = (t.getAttribute('data-h') || '200') + 'px';
+          });
+          return;
+        }
+        const p = document.createElement('p');
+        p.className = 'unknown-spawn';
+        p.textContent = 'unknown mode: ' + m;
+        preview.appendChild(p);
+      })();
+    </script>
+    <script>
+      (function loadSdk() {
+        if (window.versailles && typeof window.versailles.invoke === 'function') return;
+        var s = document.createElement('script');
+        s.src = location.protocol === 'file:' ? '../.sdk/versailles.js' : '/files/.sdk/versailles.js';
+        document.head.appendChild(s);
+      })();
+    </script>
+    <script>
+      function harborWhenSdk(fn) {
+        window.versailles && typeof window.versailles.for === 'function' ? fn(window.versailles) : setTimeout(function () { harborWhenSdk(fn); }, 50);
+      }
+
+      (function harborClock() {
+        var box = document.querySelector('.clock');
+        if (!box) return;
+        var hh = box.querySelector('.hh'), mm = box.querySelector('.mm'), date = box.querySelector('.date'), greet = box.querySelector('.greet');
+        function put(el, text) { if (el.textContent !== text) el.textContent = text; }
+        function tick() {
+          var n = new Date(), h = n.getHours();
+          put(hh, String(h).padStart(2, '0'));
+          put(mm, String(n.getMinutes()).padStart(2, '0'));
+          put(date, n.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }));
+          put(greet, h < 5 ? 'Still night on the water' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : h < 22 ? 'Good evening' : 'The harbour is quiet');
+        }
+        tick();
+        setInterval(tick, 1000);
+        // Pause the drifting sky after a minute without input; resume on the next move.
+        harborWhenSdk(function (v) {
+          var me = v.for('harbor-clock');
+          me.on('idle', function () { document.documentElement.classList.add('still'); }).catch(function () {});
+          me.on('active', function () { document.documentElement.classList.remove('still'); }).catch(function () {});
+        });
+      })();
+
+      (function harborWeather() {
+        var card = document.querySelector('.weather');
+        if (!card) return;
+        var $ = function (s) { return card.querySelector(s); };
+        var G = {
+          sun: '<svg viewBox="0 0 64 64" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"><circle cx="32" cy="32" r="11" fill="rgba(255,236,200,.9)" stroke="none"/><path d="M32 8v6M32 50v6M8 32h6M50 32h6M15 15l4 4M45 45l4 4M49 15l-4 4M19 45l-4 4"/></svg>',
+          cloud: '<svg viewBox="0 0 64 64" fill="none"><circle cx="40" cy="24" r="10" fill="rgba(255,226,186,.95)"/><path d="M19 48h27a10 10 0 0 0 1.4-19.9A14 14 0 0 0 20.6 31 8.6 8.6 0 0 0 19 48z" fill="rgba(255,255,255,.92)"/></svg>',
+          rain: '<svg viewBox="0 0 64 64" fill="none"><path d="M19 40h27a10 10 0 0 0 1.4-19.9A14 14 0 0 0 20.6 23 8.6 8.6 0 0 0 19 40z" fill="rgba(255,255,255,.92)"/><path d="M24 46l-3 7M33 46l-3 7M42 46l-3 7" stroke="#bfe9ff" stroke-width="2.6" stroke-linecap="round"/></svg>',
+          snow: '<svg viewBox="0 0 64 64" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"><path d="M32 12v40M15 22l34 20M49 22 15 42"/></svg>',
+          fog: '<svg viewBox="0 0 64 64" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"><path d="M12 26h40M16 34h32M20 42h24"/></svg>',
+          storm: '<svg viewBox="0 0 64 64" fill="none"><path d="M19 38h27a10 10 0 0 0 1.4-19.9A14 14 0 0 0 20.6 21 8.6 8.6 0 0 0 19 38z" fill="rgba(255,255,255,.92)"/><path d="M33 40l-5 9h7l-4 9" stroke="#ffe08a" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+          mix: '<svg viewBox="0 0 64 64" fill="none"><path d="M19 40h27a10 10 0 0 0 1.4-19.9A14 14 0 0 0 20.6 23 8.6 8.6 0 0 0 19 40z" fill="rgba(255,255,255,.92)"/><path d="M25 46l-3 7M41 46l-3 7" stroke="#bfe9ff" stroke-width="2.6" stroke-linecap="round"/><circle cx="32" cy="50" r="2" fill="#fff"/></svg>'
+        };
+        function load() {
+          fetch('/weather', { headers: { Accept: 'application/json' } })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+              if (!d || d.ok === false) throw new Error(d && d.error);
+              card.classList.remove('is-error');
+              $('.place').textContent = d.place || 'Here';
+              $('.wx-temp').textContent = d.tempC != null ? Math.round(d.tempC) + '°' : '--°';
+              $('.desc').textContent = d.desc || '';
+              $('.hl').textContent = d.highC != null && d.lowC != null ? 'H ' + d.highC + '°   L ' + d.lowC + '°' : '';
+              $('.wx-glyph').innerHTML = G[d.glyph] || G.cloud;
+            })
+            .catch(function () {
+              card.classList.add('is-error');
+              $('.place').textContent = 'Weather';
+              $('.wx-temp').textContent = 'Offline';
+              $('.desc').textContent = 'Weather comes from Versailles';
+              $('.hl').textContent = '';
+              $('.wx-glyph').innerHTML = G.fog;
+            });
+        }
+        load();
+        setInterval(load, 20 * 60 * 1000);
+      })();
+
+      (function harborMusic() {
+        var card = document.querySelector('.music');
+        if (!card) return;
+        var $ = function (s) { return card.querySelector(s); };
+        var PLAY = '<path d="M8 5v14l11-7z"/>', PAUSE = '<path d="M6 5h4v14H6zM14 5h4v14h-4z"/>';
+        var last = null, at = 0, art = '';
+        function fmt(ms) { var s = Math.max(0, Math.floor(ms / 1000)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
+        function progress() {
+          if (!last || !(last.durationMs > 0)) return;
+          var pos = last.positionMs + (last.status === 'playing' ? Date.now() - at : 0);
+          pos = Math.min(pos, last.durationMs);
+          $('.bar i').style.width = (pos / last.durationMs * 100).toFixed(2) + '%';
+          $('.cur').textContent = fmt(pos);
+          $('.dur').textContent = fmt(last.durationMs);
+        }
+        function render(m) {
+          var idle = !m || m.host === false || m.hasSession === false || !m.title;
+          card.classList.toggle('idle', idle);
+          if (idle) {
+            last = null;
+            $('.from').textContent = 'Nothing playing';
+            $('.title').textContent = 'Quiet water';
+            $('.artist').textContent = 'Play something and it shows up here';
+            $('.art img').removeAttribute('src'); $('.wash').style.backgroundImage = ''; art = '';
+            return;
+          }
+          last = m; at = Date.now();
+          $('.from').textContent = (m.status === 'paused' ? 'Paused' : 'Playing') + (m.source ? ' on ' + m.source : '');
+          $('.title').textContent = m.title;
+          $('.artist').textContent = [m.artist, m.album].filter(Boolean).join(', ');
+          if (m.thumbnailDataUrl && m.thumbnailDataUrl !== art) {
+            art = m.thumbnailDataUrl;
+            $('.art img').src = art;
+            $('.wash').style.backgroundImage = 'url("' + art.replace(/"/g, '%22') + '")';
+          }
+          $('.pp svg').innerHTML = m.status === 'playing' ? PAUSE : PLAY;
+          progress();
+        }
+        setInterval(progress, 1000);
+        harborWhenSdk(function (v) {
+          var media = v.for('harbor-music').media;
+          media.onChange(render).catch(function () {});
+          function act(fn) { return function () { fn().catch(function () {}); }; }
+          $('.prev').addEventListener('click', act(function () { return media.previous(); }));
+          $('.pp').addEventListener('click', act(function () { return media.playPause(); }));
+          $('.next').addEventListener('click', act(function () { return media.next(); }));
+        });
+      })();
+    </script>
+  </body>
+</html>

@@ -1,0 +1,1128 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>Neon</title>
+    <!--
+      Neon: a Versailles showcase desktop (synthwave / outrun).
+
+      Copy this file to %USERPROFILE%\Documents\Widgets\desktop\index.html.
+      Pieces:
+        article.widget  neon-clock   chrome clock and the part of the day
+        article.widget  neon-tape    now playing as a cassette (media)
+        article.widget  neon-dash    battery as a fuel gauge, Wi-Fi signal (battery, network)
+        template        neon-rail    left side rail: the open windows (windows, windows-control)
+        template        neon-qs      quick settings slide-out, Win+A or the Copilot key
+      The wallpaper is one <canvas>: sky, striped sun, mountains and a moving grid.
+      It runs at 30 fps, stops while you are away (idle) and draws one still
+      frame with reduced motion.
+    -->
+    <script type="application/json" id="versailles">
+    {
+      "shell": { "hideTaskbar": true }
+    }
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Kanit:ital,wght@1,800;1,900&family=Mr+Dafoe&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --night: #07021a;
+        --plum: #1a0636;
+        --violet: #3b0d6b;
+        --magenta: #ff2bd6;
+        --pink: #ff4f9a;
+        --sun: #ffd23f;
+        --orange: #ff8a3d;
+        --cyan: #29e7ff;
+        --ice: #e8f7ff;
+        --mute: #b79bd8;
+        --font-ui: "Chakra Petch", "Bahnschrift", "Segoe UI", sans-serif;
+        --font-chrome: "Kanit", "Arial Black", "Segoe UI Black", sans-serif;
+        --font-script: "Mr Dafoe", "Brush Script MT", "Segoe Script", cursive;
+      }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body { width: 100%; height: 100%; }
+      body {
+        background: var(--night);
+        color: var(--ice);
+        font-family: var(--font-ui);
+        -webkit-font-smoothing: antialiased;
+        overflow: hidden;
+      }
+      html.overlay, html.overlay body { width: 100% !important; height: 100% !important; overflow: hidden; }
+      button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+      button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+
+      /* ---------- wallpaper ---------- */
+      #desktop { position: fixed; inset: 0; overflow: hidden; }
+      #neon-sky { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+      #desktop::after { /* a faint CRT texture over the whole scene */
+        content: ""; position: absolute; inset: 0; pointer-events: none;
+        background: repeating-linear-gradient(180deg, rgba(0,0,0,0) 0 2px, rgba(0,0,0,.10) 2px 3px);
+        mix-blend-mode: multiply;
+      }
+
+      /* clock: chrome numerals over the sun */
+      .clock {
+        position: absolute; left: 50%; top: 6vh; transform: translateX(-50%);
+        display: flex; flex-direction: column; align-items: center; z-index: 2; pointer-events: none;
+      }
+      .chrome {
+        position: relative; display: block;
+        font: italic 900 min(14.5vw, 25vh)/0.92 var(--font-chrome);
+        letter-spacing: -0.02em; padding: 0 0.12em;
+        font-variant-numeric: tabular-nums;
+      }
+      .chrome .fill {
+        position: relative; z-index: 1; display: block;
+        background: linear-gradient(180deg,
+          #f4fbff 0%, #a5e6ff 22%, #4ec3ff 44%, #fdfdff 50%,
+          #2a0b4a 50.5%, #5d1d87 62%, #ff63b8 82%, #ffe1f3 100%);
+        -webkit-background-clip: text; background-clip: text; color: transparent;
+        /* chained shadows: each one offsets the last, so they stack into an extrusion */
+        filter: drop-shadow(2px 2px 0 #3b0a62) drop-shadow(2px 2px 0 #4a0c78) drop-shadow(2px 2px 0 #5a0f8a)
+                drop-shadow(3px 3px 0 #ff2bd6) drop-shadow(0 0 22px rgba(255, 43, 214, 0.7)) drop-shadow(0 0 60px rgba(255, 79, 154, 0.45));
+      }
+      .daypart {
+        margin-top: -0.48em; margin-left: 3.2em; transform: rotate(-7deg);
+        font: 400 min(6.4vw, 11vh)/1 var(--font-script);
+        color: #fff2fb;
+        text-shadow: 0 0 6px #ff4fd8, 0 0 18px #ff2bd6, 0 0 42px #ff2bd6, 0 0 80px rgba(255, 43, 214, 0.6);
+        z-index: 3; position: relative; white-space: nowrap;
+      }
+      .datebar {
+        margin-bottom: 1.2vh; display: flex; gap: 18px; align-items: center;
+        font: 600 18px/1 var(--font-ui); letter-spacing: 0.32em; color: #ffd9f2;
+        text-shadow: 0 0 10px rgba(255, 43, 214, 0.8);
+      }
+      .datebar i { width: 46px; height: 2px; background: linear-gradient(90deg, transparent, var(--cyan)); box-shadow: 0 0 8px var(--cyan); }
+      .datebar i:last-child { background: linear-gradient(90deg, var(--cyan), transparent); }
+
+      /* shared panel: a lit sign with chamfered corners */
+      .sign {
+        position: absolute; z-index: 2;
+        filter: drop-shadow(0 0 10px rgba(41, 231, 255, 0.55)) drop-shadow(0 0 28px rgba(255, 43, 214, 0.35));
+      }
+      .sign-frame {
+        --cut: 18px;
+        clip-path: polygon(var(--cut) 0, 100% 0, 100% calc(100% - var(--cut)), calc(100% - var(--cut)) 100%, 0 100%, 0 var(--cut));
+        background: linear-gradient(135deg, var(--cyan), #8b5cff 45%, var(--magenta));
+        padding: 2px;
+      }
+      .sign-body {
+        clip-path: inherit;
+        background:
+          linear-gradient(180deg, rgba(37, 9, 70, 0.92), rgba(12, 3, 30, 0.94));
+        position: relative;
+      }
+
+      /* now playing: a cassette */
+      .tape-w { left: 4.2vw; bottom: 6.5vh; width: 452px; }
+      .tape-w .sign-body { padding: 18px 18px 16px; }
+      .cassette {
+        position: relative; height: 252px; border-radius: 14px;
+        background: linear-gradient(180deg, #2b0f4d, #160631);
+        box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.14), inset 0 -40px 60px rgba(0, 0, 0, 0.35);
+      }
+      .cassette .screw { position: absolute; width: 9px; height: 9px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #c9b6e6, #4b3470); }
+      .cassette .screw::after { content: ""; position: absolute; left: 1px; right: 1px; top: 4px; height: 1px; background: #241238; transform: rotate(35deg); }
+      .label {
+        position: absolute; left: 16px; right: 16px; top: 14px; height: 168px; border-radius: 8px; overflow: hidden;
+        background: #3a1060;
+      }
+      .label .art { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; filter: saturate(1.25) contrast(1.05); }
+      .label .art:not([src]) { display: none; }
+      .label .shade { position: absolute; inset: 0; background:
+        linear-gradient(90deg, rgba(20, 4, 44, 0.92) 0%, rgba(20, 4, 44, 0.55) 55%, rgba(20, 4, 44, 0.15) 100%),
+        linear-gradient(180deg, rgba(255, 43, 214, 0.18), rgba(41, 231, 255, 0.10)); }
+      .label .stripes { position: absolute; left: 0; right: 0; top: 92px; height: 34px; display: flex; flex-direction: column; }
+      .label .stripes b { flex: 1; }
+      .label .stripes b:nth-child(1) { background: #ffd23f; }
+      .label .stripes b:nth-child(2) { background: #ff8a3d; }
+      .label .stripes b:nth-child(3) { background: #ff4f9a; }
+      .label .stripes b:nth-child(4) { background: #c13ce0; }
+      .label .stripes b:nth-child(5) { background: #6a3cff; }
+      .label .song {
+        position: absolute; left: 16px; right: 64px; top: 8px;
+        font: 400 46px/1.15 var(--font-script); color: #fff;
+        text-shadow: 0 0 10px rgba(255, 79, 216, 0.9), 0 0 26px rgba(255, 43, 214, 0.6);
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 6px 4px 0;
+      }
+      .label .who {
+        position: absolute; left: 18px; top: 62px; right: 70px;
+        font: 600 14px/1 var(--font-ui); letter-spacing: 0.18em; color: #ffe6f6;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      .label .side {
+        position: absolute; right: 14px; top: 12px; width: 40px; height: 40px; border-radius: 50%;
+        display: grid; place-items: center; font: italic 900 22px/1 var(--font-chrome); color: #1a0636;
+        background: var(--sun); box-shadow: 0 0 14px rgba(255, 210, 63, 0.8);
+      }
+      .reels {
+        position: absolute; left: 50%; top: 98px; transform: translateX(-50%);
+        width: 250px; height: 62px; border-radius: 31px;
+        background: linear-gradient(180deg, rgba(6, 1, 18, 0.92), rgba(30, 8, 56, 0.92));
+        box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.22), 0 0 0 4px rgba(10, 2, 24, 0.55);
+      }
+      .reels svg { width: 100%; height: 100%; display: block; }
+      .reels .hub { transform-box: fill-box; transform-origin: center; }
+      .tape-w.playing .reels .hub { animation: spin 2.4s linear infinite; }
+      @keyframes spin { to { transform: rotate(-360deg); } }
+      .cassette .foot {
+        position: absolute; left: 70px; right: 70px; bottom: 0; height: 52px;
+        clip-path: polygon(10% 0, 90% 0, 100% 100%, 0 100%);
+        background: linear-gradient(180deg, #24093f, #12052a);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+        display: flex; align-items: center; justify-content: center; gap: 56px;
+      }
+      .cassette .foot i { width: 12px; height: 12px; border-radius: 50%; background: #07021a; box-shadow: inset 0 1px 2px rgba(0,0,0,.8), 0 0 0 1.5px rgba(255,255,255,.12); }
+      .cassette .brand {
+        position: absolute; left: 22px; bottom: 16px; font: italic 800 15px/1 var(--font-chrome); letter-spacing: 0.04em; color: var(--cyan);
+        text-shadow: 0 0 8px rgba(41, 231, 255, 0.8);
+      }
+      .cassette .len { position: absolute; right: 22px; bottom: 16px; font: 600 13px/1 var(--font-ui); color: var(--mute); letter-spacing: 0.1em; font-variant-numeric: tabular-nums; }
+      .deck { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+      .deck button {
+        width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; flex: none;
+        color: var(--cyan); box-shadow: inset 0 0 0 2px rgba(41, 231, 255, 0.75), 0 0 12px rgba(41, 231, 255, 0.35);
+      }
+      .deck button.big { width: 50px; height: 50px; color: #1a0636; background: linear-gradient(180deg, var(--sun), var(--pink)); box-shadow: 0 0 18px rgba(255, 79, 154, 0.75); }
+      .deck button:hover { filter: brightness(1.25); }
+      .deck button:disabled { opacity: 0.35; cursor: default; }
+      .deck svg { width: 18px; height: 18px; display: block; fill: currentColor; }
+      .deck .big svg { width: 22px; height: 22px; }
+      .eq { flex: 1; height: 40px; display: flex; align-items: flex-end; gap: 3px; margin-left: 8px; }
+      .eq b { flex: 1; height: 30%; border-radius: 2px 2px 0 0;
+        background: linear-gradient(0deg, var(--magenta), var(--orange) 70%, var(--sun));
+        box-shadow: 0 0 8px rgba(255, 43, 214, 0.55); }
+      .tape-w.playing .eq b { animation: eq 0.9s ease-in-out infinite alternate; }
+      @keyframes eq { 0% { height: 18%; } 50% { height: 92%; } 100% { height: 36%; } }
+      .time { font: 600 15px/1 var(--font-ui); letter-spacing: 0.08em; color: #ffd9f2; font-variant-numeric: tabular-nums; flex: none; min-width: 92px; text-align: right; }
+      .tape-w.idle .label .song { color: var(--mute); text-shadow: none; }
+
+      /* battery and Wi-Fi: a dashboard cluster */
+      .dash-w { right: 4.2vw; bottom: 6.5vh; width: 452px; }
+      .dash-w .sign-body { padding: 18px 22px 18px; display: grid; grid-template-columns: 236px 1fr; gap: 6px 18px; align-items: center; }
+      .gauge { position: relative; width: 236px; height: 164px; }
+      .gauge svg { width: 100%; height: 100%; display: block; overflow: visible; }
+      .gauge .read {
+        position: absolute; left: 0; right: 0; top: 70px; text-align: center;
+        font: italic 900 60px/1 var(--font-chrome); letter-spacing: -0.02em;
+        background: linear-gradient(180deg, #fff 0%, #9ee6ff 48%, #fdfdff 50%, #ff63b8 52%, #ffe1f3 100%);
+        -webkit-background-clip: text; background-clip: text; color: transparent;
+        filter: drop-shadow(0 0 10px rgba(255, 43, 214, 0.7));
+      }
+      .gauge .read small { font-size: 26px; }
+      .gauge .unit { position: absolute; left: 0; right: 0; top: 136px; text-align: center; font: 600 13px/1 var(--font-ui); letter-spacing: 0.3em; color: var(--mute); }
+      .gauge .needle { transform-origin: 118px 118px; transition: transform 1.2s cubic-bezier(.2, .9, .2, 1.1); }
+      .sig { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+      .bars { display: flex; align-items: flex-end; gap: 6px; height: 64px; }
+      .bars b { width: 16px; border-radius: 3px; background: rgba(183, 155, 216, 0.18); box-shadow: inset 0 0 0 1px rgba(183, 155, 216, 0.25); }
+      .bars b:nth-child(1) { height: 20%; } .bars b:nth-child(2) { height: 40%; } .bars b:nth-child(3) { height: 60%; }
+      .bars b:nth-child(4) { height: 80%; } .bars b:nth-child(5) { height: 100%; }
+      .bars b.on { background: linear-gradient(0deg, #1fb3ff, var(--cyan)); box-shadow: 0 0 12px rgba(41, 231, 255, 0.85); }
+      .ssid { font: italic 800 30px/1 var(--font-chrome); color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        text-shadow: 0 0 12px rgba(41, 231, 255, 0.8); padding-right: 4px; }
+      .netstate { font: 600 14px/1.2 var(--font-ui); color: var(--mute); letter-spacing: 0.08em; }
+      .dash-foot {
+        grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: center;
+        padding-top: 12px; border-top: 1px solid rgba(255, 79, 216, 0.28);
+        font: 600 14px/1 var(--font-ui); letter-spacing: 0.12em; color: #ffd9f2;
+      }
+      .dash-foot .hot { color: var(--sun); text-shadow: 0 0 10px rgba(255, 210, 63, 0.7); }
+
+      /* ---------- previews (?m=widgets / ?m=spawn) ---------- */
+      #preview-root { display: none; }
+      body.preview { overflow: auto; background: var(--night); }
+      body.preview #preview-root { display: flex; flex-wrap: wrap; gap: 24px; padding: 24px; align-items: flex-start; }
+      body.preview-widgets .sign, body.preview-widgets .clock { position: relative; inset: auto; transform: none; }
+      html.overlay #preview-root, html.overlay body.preview #preview-root { display: flex !important; flex-direction: column; width: 100%; height: 100%; padding: 0; overflow: hidden; }
+      html.overlay .spawn-surface.solo { flex: 1; min-height: 0; width: 100%; height: 100%; display: flex; flex-direction: column; }
+      .spawn-surface:not(.solo) { width: 380px; min-height: 300px; }
+      .unknown-spawn { font: 600 14px/1.4 var(--font-ui); color: var(--pink); padding: 18px; }
+
+      @media (prefers-reduced-motion: reduce) {
+        .tape-w.playing .reels .hub, .tape-w.playing .eq b { animation: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <section id="desktop">
+      <canvas id="neon-sky" aria-hidden="true"></canvas>
+
+      <article class="widget clock" data-id="neon-clock">
+        <span class="datebar"><i></i><span id="nc-date"></span><i></i></span>
+        <span class="chrome" id="nc-time"><span class="fill" id="nc-fill">--:--</span></span>
+        <span class="daypart" id="nc-part"></span>
+      </article>
+
+      <article class="widget sign tape-w idle" data-id="neon-tape" data-hooks="media" id="nt">
+        <div class="sign-frame"><div class="sign-body">
+          <div class="cassette">
+            <span class="screw" style="left:8px;top:8px"></span><span class="screw" style="right:8px;top:8px"></span>
+            <span class="screw" style="left:8px;bottom:8px"></span><span class="screw" style="right:8px;bottom:8px"></span>
+            <div class="label">
+              <img class="art" id="nt-art" alt="" />
+              <div class="shade"></div>
+              <div class="stripes"><b></b><b></b><b></b><b></b><b></b></div>
+              <div class="song" id="nt-title">Nothing playing</div>
+              <div class="who" id="nt-artist">Play a song to load the tape</div>
+              <div class="side">A</div>
+            </div>
+            <div class="reels">
+              <svg viewBox="0 0 250 62" aria-hidden="true">
+                <defs>
+                  <radialGradient id="nt-pack" cx="50%" cy="50%" r="50%">
+                    <stop offset="0.55" stop-color="#3a1a1a" /><stop offset="1" stop-color="#1c0b0b" />
+                  </radialGradient>
+                </defs>
+                <line x1="40" y1="5" x2="210" y2="5" stroke="#2a1410" stroke-width="2" id="nt-tape-top" />
+                <circle id="nt-pack-l" cx="40" cy="31" r="26" fill="url(#nt-pack)" />
+                <circle id="nt-pack-r" cx="210" cy="31" r="16" fill="url(#nt-pack)" />
+                <g class="hub"><circle cx="40" cy="31" r="12" fill="#f4e9ff" />
+                  <path d="M40 21v6M40 35v6M30 31h6M44 31h6M33 24l4 4M43 34l4 4M33 38l4-4M43 28l4-4" stroke="#1a0636" stroke-width="2.4" stroke-linecap="round" />
+                  <circle cx="40" cy="31" r="4" fill="#1a0636" /></g>
+                <g class="hub"><circle cx="210" cy="31" r="12" fill="#f4e9ff" />
+                  <path d="M210 21v6M210 35v6M200 31h6M214 31h6M203 24l4 4M213 34l4 4M203 38l4-4M213 28l4-4" stroke="#1a0636" stroke-width="2.4" stroke-linecap="round" />
+                  <circle cx="210" cy="31" r="4" fill="#1a0636" /></g>
+                <rect x="96" y="20" width="58" height="22" rx="4" fill="rgba(41,231,255,0.10)" stroke="rgba(41,231,255,0.45)" />
+              </svg>
+            </div>
+            <div class="foot"><i></i><i></i></div>
+            <span class="brand">VHS-90</span>
+            <span class="len" id="nt-len">--:--</span>
+          </div>
+          <div class="deck" id="nt-deck">
+            <button type="button" id="nt-prev" aria-label="Previous track"><svg viewBox="0 0 24 24"><path d="M6 5h2v14H6zM20 5v14L9 12z"/></svg></button>
+            <button type="button" class="big" id="nt-play" aria-label="Play or pause"><svg viewBox="0 0 24 24" id="nt-play-ico"><path d="M8 5v14l11-7z"/></svg></button>
+            <button type="button" id="nt-next" aria-label="Next track"><svg viewBox="0 0 24 24"><path d="M16 5h2v14h-2zM4 5v14l11-7z"/></svg></button>
+            <div class="eq" aria-hidden="true" id="nt-eq"></div>
+            <span class="time" id="nt-time">--:--</span>
+          </div>
+        </div></div>
+      </article>
+
+      <article class="widget sign dash-w" data-id="neon-dash" data-hooks="battery,network">
+        <div class="sign-frame"><div class="sign-body">
+          <div class="gauge" role="img" aria-label="Battery" id="nd-gauge">
+            <svg viewBox="0 0 236 164" aria-hidden="true">
+              <defs>
+                <linearGradient id="nd-arc" x1="0" y1="0" x2="1" y2="0">
+                  <stop offset="0" stop-color="#ff2bd6" /><stop offset="0.55" stop-color="#ff8a3d" /><stop offset="1" stop-color="#ffd23f" />
+                </linearGradient>
+              </defs>
+              <g id="nd-ticks"></g>
+              <path d="M30.7 154.2 A96 96 0 1 1 205.3 154.2" fill="none" stroke="rgba(183,155,216,0.18)" stroke-width="12" stroke-linecap="round" pathLength="100" />
+              <path id="nd-fill" d="M30.7 154.2 A96 96 0 1 1 205.3 154.2" fill="none" stroke="url(#nd-arc)" stroke-width="12" stroke-linecap="round" pathLength="100" stroke-dasharray="0 100" style="filter: drop-shadow(0 0 6px #ff2bd6)" />
+              <text x="4" y="162" fill="#ff4f9a" font-family="Kanit, Arial Black, sans-serif" font-style="italic" font-weight="900" font-size="18">E</text>
+              <text x="218" y="162" fill="#ffd23f" font-family="Kanit, Arial Black, sans-serif" font-style="italic" font-weight="900" font-size="18">F</text>
+              <g class="needle" id="nd-needle" style="transform: rotate(-125deg)">
+                <path d="M118 22 L124 46 L118 52 L112 46 Z" fill="#29e7ff" style="filter: drop-shadow(0 0 6px #29e7ff)" />
+              </g>
+            </svg>
+            <div class="read" id="nd-pct">--<small>%</small></div>
+            <div class="unit" id="nd-unit">battery</div>
+          </div>
+          <div class="sig">
+            <div class="bars" id="nd-bars"><b></b><b></b><b></b><b></b><b></b></div>
+            <div class="ssid" id="nd-ssid">offline</div>
+            <div class="netstate" id="nd-net">looking for a network</div>
+          </div>
+          <div class="dash-foot"><span id="nd-left">--</span><span class="hot" id="nd-plug">--</span></div>
+        </div></div>
+      </article>
+    </section>
+
+    <!-- ===== Side rail: the open windows, docked on the left edge =====
+         Click a window to bring it up, click the one in front to minimize it,
+         middle-click to close it. Focused = cyan, asking for attention = pink pulse,
+         minimized = dim, taskbar progress = a yellow line. -->
+    <template class="spawnable" data-id="neon-rail" data-anchor="left" data-w="72"
+              data-hooks="windows,windows-control,spawn,battery">
+      <style>
+        html.overlay body:has(.rail) { background: #0b0220; }
+        .rail {
+          position: relative; height: 100%; width: 100%; display: flex; flex-direction: column; align-items: center;
+          padding: 16px 0 14px; gap: 10px; overflow: hidden;
+          background: linear-gradient(180deg, #07021a 0%, #13042c 55%, #2a0748 100%);
+          font-family: var(--font-ui); color: var(--ice);
+        }
+        .rail::after { /* neon edge */
+          content: ""; position: absolute; top: 0; right: 0; bottom: 0; width: 2px;
+          background: linear-gradient(180deg, var(--cyan), #8b5cff 50%, var(--magenta));
+          box-shadow: 0 0 10px var(--magenta), 0 0 18px rgba(41, 231, 255, 0.6);
+        }
+        .rail .logo { width: 40px; height: 40px; flex: none; margin-bottom: 10px; filter: drop-shadow(0 0 10px rgba(255, 79, 154, 0.8)); }
+        .rail .wins { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; gap: 10px; width: 100%; overflow: hidden; }
+        .rail .win {
+          position: relative; width: 50px; height: 50px; flex: none; border-radius: 14px; display: grid; place-items: center;
+          background: rgba(255, 255, 255, 0.045); box-shadow: inset 0 0 0 1px rgba(183, 155, 216, 0.22);
+          transition: box-shadow 0.35s ease, background 0.35s ease, transform 0.2s ease;
+        }
+        .rail .win:hover { background: rgba(41, 231, 255, 0.10); transform: translateX(2px); }
+        .rail .win img { width: 28px; height: 28px; display: block; }
+        .rail .win .glyph { font: 700 18px/1 var(--font-ui); color: var(--mute); }
+        .rail .win.focused {
+          background: rgba(41, 231, 255, 0.14);
+          box-shadow: inset 0 0 0 2px var(--cyan), 0 0 14px rgba(41, 231, 255, 0.75), 0 0 34px rgba(41, 231, 255, 0.35);
+        }
+        .rail .win.focused::before { /* the lit bar on the edge */
+          content: ""; position: absolute; left: -11px; top: 11px; bottom: 11px; width: 4px; border-radius: 0 3px 3px 0;
+          background: var(--cyan); box-shadow: 0 0 10px var(--cyan);
+        }
+        .rail .win.attention { box-shadow: inset 0 0 0 2px var(--magenta), 0 0 16px rgba(255, 43, 214, 0.85), 0 0 36px rgba(255, 43, 214, 0.45); }
+        .rail.pulse-off .win.attention { box-shadow: inset 0 0 0 2px rgba(255, 43, 214, 0.45), 0 0 4px rgba(255, 43, 214, 0.3); }
+        .rail .win.attention::after {
+          content: ""; position: absolute; right: -3px; top: -3px; width: 11px; height: 11px; border-radius: 50%;
+          background: var(--magenta); box-shadow: 0 0 0 2px #13042c, 0 0 10px var(--magenta);
+        }
+        .rail .win.minimized img { opacity: 0.4; filter: grayscale(0.7); }
+        .rail .win.minimized { box-shadow: inset 0 0 0 1px dashed rgba(183, 155, 216, 0.2); background: transparent; }
+        .rail .win .prog { position: absolute; left: 8px; right: 8px; bottom: 5px; height: 3px; border-radius: 2px; background: rgba(255, 255, 255, 0.12); overflow: hidden; }
+        .rail .win .prog i { display: block; height: 100%; background: var(--sun); box-shadow: 0 0 6px var(--sun); }
+        .rail .win .prog[data-state="error"] i { background: var(--pink); }
+        .rail .sep { width: 28px; height: 2px; flex: none; border-radius: 1px; background: linear-gradient(90deg, transparent, var(--magenta), transparent); opacity: 0.7; }
+        .rail .qs-btn {
+          width: 50px; height: 50px; flex: none; border-radius: 14px; display: grid; place-items: center; color: var(--sun);
+          box-shadow: inset 0 0 0 1.5px rgba(255, 210, 63, 0.55);
+        }
+        .rail .qs-btn:hover { background: rgba(255, 210, 63, 0.12); box-shadow: inset 0 0 0 2px var(--sun), 0 0 14px rgba(255, 210, 63, 0.6); }
+        .rail .qs-btn svg { width: 24px; height: 24px; }
+        .rail .clk { flex: none; text-align: center; font: italic 800 19px/1.02 var(--font-chrome); color: #fff;
+          text-shadow: 0 0 10px rgba(255, 43, 214, 0.9); font-variant-numeric: tabular-nums; }
+        .rail .bat { flex: none; font: 600 12px/1 var(--font-ui); color: var(--sun); letter-spacing: 0.06em; }
+      </style>
+      <nav class="rail" aria-label="Open windows">
+        <svg class="logo" viewBox="0 0 40 40" aria-hidden="true">
+          <defs><linearGradient id="rl-sun" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffd23f"/><stop offset="1" stop-color="#ff2bd6"/></linearGradient>
+          <clipPath id="rl-cut"><rect x="0" y="0" width="40" height="21"/><rect x="0" y="23.5" width="40" height="3"/><rect x="0" y="28.5" width="40" height="2.4"/><rect x="0" y="33" width="40" height="1.8"/></clipPath></defs>
+          <circle cx="20" cy="20" r="17" fill="url(#rl-sun)" clip-path="url(#rl-cut)"/>
+        </svg>
+        <div class="wins"></div>
+        <span class="sep"></span>
+        <button type="button" class="qs-btn" aria-label="Quick settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2.4"/><circle cx="10" cy="17" r="2.4"/></svg>
+        </button>
+        <span class="clk"><span class="h">--</span><br /><span class="m">--</span></span>
+        <span class="bat">--</span>
+      </nav>
+      <script>
+        (function neonRail() {
+          var root = document.currentScript && document.currentScript.closest('.spawn-surface');
+          if (!root) return;
+          var rail = root.querySelector('.rail');
+          var box = root.querySelector('.wins');
+          var hh = root.querySelector('.clk .h'), mm = root.querySelector('.clk .m');
+          function put(el, t) { if (el.textContent !== t) el.textContent = t; }
+          function tick() { var n = new Date(); put(hh, String(n.getHours()).padStart(2, '0')); put(mm, String(n.getMinutes()).padStart(2, '0')); }
+          tick(); setInterval(tick, 1000);
+          (function whenSdk(fn) { window.versailles && typeof window.versailles.for === 'function' ? fn(window.versailles) : setTimeout(function () { whenSdk(fn); }, 50); })(function (v) {
+            var me = v.for('neon-rail');
+            var wins = me.windows;
+            var still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            var pulse = 0;
+            function pulseOn(on) {
+              if (on && !still && !pulse) pulse = setInterval(function () { rail.classList.toggle('pulse-off'); }, 700);
+              else if (!on && pulse) { clearInterval(pulse); pulse = 0; rail.classList.remove('pulse-off'); }
+            }
+            var previewId = null, previewTimer = 0;
+            function previewOff() { clearTimeout(previewTimer); if (previewId != null) wins.preview(null).catch(function () {}); previewId = null; }
+            box.addEventListener('mouseleave', previewOff);
+            function render(list) {
+              box.replaceChildren();
+              list.forEach(function (w) {
+                var b = document.createElement('button');
+                b.type = 'button';
+                b.className = 'win' + (w.focused ? ' focused' : '') + (w.minimized ? ' minimized' : '') + (w.attention ? ' attention' : '');
+                b.setAttribute('aria-label', w.title + (w.attention ? ' (wants attention)' : '')); // text only: titles come from other apps
+                if (w.icon) { var img = document.createElement('img'); img.src = w.icon; img.alt = ''; b.appendChild(img); }
+                else { var g = document.createElement('span'); g.className = 'glyph'; g.textContent = (w.app || '?').slice(0, 1).toUpperCase(); b.appendChild(g); }
+                if (w.progress) {
+                  var p = document.createElement('span'); p.className = 'prog'; p.dataset.state = w.progress.state;
+                  var f = document.createElement('i');
+                  f.style.width = (w.progress.value != null ? Math.round(w.progress.value * 100) : 100) + '%';
+                  p.appendChild(f); b.appendChild(p);
+                }
+                b.addEventListener('click', function () { previewOff(); (w.focused && !w.minimized ? wins.minimize(w.id) : wins.focus(w.id)).catch(function () {}); });
+                b.addEventListener('auxclick', function (e) { if (e.button === 1) wins.close(w.id).catch(function () {}); });
+                b.addEventListener('mouseenter', function () {
+                  clearTimeout(previewTimer);
+                  previewTimer = setTimeout(function () { previewId = w.id; wins.preview(w.id, b).catch(function () {}); }, previewId != null ? 0 : 350);
+                });
+                box.appendChild(b);
+                if (previewId === w.id) wins.preview(w.id, b).catch(function () {});
+              });
+              pulseOn(!!box.querySelector('.win.attention'));
+            }
+            wins.track(render, { icons: true }).catch(function () {});
+            me.on('battery', function (b) {
+              if (!b) return;
+              put(root.querySelector('.bat'), b.present ? b.percent + '%' + (b.charging ? '+' : '') : 'AC');
+            }).catch(function () {});
+            root.querySelector('.qs-btn').addEventListener('click', function () { me.spawn('neon-qs').catch(function () {}); });
+          });
+        })();
+      </script>
+    </template>
+
+    <!-- ===== Quick settings: a slide-out on the top-right edge =====
+         Win+A (Windows' own quick settings shortcut, taken over) or the Copilot key.
+         Settings change only on a click or key press; values arrive by push. -->
+    <template class="spawnable" data-id="neon-qs" data-anchor="tr" data-w="400" data-h="860"
+              data-hotkey="Win+A, Copilot"
+              data-hooks="hotkey,radios,wifi,bluetooth,audio,audio-control,display,power-mode,dnd,battery,network">
+      <style>
+        html.overlay body:has(.nqs) { background: #0c0322; }
+        .nqs {
+          position: relative; height: 100%; width: 100%; overflow: hidden auto; padding: 22px 22px 20px 26px;
+          display: flex; flex-direction: column; gap: 18px;
+          background:
+            radial-gradient(120% 50% at 100% 0%, rgba(255, 43, 214, 0.22), transparent 60%),
+            radial-gradient(90% 40% at 0% 100%, rgba(41, 231, 255, 0.16), transparent 60%),
+            linear-gradient(180deg, #0c0322, #1a0636 70%, #240844);
+          font: 500 14px/1.3 var(--font-ui); color: var(--ice);
+        }
+        .nqs::before { /* neon edge on the screen side */
+          content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+          background: linear-gradient(180deg, var(--magenta), #8b5cff 50%, var(--cyan));
+          box-shadow: 0 0 12px var(--magenta);
+        }
+        .nqs header { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
+        .nqs h2 { font: 400 52px/0.9 var(--font-script); color: #fff; letter-spacing: 0.01em;
+          text-shadow: 0 0 8px #ff4fd8, 0 0 22px #ff2bd6, 0 0 48px rgba(255, 43, 214, 0.6); padding: 4px 6px 6px 0; }
+        .nqs .stat { text-align: right; font: 600 13px/1.4 var(--font-ui); color: var(--mute); letter-spacing: 0.06em; }
+        .nqs .stat b { display: block; font: italic 900 30px/1 var(--font-chrome); color: var(--sun); letter-spacing: 0; text-shadow: 0 0 12px rgba(255, 210, 63, 0.7); }
+        .nqs .tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+        .nqs .tile {
+          height: 104px; border-radius: 16px; padding: 12px; text-align: left;
+          display: flex; flex-direction: column; justify-content: space-between;
+          background: rgba(255, 255, 255, 0.04); box-shadow: inset 0 0 0 1.5px rgba(183, 155, 216, 0.28);
+          transition: box-shadow 0.25s ease, background 0.25s ease;
+        }
+        .nqs .tile > span { display: block; min-width: 0; }
+        .nqs .tile svg { width: 26px; height: 26px; color: var(--mute); }
+        .nqs .tile .t { display: block; font: 700 14px/1.1 var(--font-ui); }
+        .nqs .tile .s { display: block; font: 500 12px/1.1 var(--font-ui); color: var(--mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 3px; }
+        .nqs .tile.on {
+          background: linear-gradient(160deg, rgba(41, 231, 255, 0.22), rgba(139, 92, 255, 0.18));
+          box-shadow: inset 0 0 0 2px var(--cyan), 0 0 16px rgba(41, 231, 255, 0.45);
+        }
+        .nqs .tile.on svg { color: var(--cyan); filter: drop-shadow(0 0 6px var(--cyan)); }
+        .nqs .tile.on .s { color: #c9f6ff; }
+        .nqs .tile.warm.on { background: linear-gradient(160deg, rgba(255, 210, 63, 0.24), rgba(255, 79, 154, 0.2)); box-shadow: inset 0 0 0 2px var(--sun), 0 0 16px rgba(255, 210, 63, 0.45); }
+        .nqs .tile.warm.on svg { color: var(--sun); filter: drop-shadow(0 0 6px var(--sun)); }
+        .nqs .tile:disabled { opacity: 0.4; cursor: default; }
+        .nqs .slide { display: grid; grid-template-columns: 40px 1fr 44px; align-items: center; gap: 10px; }
+        .nqs .slide button { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; color: var(--pink); box-shadow: inset 0 0 0 1.5px rgba(255, 79, 154, 0.5); }
+        .nqs .slide button.on { color: #1a0636; background: var(--pink); box-shadow: 0 0 12px var(--pink); }
+        .nqs .slide svg { width: 20px; height: 20px; }
+        .nqs .slide output { font: italic 800 18px/1 var(--font-chrome); text-align: right; font-variant-numeric: tabular-nums; }
+        .nqs input[type=range] {
+          -webkit-appearance: none; appearance: none; width: 100%; height: 26px; background: transparent; cursor: pointer;
+          --v: 50%;
+        }
+        .nqs input[type=range]::-webkit-slider-runnable-track {
+          height: 8px; border-radius: 4px;
+          background: linear-gradient(90deg, var(--magenta), var(--orange) calc(var(--v) * 0.8), var(--sun) var(--v), rgba(183, 155, 216, 0.18) var(--v));
+          box-shadow: 0 0 10px rgba(255, 43, 214, 0.35);
+        }
+        .nqs input[type=range]::-webkit-slider-thumb {
+          -webkit-appearance: none; width: 22px; height: 22px; border-radius: 50%; margin-top: -7px;
+          background: #fff; box-shadow: 0 0 0 3px var(--pink), 0 0 16px var(--pink);
+        }
+        .nqs input[type=range]:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; border-radius: 6px; }
+        .nqs h3 { display: flex; align-items: center; gap: 10px; font: 700 13px/1 var(--font-ui); letter-spacing: 0.22em; color: var(--cyan);
+          text-shadow: 0 0 8px rgba(41, 231, 255, 0.7); }
+        .nqs h3::after { content: ""; flex: 1; height: 1px; background: linear-gradient(90deg, rgba(41, 231, 255, 0.6), transparent); }
+        .nqs .seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding: 4px; border-radius: 14px; background: rgba(0, 0, 0, 0.3); box-shadow: inset 0 0 0 1px rgba(183, 155, 216, 0.22); }
+        .nqs .seg button { height: 36px; border-radius: 10px; font: 600 13px/1 var(--font-ui); color: var(--mute); }
+        .nqs .seg button.on { color: #1a0636; background: linear-gradient(90deg, var(--sun), var(--pink)); box-shadow: 0 0 12px rgba(255, 79, 154, 0.6); }
+        .nqs .seg button:disabled { opacity: 0.4; cursor: default; }
+        .nqs .list { display: flex; flex-direction: column; gap: 2px; margin-top: -6px; }
+        .nqs .item { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: 10px; width: 100%; text-align: left; }
+        .nqs .item:hover { background: rgba(41, 231, 255, 0.08); }
+        .nqs .item .n { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+        .nqs .item .m { font-size: 12px; color: var(--mute); white-space: nowrap; }
+        .nqs .item.cur .n { color: var(--cyan); text-shadow: 0 0 8px rgba(41, 231, 255, 0.6); }
+        .nqs .item.cur .m { color: #c9f6ff; }
+        .nqs .lvl { display: inline-flex; align-items: flex-end; gap: 2px; height: 14px; flex: none; }
+        .nqs .lvl i { width: 3px; border-radius: 1px; background: rgba(183, 155, 216, 0.3); }
+        .nqs .lvl i:nth-child(1) { height: 25%; } .nqs .lvl i:nth-child(2) { height: 50%; } .nqs .lvl i:nth-child(3) { height: 75%; } .nqs .lvl i:nth-child(4) { height: 100%; }
+        .nqs .lvl i.on { background: var(--cyan); box-shadow: 0 0 4px var(--cyan); }
+        .nqs .item.cur .lvl i.on { background: var(--sun); box-shadow: 0 0 4px var(--sun); }
+        .nqs .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: rgba(183, 155, 216, 0.35); }
+        .nqs .dot.on { background: var(--cyan); box-shadow: 0 0 8px var(--cyan); }
+        .nqs .err { min-height: 1em; font-size: 12px; color: var(--pink); }
+      </style>
+      <div class="nqs" data-no-drag>
+        <header>
+          <h2>Control</h2>
+          <div class="stat"><b class="q-bat">--</b><span class="q-left">battery</span></div>
+        </header>
+        <div class="tiles">
+          <button type="button" class="tile q-wifi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 8.5a15 15 0 0 1 20 0M5 12a10.5 10.5 0 0 1 14 0M8.5 15.5a5.5 5.5 0 0 1 7 0"/><circle cx="12" cy="19" r="1.3" fill="currentColor"/></svg><span><span class="t">Wi-Fi</span><span class="s">--</span></span></button>
+          <button type="button" class="tile q-bt"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7l10 10-5 4V3l5 4L7 17"/></svg><span><span class="t">Bluetooth</span><span class="s">--</span></span></button>
+          <button type="button" class="tile q-plane"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M10.5 3.5c0-1 .7-1.5 1.5-1.5s1.5.5 1.5 1.5V9l8 5v2l-8-2.5V18l2.5 2v1.5L12 20.5l-4 1V20l2.5-2v-4.5L2.5 16v-2l8-5z"/></svg><span><span class="t">Airplane</span><span class="s">--</span></span></button>
+          <button type="button" class="tile warm q-night"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5z"/></svg><span><span class="t">Night light</span><span class="s">--</span></span></button>
+          <button type="button" class="tile warm q-dnd"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 9a6 6 0 0 1 12 0c0 6 2.5 8 2.5 8h-17S6 15 6 9M10 21a2 2 0 0 0 4 0"/><path d="M3 3l18 18"/></svg><span><span class="t">Do not disturb</span><span class="s">--</span></span></button>
+          <button type="button" class="tile q-save" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3" y="7" width="16" height="10" rx="2"/><path d="M21 10.5v3"/><path d="M11.5 8.5l-2.5 3.5h4l-2.5 3.5"/></svg><span><span class="t">Energy saver</span><span class="s">--</span></span></button>
+        </div>
+        <div class="slide">
+          <button type="button" class="q-mute" aria-label="Mute"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/></svg></button>
+          <input type="range" class="q-vol" min="0" max="100" value="0" aria-label="Volume" />
+          <output class="q-vol-o">--</output>
+        </div>
+        <div class="slide">
+          <button type="button" class="q-sun" aria-label="Brightness" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button>
+          <input type="range" class="q-bright" min="0" max="100" value="0" aria-label="Brightness" />
+          <output class="q-bright-o">--</output>
+        </div>
+        <h3>Power mode</h3>
+        <div class="seg q-power">
+          <button type="button" data-mode="efficiency">Efficiency</button>
+          <button type="button" data-mode="balanced">Balanced</button>
+          <button type="button" data-mode="performance">Performance</button>
+        </div>
+        <h3>Networks</h3>
+        <div class="list q-nets"></div>
+        <h3>Devices</h3>
+        <div class="list q-devs"></div>
+        <div class="err"></div>
+      </div>
+      <script>
+        (function neonQuick() {
+          var root = document.currentScript && document.currentScript.closest('.spawn-surface');
+          if (!root) return;
+          function $(s) { return root.querySelector(s); }
+          function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+          function sub(btn, text) { btn.querySelector('.s').textContent = text; }
+          function level(pct) { // four bars from a 0-100 signal
+            var w = el('span', 'lvl'), n = pct >= 80 ? 4 : pct >= 55 ? 3 : pct >= 30 ? 2 : 1;
+            for (var i = 0; i < 4; i++) w.appendChild(el('i', i < n ? 'on' : null));
+            return w;
+          }
+          function paintRange(r) { r.style.setProperty('--v', r.value + '%'); }
+          (function whenSdk(fn) { window.versailles && typeof window.versailles.for === 'function' ? fn(window.versailles) : setTimeout(function () { whenSdk(fn); }, 50); })(function (v) {
+            var me = v.for('neon-qs');
+            var err = $('.err');
+            // A change answers the new state (or a reason Windows refused).
+            function act(p, redraw) {
+              err.textContent = '';
+              return p.then(function (s) { if (s && s.host !== false && redraw) redraw(s); return s; },
+                function (e) { err.textContent = String((e && e.message) || e); });
+            }
+
+            var radios = {}, ssid = '';
+            function paintRadios(r) {
+              radios = r || {};
+              var w = $('.q-wifi'), b = $('.q-bt'), p = $('.q-plane');
+              w.classList.toggle('on', radios.wifi === true); w.disabled = radios.wifi == null;
+              b.classList.toggle('on', radios.bluetooth === true); b.disabled = radios.bluetooth == null;
+              p.classList.toggle('on', radios.airplane === true); p.disabled = radios.airplane == null;
+              sub(w, radios.wifi === false ? 'Off' : (ssid || 'On'));
+              sub(p, radios.airplane ? 'On' : 'Off');
+            }
+            me.on('radios', paintRadios).catch(function () {});
+            $('.q-wifi').onclick = function () { var to = !radios.wifi; act(me.radios.set('wifi', to), paintRadios); };
+            $('.q-bt').onclick = function () { var to = !radios.bluetooth; act(me.radios.set('bluetooth', to), paintRadios); };
+            $('.q-plane').onclick = function () { act(me.radios.setAirplane(!radios.airplane), paintRadios); };
+
+            me.on('network', function (n) {
+              if (!n) return;
+              ssid = n.online ? (n.name || 'Online') : 'Offline';
+              paintRadios(radios);
+            }).catch(function () {});
+
+            me.on('battery', function (b) {
+              if (!b) return;
+              $('.q-bat').textContent = b.present ? b.percent + '%' : 'AC';
+              var left = b.secondsLeft > 0 ? Math.floor(b.secondsLeft / 3600) + ' h ' + Math.round((b.secondsLeft % 3600) / 60) + ' min left' : (b.charging ? 'charging' : b.plugged ? 'plugged in' : 'battery');
+              $('.q-left').textContent = left;
+              var s = $('.q-save');
+              s.classList.toggle('on', !!b.saver);
+              sub(s, b.saver ? 'On' : 'Off');
+            }).catch(function () {});
+
+            var dnd = null;
+            function paintDnd(d) {
+              if (!d) return; dnd = d;
+              var t = $('.q-dnd');
+              t.disabled = !d.supported;
+              t.classList.toggle('on', d.mode && d.mode !== 'off');
+              sub(t, d.mode === 'priority' ? 'Priority only' : d.mode === 'alarms' ? 'Alarms only' : 'Off');
+            }
+            me.on('dnd', paintDnd).catch(function () {});
+            $('.q-dnd').onclick = function () { var to = dnd && dnd.mode !== 'off' ? 'off' : 'priority'; act(me.dnd.set(to), paintDnd); };
+
+            var night = null;
+            function paintDisplay(d) {
+              if (!d) return;
+              night = d.nightLight || null;
+              var t = $('.q-night');
+              t.disabled = !(night && night.supported);
+              t.classList.toggle('on', !!(night && night.on));
+              sub(t, night && night.on ? 'On' : 'Off');
+              var screen = (d.brightness || [])[0], r = $('.q-bright');
+              $('.q-sun').disabled = true;
+              r.disabled = !screen;
+              r.dataset.id = screen ? screen.id : '';
+              if (screen && document.activeElement !== r) { r.value = screen.level; paintRange(r); $('.q-bright-o').textContent = screen.level; }
+              if (!screen) $('.q-bright-o').textContent = '--';
+            }
+            me.on('display', paintDisplay).catch(function () {});
+            $('.q-night').onclick = function () { act(me.display.setNightLight(!(night && night.on)), paintDisplay); };
+            $('.q-bright').oninput = function () { paintRange(this); $('.q-bright-o').textContent = this.value; };
+            $('.q-bright').onchange = function () { act(me.display.setBrightness(this.dataset.id, Number(this.value))); };
+
+            var muted = false;
+            me.on('audio', function (a) {
+              if (!a) return;
+              muted = !!a.muted;
+              var r = $('.q-vol');
+              if (document.activeElement !== r) { r.value = a.volume == null ? 0 : a.volume; paintRange(r); }
+              $('.q-vol-o').textContent = muted ? 'off' : r.value;
+              $('.q-mute').classList.toggle('on', muted);
+              $('.q-mute').setAttribute('aria-label', muted ? 'Unmute' : 'Mute');
+            }).catch(function () {});
+            $('.q-vol').oninput = function () { paintRange(this); $('.q-vol-o').textContent = this.value; act(me.audioControl.setVolume(Number(this.value))); };
+            $('.q-mute').onclick = function () { act(me.audioControl.setMute(!muted)); };
+
+            function paintPower(p) {
+              if (!p) return;
+              root.querySelectorAll('.q-power button').forEach(function (b) {
+                b.classList.toggle('on', b.dataset.mode === p.mode);
+                b.disabled = !p.supported;
+              });
+            }
+            me.on('power-mode', paintPower).catch(function () {});
+            root.querySelectorAll('.q-power button').forEach(function (b) {
+              b.onclick = function () { act(me.powerMode.set(b.dataset.mode), paintPower); };
+            });
+
+            // Wi-Fi: the strongest four in range; a click joins a known one.
+            // A new secured network needs its password typed in Windows' Wi-Fi settings.
+            function paintNets(w) {
+              var box = $('.q-nets'); box.replaceChildren();
+              if (!w) return;
+              if (w.access === 'location-denied') { box.appendChild(el('div', 'item m', 'Windows needs location access to list networks')); return; }
+              if (w.access === 'no-adapter') { box.appendChild(el('div', 'item m', 'No Wi-Fi adapter')); return; }
+              (w.networks || []).slice(0, 4).forEach(function (n) {
+                var row = el('button', 'item' + (n.connected ? ' cur' : ''));
+                row.type = 'button';
+                row.appendChild(level(n.signal));
+                row.appendChild(el('span', 'n', n.ssid)); // names come from the air: text only
+                row.appendChild(el('span', 'm', n.connected ? 'Connected' : n.secure ? (n.known ? 'Saved' : 'Secured') : 'Open'));
+                row.onclick = function () {
+                  if (n.connected) act(me.wifi.disconnect(), paintNets);
+                  else act(me.wifi.connect(n.ssid), paintNets); // a new secured network: Windows says a password is needed
+                };
+                box.appendChild(row);
+              });
+            }
+            me.on('wifi', paintNets).catch(function () {});
+            me.wifi.scan().catch(function () {});
+            me.on('shown', function () { me.wifi.scan().catch(function () {}); }).catch(function () {});
+
+            function paintDevs(b) {
+              var box = $('.q-devs'); box.replaceChildren();
+              var list = (b && b.devices) || [];
+              var on = list.filter(function (d) { return d.connected; }).length;
+              sub($('.q-bt'), radios.bluetooth === false ? 'Off' : on ? on + ' connected' : 'On');
+              list.forEach(function (d) {
+                var row = el('button', 'item' + (d.connected ? ' cur' : ''));
+                row.type = 'button';
+                row.appendChild(el('span', 'dot' + (d.connected ? ' on' : '')));
+                row.appendChild(el('span', 'n', d.name));
+                row.appendChild(el('span', 'm', d.audio ? (d.connected ? 'Disconnect' : 'Connect') : (d.connected ? 'Connected' : 'Not connected')));
+                if (d.audio) row.onclick = function () { act(d.connected ? me.bluetooth.disconnect(d.id) : me.bluetooth.connect(d.id)); };
+                else row.disabled = true;
+                box.appendChild(row);
+              });
+              if (!list.length) box.appendChild(el('div', 'item m', 'No paired devices'));
+            }
+            me.on('bluetooth', paintDevs).catch(function () {});
+          });
+        })();
+      </script>
+    </template>
+
+    <div id="preview-root" hidden></div>
+
+    <script>
+      (function boot() {
+        const params = new URLSearchParams(location.search || '');
+        let m = (params.get('m') || 'desktop').trim().toLowerCase().replace(/-/g, '_');
+        if (m === 'spawnables') m = 'spawn';
+        if (m === 'actionbar') m = 'action_bar';
+        const id = (params.get('id') || '').trim();
+        document.documentElement.dataset.mode = m;
+        document.body.dataset.mode = m;
+        const desktop = document.getElementById('desktop');
+        const preview = document.getElementById('preview-root');
+        // Scripts cloned out of a <template> run once when the clone enters the document.
+        function mountSpawn(tpl, solo) {
+          const wrap = document.createElement('section');
+          wrap.className = 'spawn-surface' + (solo ? ' solo' : '');
+          wrap.dataset.id = tpl.getAttribute('data-id') || '';
+          const hooks = tpl.getAttribute('data-hooks');
+          if (hooks) wrap.setAttribute('data-hooks', hooks);
+          wrap.appendChild(tpl.content.cloneNode(true));
+          preview.appendChild(wrap);
+          return wrap;
+        }
+        const spawnables = function () { return Array.prototype.slice.call(document.querySelectorAll('template.spawnable')); };
+        if (m === 'desktop') return;
+        desktop.hidden = true;
+        preview.hidden = false;
+        document.body.classList.add('preview');
+        if (m === 'widgets') {
+          document.body.classList.add('preview-widgets');
+          Array.prototype.slice.call(desktop.querySelectorAll('article.widget')).forEach(function (el) { preview.appendChild(el); });
+          return;
+        }
+        if (m === 'spawn') {
+          if (id) {
+            document.documentElement.classList.add('overlay');
+            const tpl = spawnables().find(function (t) { return (t.getAttribute('data-id') || '').toLowerCase() === id.toLowerCase(); });
+            if (!tpl) { const p = document.createElement('p'); p.className = 'unknown-spawn'; p.textContent = 'unknown spawnable: ' + id; preview.appendChild(p); return; }
+            if (!(window.__TAURI_INTERNALS__ || window.__TAURI__)) {
+              if (tpl.getAttribute('data-w')) document.body.style.width = tpl.getAttribute('data-w') + 'px';
+              if (tpl.getAttribute('data-h')) document.body.style.height = tpl.getAttribute('data-h') + 'px';
+            }
+            mountSpawn(tpl, true);
+            return;
+          }
+          spawnables().forEach(function (t) { mountSpawn(t, false); });
+          return;
+        }
+        const p = document.createElement('p');
+        p.className = 'unknown-spawn';
+        p.textContent = 'unknown mode: ' + m;
+        preview.appendChild(p);
+      })();
+    </script>
+    <script>
+      (function loadSdk() {
+        if (window.versailles && typeof window.versailles.invoke === 'function') return;
+        var s = document.createElement('script');
+        s.src = location.protocol === 'file:' ? '../.sdk/versailles.js' : '/files/.sdk/versailles.js';
+        document.head.appendChild(s);
+      })();
+    </script>
+
+    <script>
+      /* ---------- wallpaper: sky, striped sun, mountains, moving grid ---------- */
+      (function neonScene() {
+        const cv = document.getElementById('neon-sky');
+        if (!cv || document.body.dataset.mode !== 'desktop') return;
+        const ctx = cv.getContext('2d');
+        const still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        let W = 0, H = 0, DPR = 1, hz = 0, R = 0, sx = 0, sy = 0;
+        let sky, sun, hills, vig;
+        function rng(seed) { return function () { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+        function layer(w, h) { const c = document.createElement('canvas'); c.width = Math.ceil(w * DPR); c.height = Math.ceil(h * DPR); const x = c.getContext('2d'); x.setTransform(DPR, 0, 0, DPR, 0, 0); return [c, x]; }
+
+        function build() {
+          DPR = Math.min(window.devicePixelRatio || 1, 1.5);
+          W = window.innerWidth; H = window.innerHeight;
+          cv.width = Math.ceil(W * DPR); cv.height = Math.ceil(H * DPR);
+          ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+          hz = Math.round(H * 0.64); R = Math.min(W, H) * 0.25; sx = W / 2; sy = hz - R * 0.5;
+          const rand = rng(7);
+
+          // sky + stars + sun glow
+          let x; [sky, x] = layer(W, hz + 2);
+          let g = x.createLinearGradient(0, 0, 0, hz);
+          g.addColorStop(0, '#05010f'); g.addColorStop(0.38, '#13042e'); g.addColorStop(0.7, '#3d0b5e'); g.addColorStop(0.9, '#8e1468'); g.addColorStop(1, '#ff4f8b');
+          x.fillStyle = g; x.fillRect(0, 0, W, hz + 2);
+          for (let i = 0; i < 320; i++) {
+            const px = rand() * W, py = Math.pow(rand(), 1.6) * hz * 0.82, r = rand() < 0.08 ? 1.6 : 0.4 + rand() * 0.9;
+            x.globalAlpha = 0.25 + rand() * 0.75 * (1 - py / hz);
+            x.fillStyle = rand() < 0.2 ? '#9ee9ff' : rand() < 0.3 ? '#ffc4ef' : '#ffffff';
+            x.beginPath(); x.arc(px, py, r, 0, 6.283); x.fill();
+            if (r > 1.5) { x.globalAlpha *= 0.5; x.fillRect(px - 6, py - 0.5, 12, 1); x.fillRect(px - 0.5, py - 6, 1, 12); }
+          }
+          x.globalAlpha = 1;
+          g = x.createRadialGradient(sx, sy, R * 0.6, sx, sy, R * 2.4);
+          g.addColorStop(0, 'rgba(255, 70, 170, 0.55)'); g.addColorStop(0.45, 'rgba(160, 30, 160, 0.22)'); g.addColorStop(1, 'rgba(60, 0, 90, 0)');
+          x.fillStyle = g; x.fillRect(0, 0, W, hz + 2);
+
+          // sun disc
+          [sun, x] = layer(R * 2 + 4, R * 2 + 4);
+          g = x.createLinearGradient(0, 2, 0, R * 2 + 2);
+          g.addColorStop(0, '#fff3a6'); g.addColorStop(0.22, '#ffd23f'); g.addColorStop(0.55, '#ff8a3d'); g.addColorStop(0.8, '#ff3d8b'); g.addColorStop(1, '#d4127a');
+          x.fillStyle = g; x.beginPath(); x.arc(R + 2, R + 2, R, 0, 6.283); x.fill();
+
+          // mountains (static, drawn over the sun)
+          [hills, x] = layer(W, hz + 2);
+          function range(points, fillTop, fillBot, rim, wire) {
+            x.beginPath(); x.moveTo(points[0][0], hz + 1);
+            points.forEach(function (p) { x.lineTo(p[0], p[1]); });
+            x.lineTo(points[points.length - 1][0], hz + 1); x.closePath();
+            const gg = x.createLinearGradient(0, Math.min.apply(null, points.map(function (p) { return p[1]; })), 0, hz);
+            gg.addColorStop(0, fillTop); gg.addColorStop(1, fillBot);
+            x.fillStyle = gg; x.fill();
+            // wireframe facets: each peak down to the foot between its neighbours
+            x.save(); x.clip();
+            x.strokeStyle = wire; x.lineWidth = 1;
+            for (let i = 1; i < points.length - 1; i++) {
+              const p = points[i], a = points[i - 1], b = points[i + 1];
+              if (p[1] > a[1] || p[1] > b[1]) continue;
+              x.beginPath(); x.moveTo(p[0], p[1]); x.lineTo((p[0] + a[0]) / 2 + (p[0] - a[0]) * 0.15, hz); x.stroke();
+              x.beginPath(); x.moveTo(p[0], p[1]); x.lineTo((p[0] + b[0]) / 2 - (b[0] - p[0]) * 0.1, hz); x.stroke();
+              x.beginPath(); x.moveTo(p[0], p[1]); x.lineTo(p[0] + (rand() - 0.5) * 30, hz); x.stroke();
+            }
+            x.restore();
+            x.save(); x.shadowColor = rim; x.shadowBlur = 14; x.strokeStyle = rim; x.lineWidth = 2;
+            x.beginPath(); points.forEach(function (p, i) { i ? x.lineTo(p[0], p[1]) : x.moveTo(p[0], p[1]); }); x.stroke();
+            x.restore();
+          }
+          function ridge(x0, x1, peak, n, seed) {
+            const r2 = rng(seed), pts = [];
+            for (let i = 0; i <= n; i++) {
+              const t = i / n, env = Math.sin(Math.PI * t);
+              const h = (i % 2 ? 1 : 0.55 + r2() * 0.25) * peak * Math.pow(env, 0.8) * (0.7 + r2() * 0.3);
+              pts.push([x0 + (x1 - x0) * t + (r2() - 0.5) * (x1 - x0) / n * 0.4, hz - h]);
+            }
+            pts[0][1] = hz; pts[n][1] = hz;
+            return pts;
+          }
+          range(ridge(-W * 0.05, W * 0.55, H * 0.11, 14, 3), '#2a0b52', '#4a0d5e', 'rgba(255, 90, 210, 0.9)', 'rgba(255, 90, 210, 0.16)');
+          range(ridge(W * 0.45, W * 1.05, H * 0.10, 14, 11), '#2a0b52', '#4a0d5e', 'rgba(255, 90, 210, 0.9)', 'rgba(255, 90, 210, 0.16)');
+          range(ridge(-W * 0.04, W * 0.36, H * 0.24, 8, 5), '#10032a', '#1d0540', 'rgba(41, 231, 255, 0.95)', 'rgba(41, 231, 255, 0.22)');
+          range(ridge(W * 0.64, W * 1.04, H * 0.22, 8, 9), '#10032a', '#1d0540', 'rgba(41, 231, 255, 0.95)', 'rgba(41, 231, 255, 0.22)');
+
+          // vignette
+          [vig, x] = layer(W, H);
+          g = x.createRadialGradient(W / 2, H * 0.55, Math.min(W, H) * 0.35, W / 2, H * 0.55, Math.max(W, H) * 0.75);
+          g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(3,0,12,0.6)');
+          x.fillStyle = g; x.fillRect(0, 0, W, H);
+        }
+
+        function frame(t) {
+          const s = t / 1000;
+          ctx.drawImage(sky, 0, 0, W, hz + 2);
+          // sun with sliding stripes cut into its lower half
+          ctx.save();
+          ctx.beginPath(); ctx.rect(0, 0, W, hz); ctx.clip();
+          const top = sy - R - 2;
+          ctx.drawImage(sun, sx - R - 2, top, R * 2 + 4, R * 2 + 4);
+          const start = sy - R * 0.18, span = hz - start, gap = span / 6;
+          ctx.globalCompositeOperation = 'destination-out';
+          for (let k = -1; k < 9; k++) {
+            const y = start + ((k * gap + s * 14) % span + span) % span;
+            const f = (y - start) / span;
+            ctx.fillRect(sx - R - 4, y, R * 2 + 8, 1.5 + f * 13);
+          }
+          ctx.restore();
+          // the stripes cut the sky too: paint the sky back behind the sun
+          ctx.save(); ctx.globalCompositeOperation = 'destination-over'; ctx.drawImage(sky, 0, 0, W, hz + 2); ctx.restore();
+          ctx.drawImage(hills, 0, 0, W, hz + 2);
+
+          // floor
+          const D = H - hz;
+          let g = ctx.createLinearGradient(0, hz, 0, H);
+          g.addColorStop(0, '#3a0756'); g.addColorStop(0.25, '#1c0436'); g.addColorStop(1, '#07011a');
+          ctx.fillStyle = g; ctx.fillRect(0, hz, W, D);
+          g = ctx.createRadialGradient(sx, hz, 10, sx, hz, R * 1.6);
+          g.addColorStop(0, 'rgba(255, 120, 180, 0.45)'); g.addColorStop(1, 'rgba(255, 60, 160, 0)');
+          ctx.fillStyle = g; ctx.fillRect(sx - R * 1.6, hz, R * 3.2, R * 1.6);
+
+          // grid: horizontals in perspective, drifting toward the viewer
+          const o = (s * 0.9) % 1;
+          ctx.lineCap = 'round';
+          for (let pass = 0; pass < 2; pass++) {
+            ctx.strokeStyle = pass ? '#ff5ce1' : 'rgba(255, 43, 214, 0.28)';
+            for (let k = 0; k < 34; k++) {
+              const z = 1 + k - o;
+              if (z <= 0.2) continue;
+              const y = hz + D * 0.9 / z;
+              if (y > H + 4) continue;
+              const near = Math.min(1, 1.6 / z);
+              ctx.globalAlpha = pass ? 0.25 + near * 0.75 : near;
+              ctx.lineWidth = pass ? 0.8 + near * 1.6 : 3 + near * 6;
+              ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+            }
+            const n = 26;
+            for (let i = -n; i <= n; i++) {
+              const xb = sx + i * (W * 0.11);
+              const a = Math.max(0.15, 1 - Math.abs(i) / n);
+              ctx.globalAlpha = pass ? 0.35 + a * 0.6 : a * 0.8;
+              ctx.lineWidth = pass ? 1.4 : 6;
+              ctx.beginPath(); ctx.moveTo(sx + i * 3, hz); ctx.lineTo(xb, H + 2); ctx.stroke();
+            }
+          }
+          ctx.globalAlpha = 1;
+          // haze over the far grid and the horizon line
+          g = ctx.createLinearGradient(0, hz - 30, 0, hz + D * 0.32);
+          g.addColorStop(0, 'rgba(255, 70, 170, 0)'); g.addColorStop(0.18, 'rgba(255, 90, 190, 0.55)'); g.addColorStop(0.32, 'rgba(110, 10, 120, 0.75)'); g.addColorStop(1, 'rgba(40, 4, 70, 0)');
+          ctx.fillStyle = g; ctx.fillRect(0, hz - 30, W, D * 0.32 + 30);
+          ctx.fillStyle = '#ffb3e8'; ctx.globalAlpha = 0.9; ctx.fillRect(0, hz - 1, W, 2); ctx.globalAlpha = 1;
+          ctx.drawImage(vig, 0, 0, W, H);
+        }
+
+        let last = 0, running = true, raf = 0;
+        function loop(t) {
+          raf = requestAnimationFrame(loop);
+          if (t - last < 33) return; // 30 fps is plenty for a wallpaper
+          last = t;
+          frame(t);
+        }
+        function startLoop() { if (!raf && !still) raf = requestAnimationFrame(loop); }
+        function stopLoop() { cancelAnimationFrame(raf); raf = 0; }
+        build();
+        frame(performance.now());
+        startLoop();
+        window.addEventListener('resize', function () { build(); frame(performance.now()); });
+        document.addEventListener('visibilitychange', function () { document.hidden ? stopLoop() : startLoop(); });
+        // Stop drawing while nobody is at the keyboard; one still frame stays up.
+        (function whenSdk(fn) { window.versailles && typeof window.versailles.for === 'function' ? fn(window.versailles) : setTimeout(function () { whenSdk(fn); }, 50); })(function (v) {
+          const me = v.for('neon-clock');
+          me.on('idle', stopLoop).catch(function () {});
+          me.on('active', startLoop).catch(function () {});
+        });
+        if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { frame(performance.now()); });
+      })();
+    </script>
+
+    <script>
+      (function neonClock() {
+        const fill = document.getElementById('nc-fill');
+        const part = document.getElementById('nc-part');
+        const date = document.getElementById('nc-date');
+        if (!fill) return;
+        const put = function (el, t) { if (el.textContent !== t) el.textContent = t; };
+        function tick() {
+          const n = new Date();
+          const t = String(n.getHours()).padStart(2, '0') + ':' + String(n.getMinutes()).padStart(2, '0');
+          put(fill, t);
+          const h = n.getHours();
+          const when = h < 5 ? 'night' : h < 12 ? 'morning' : h < 17 ? 'afternoon' : h < 21 ? 'evening' : 'night';
+          put(part, n.toLocaleDateString('en-US', { weekday: 'long' }) + ' ' + when);
+          put(date, n.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }).toUpperCase());
+        }
+        tick();
+        setInterval(tick, 1000);
+      })();
+    </script>
+
+    <script>
+      (function neonTape() {
+        const shell = document.getElementById('nt');
+        if (!shell) return;
+        const $ = function (id) { return document.getElementById(id); };
+        const eq = $('nt-eq');
+        // The equalizer is decoration: Windows does not hand pages the audio signal.
+        for (let i = 0; i < 18; i++) {
+          const b = document.createElement('b');
+          b.style.animationDelay = (-(i * 0.37) % 0.9).toFixed(2) + 's';
+          b.style.animationDuration = (0.55 + ((i * 7) % 5) * 0.12).toFixed(2) + 's';
+          b.style.height = (22 + ((i * 37) % 60)) + '%';
+          eq.appendChild(b);
+        }
+        const PLAY = '<path d="M8 5v14l11-7z"/>', PAUSE = '<path d="M6 5h4v14H6zM14 5h4v14h-4z"/>';
+        let lastArt = '', info = null, at = 0;
+        function fmt(ms) { if (!(ms >= 0)) return '--:--'; const s = Math.floor(ms / 1000); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
+        function idle(i) { return !i || i.host === false || i.hasSession === false || i.status === 'no-session'; }
+        function reels(frac) { // tape moves from the left reel to the right one
+          const f = Math.max(0, Math.min(1, frac || 0));
+          $('nt-pack-l').setAttribute('r', (16 + 12 * (1 - f)).toFixed(1));
+          $('nt-pack-r').setAttribute('r', (16 + 12 * f).toFixed(1));
+        }
+        function paintTime() {
+          if (!info || idle(info)) return;
+          const pos = Math.min(info.durationMs || 0, (info.positionMs || 0) + (info.status === 'playing' ? Date.now() - at : 0));
+          $('nt-time').textContent = fmt(pos);
+          reels(info.durationMs > 0 ? pos / info.durationMs : 0);
+        }
+        function render(i) {
+          if (!i) return;
+          info = i; at = Date.now();
+          const off = idle(i);
+          shell.classList.toggle('idle', off);
+          shell.classList.toggle('playing', !off && i.status === 'playing');
+          ['nt-prev', 'nt-play', 'nt-next'].forEach(function (b) { $(b).disabled = off; });
+          if (off) {
+            $('nt-title').textContent = 'Nothing playing';
+            $('nt-artist').textContent = i.host === false ? 'Open in Versailles for music' : 'Play a song to load the tape';
+            $('nt-art').removeAttribute('src'); lastArt = '';
+            $('nt-time').textContent = '--:--'; $('nt-len').textContent = '--:--';
+            reels(0);
+            return;
+          }
+          $('nt-title').textContent = i.title || 'Untitled';
+          $('nt-artist').textContent = i.artist || i.source || '';
+          if (i.thumbnailDataUrl && i.thumbnailDataUrl !== lastArt) { $('nt-art').src = i.thumbnailDataUrl; lastArt = i.thumbnailDataUrl; }
+          if (!i.thumbnailDataUrl) { $('nt-art').removeAttribute('src'); lastArt = ''; }
+          $('nt-len').textContent = fmt(i.durationMs);
+          $('nt-play-ico').innerHTML = i.status === 'playing' ? PAUSE : PLAY;
+          paintTime();
+        }
+        setInterval(paintTime, 1000);
+        (function whenSdk(fn) { window.versailles && typeof window.versailles.for === 'function' ? fn(window.versailles) : setTimeout(function () { whenSdk(fn); }, 50); })(function (v) {
+          const media = v.for('neon-tape').media;
+          media.onChange(render).catch(function () {});
+          media.now().then(render, function () {});
+          function control(fn) { return function (e) { e.stopPropagation(); fn().then(function () { return media.now(); }).then(render).catch(function () {}); }; }
+          $('nt-prev').addEventListener('click', control(function () { return media.previous(); }));
+          $('nt-play').addEventListener('click', control(function () { return media.playPause(); }));
+          $('nt-next').addEventListener('click', control(function () { return media.next(); }));
+          $('nt-deck').addEventListener('pointerdown', function (e) { e.stopPropagation(); }, true);
+        });
+      })();
+    </script>
+
+    <script>
+      (function neonDash() {
+        const $ = function (id) { return document.getElementById(id); };
+        if (!$('nd-gauge')) return;
+        // ticks around the arc: 220 degrees, from E (left) to F (right)
+        const ticks = $('nd-ticks');
+        for (let i = 0; i <= 20; i++) {
+          const a = (-200 + i * 11) * Math.PI / 180, big = i % 5 === 0;
+          const r1 = big ? 72 : 78, r2 = 86;
+          const l = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+          l.setAttribute('x1', 118 + r1 * Math.cos(a)); l.setAttribute('y1', 118 + r1 * Math.sin(a));
+          l.setAttribute('x2', 118 + r2 * Math.cos(a)); l.setAttribute('y2', 118 + r2 * Math.sin(a));
+          l.setAttribute('stroke', big ? '#29e7ff' : 'rgba(183,155,216,0.55)');
+          l.setAttribute('stroke-width', big ? 3 : 1.5);
+          l.setAttribute('stroke-linecap', 'round');
+          ticks.appendChild(l);
+        }
+        function battery(b) {
+          if (!b) return;
+          if (b.host === false) { $('nd-unit').textContent = 'no host'; return; }
+          if (!b.present) {
+            $('nd-pct').innerHTML = 'AC'; $('nd-unit').textContent = 'mains power';
+            $('nd-fill').setAttribute('stroke-dasharray', '100 100'); $('nd-needle').style.transform = 'rotate(110deg)';
+            $('nd-left').textContent = 'No battery'; $('nd-plug').textContent = 'Plugged in';
+            return;
+          }
+          const p = Math.max(0, Math.min(100, b.percent || 0));
+          $('nd-pct').innerHTML = p + '<small>%</small>';
+          $('nd-unit').textContent = b.saver ? 'energy saver' : 'battery';
+          $('nd-fill').setAttribute('stroke-dasharray', p + ' 100');
+          $('nd-needle').style.transform = 'rotate(' + (-110 + p * 2.2) + 'deg)';
+          const s = b.secondsLeft;
+          $('nd-left').textContent = s > 0 ? Math.floor(s / 3600) + ' h ' + String(Math.round((s % 3600) / 60)).padStart(2, '0') + ' min to empty' : (b.charging ? 'Filling up' : 'Range unknown');
+          $('nd-plug').textContent = b.charging ? 'Charging' : b.plugged ? 'Plugged in' : 'On battery';
+        }
+        function network(n) {
+          if (!n) return;
+          const bars = n.online ? (n.wifi ? Math.max(1, Math.min(5, n.signalBars || 0)) : 5) : 0;
+          document.querySelectorAll('#nd-bars b').forEach(function (b, i) { b.classList.toggle('on', i < bars); });
+          $('nd-ssid').textContent = n.online ? (n.name || (n.wifi ? 'Wi-Fi' : 'Ethernet')) : 'Offline';
+          $('nd-net').textContent = !n.online ? 'No connection' : n.level === 'internet' ? (n.wifi ? 'Wi-Fi, online' : 'Wired, online') : n.level === 'constrained' ? 'Sign-in needed' : 'Local network only';
+        }
+        (function whenSdk(fn) { window.versailles && typeof window.versailles.for === 'function' ? fn(window.versailles) : setTimeout(function () { whenSdk(fn); }, 50); })(function (v) {
+          const me = v.for('neon-dash');
+          me.on('battery', battery).catch(function () {});
+          me.on('network', network).catch(function () {});
+        });
+      })();
+    </script>
+  </body>
+</html>

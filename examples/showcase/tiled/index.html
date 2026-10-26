@@ -1,0 +1,959 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>Tiled</title>
+    <!--
+      Tiled: a Versailles showcase desktop in the style of a Linux "rice"
+      (a tiling window manager with a pill bar), in the Catppuccin Mocha palette.
+
+      Copy this file to %USERPROFILE%\Documents\Widgets\desktop\index.html.
+      Pieces:
+        article.widget  tl-fetch     a fetch-style system card (battery, network, windows, keyboard, media)
+        article.widget  tl-cal       clock and month calendar
+        article.widget  tl-media     now playing (media)
+        template        tl-bar       floating pill bar on the top edge
+        template        tl-launch    launcher in the middle of the screen, on the Windows key
+      CPU and memory in the bar come from the host's sys_stats; outside
+      Versailles they are simulated and marked "demo".
+    -->
+    <script type="application/json" id="versailles">
+    {
+      "shell": { "hideTaskbar": true }
+    }
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;0,800;1,400&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        /* Catppuccin Mocha */
+        --crust: #11111b; --mantle: #181825; --base: #1e1e2e;
+        --surface0: #313244; --surface1: #45475a; --surface2: #585b70;
+        --overlay0: #6c7086; --overlay1: #7f849c; --subtext0: #a6adc8; --subtext1: #bac2de; --text: #cdd6f4;
+        --lavender: #b4befe; --blue: #89b4fa; --sapphire: #74c7ec; --sky: #89dceb; --teal: #94e2d5;
+        --green: #a6e3a1; --yellow: #f9e2af; --peach: #fab387; --maroon: #eba0ac; --red: #f38ba8;
+        --mauve: #cba6f7; --pink: #f5c2e7; --flamingo: #f2cdcd; --rosewater: #f5e0dc;
+        --mono: "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+        --gap: 14px;
+        --round: 14px;
+      }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body { width: 100%; height: 100%; }
+      body { background: var(--crust); color: var(--text); font: 500 14px/1.45 var(--mono); -webkit-font-smoothing: antialiased; overflow: hidden; }
+      html.overlay, html.overlay body { width: 100% !important; height: 100% !important; overflow: hidden; background: transparent; }
+      button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+      button:focus-visible { outline: 2px solid var(--mauve); outline-offset: 2px; }
+
+      /* ---------- wallpaper ---------- */
+      #desktop { position: fixed; inset: 0; overflow: hidden; }
+      #scene { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+      .twinkle { animation: tw 5s ease-in-out infinite alternate; }
+      @keyframes tw { from { opacity: 0.25; } to { opacity: 1; } }
+
+      /* the widgets sit in a tiling layout: one master, two stacked */
+      .tiles {
+        position: absolute; left: 26px; top: 26px; bottom: 26px; width: min(45vw, 860px);
+        display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: auto minmax(0, 1fr); gap: var(--gap);
+      }
+      .win {
+        position: relative; min-width: 0; min-height: 0; border-radius: var(--round); overflow: hidden;
+        background: rgba(17, 17, 27, 0.80);
+        -webkit-backdrop-filter: blur(18px) saturate(1.2); backdrop-filter: blur(18px) saturate(1.2);
+        box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
+      }
+      .win::before { /* the window border: mauve to blue on the focused tile, grey on the others */
+        content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 2px; pointer-events: none;
+        background: var(--surface0);
+        -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude;
+      }
+      .win.active::before { background: linear-gradient(45deg, var(--mauve), var(--blue)); }
+      .titlebar { display: flex; align-items: center; gap: 10px; padding: 12px 18px 0; color: var(--overlay1); font-size: 13px; }
+      .titlebar b { color: var(--green); font-weight: 700; }
+      .titlebar i { font-style: normal; color: var(--blue); }
+
+      /* fetch */
+      .fetch { grid-column: 1 / -1; }
+      .fetch .body { display: grid; grid-template-columns: auto 1fr; gap: 34px; padding: 16px 26px 24px; align-items: start; }
+      .logo {
+        font: 800 17px/1.12 var(--mono); white-space: pre; letter-spacing: 0;
+        background: linear-gradient(180deg, var(--yellow) 0%, var(--peach) 22%, var(--pink) 40%, var(--mauve) 68%, var(--blue) 100%);
+        -webkit-background-clip: text; background-clip: text; color: transparent;
+        padding-top: 6px;
+      }
+      .facts { min-width: 0; font-size: 15px; line-height: 1.62; }
+      .facts .who { font-size: 17px; font-weight: 800; }
+      .facts .who span { color: var(--mauve); }
+      .facts .who em { color: var(--blue); font-style: normal; }
+      .facts .rule { color: var(--surface2); letter-spacing: 0; overflow: hidden; white-space: nowrap; }
+      .facts dl { display: grid; grid-template-columns: 7.2em 1fr; }
+      .facts dt { color: var(--mauve); font-weight: 700; }
+      .facts dd { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .facts dd .dim { color: var(--overlay1); }
+      .swatches { display: flex; gap: 6px; margin-top: 14px; }
+      .swatches i { width: 30px; height: 18px; border-radius: 5px; }
+
+      /* clock + calendar */
+      .cal { padding: 0 0 18px; display: flex; flex-direction: column; }
+      .cal .now { padding: 14px 22px 4px; display: flex; align-items: baseline; gap: 12px; }
+      .cal .hm { font: 800 76px/1 var(--mono); letter-spacing: -0.04em; color: var(--text); font-variant-numeric: tabular-nums; }
+      .cal .s { font: 700 22px/1 var(--mono); color: var(--mauve); font-variant-numeric: tabular-nums; }
+      .cal .day { padding: 2px 22px 16px; color: var(--subtext0); font-size: 14px; }
+      .cal .day b { color: var(--peach); font-weight: 700; }
+      .grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; padding: 0 16px; font-variant-numeric: tabular-nums; }
+      .grid span { text-align: center; padding: 9px 0; border-radius: 9px; font-size: 15px; color: var(--subtext1); }
+      .grid .wd { color: var(--overlay1); font-weight: 700; font-size: 12.5px; }
+      .grid .wd.we, .grid .we { color: var(--maroon); }
+      .grid .out { color: var(--surface2); }
+      .grid .today { background: var(--mauve); color: var(--crust); font-weight: 800; }
+
+      /* media */
+      .media { padding: 16px 18px 18px; display: flex; flex-direction: column; gap: 12px; }
+      .media .art { position: relative; flex: 1; min-height: 0; border-radius: 10px; overflow: hidden; background: var(--surface0); }
+      .media .art img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+      .media .art img:not([src]) { display: none; }
+      .media .art .src { position: absolute; left: 10px; top: 10px; padding: 3px 9px; border-radius: 7px; background: rgba(17, 17, 27, 0.78); color: var(--green); font-size: 12px; font-weight: 700; }
+      .media .t { font-size: 18px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.2; }
+      .media .a { font-size: 14px; color: var(--subtext0); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+      .media .bar { height: 6px; border-radius: 3px; background: var(--surface0); overflow: hidden; }
+      .media .bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--mauve), var(--pink)); border-radius: 3px; }
+      .media .row { display: flex; align-items: center; justify-content: space-between; color: var(--overlay1); font-size: 13px; font-variant-numeric: tabular-nums; }
+      .media .ctl { display: flex; align-items: center; gap: 6px; }
+      .media .ctl button { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; color: var(--lavender); }
+      .media .ctl button:hover { background: var(--surface0); }
+      .media .ctl button.pp { background: var(--mauve); color: var(--crust); }
+      .media .ctl button:disabled { opacity: 0.35; cursor: default; }
+      .media .ctl svg { width: 18px; height: 18px; fill: currentColor; display: block; }
+      .media.idle .t { color: var(--overlay1); }
+
+      /* ---------- previews ---------- */
+      #preview-root { display: none; }
+      body.preview { overflow: auto; }
+      body.preview #preview-root { display: flex; flex-wrap: wrap; gap: 20px; padding: 20px; align-items: flex-start; }
+      body.preview-widgets .win { width: 420px; height: 460px; }
+      html.overlay #preview-root, html.overlay body.preview #preview-root { display: flex !important; flex-direction: column; width: 100%; height: 100%; padding: 0; overflow: hidden; }
+      html.overlay .spawn-surface.solo { flex: 1; min-height: 0; width: 100%; height: 100%; display: flex; flex-direction: column; }
+      .spawn-surface:not(.solo) { width: 100%; }
+      .unknown-spawn { color: var(--red); padding: 18px; }
+
+      @media (prefers-reduced-motion: reduce) { .twinkle { animation: none; } }
+    </style>
+  </head>
+  <body>
+    <section id="desktop">
+      <svg id="scene" viewBox="0 0 1920 1040" preserveAspectRatio="xMidYMax slice" aria-hidden="true">
+        <defs>
+          <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#11111b" /><stop offset="0.45" stop-color="#1e1e2e" />
+            <stop offset="0.72" stop-color="#2b2a44" /><stop offset="0.86" stop-color="#4b3f66" />
+          </linearGradient>
+          <radialGradient id="glow" cx="0.66" cy="0.74" r="0.5">
+            <stop offset="0" stop-color="#cba6f7" stop-opacity="0.38" /><stop offset="0.5" stop-color="#f5c2e7" stop-opacity="0.08" /><stop offset="1" stop-color="#cba6f7" stop-opacity="0" />
+          </radialGradient>
+          <linearGradient id="planet" x1="0.2" y1="0.1" x2="0.8" y2="0.95">
+            <stop offset="0" stop-color="#f5e0dc" /><stop offset="0.35" stop-color="#fab387" />
+            <stop offset="0.7" stop-color="#f5c2e7" /><stop offset="1" stop-color="#cba6f7" />
+          </linearGradient>
+          <linearGradient id="planet-shade" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0.45" stop-color="#1e1e2e" stop-opacity="0" /><stop offset="1" stop-color="#1e1e2e" stop-opacity="0.65" />
+          </linearGradient>
+          <clipPath id="planet-clip"><circle cx="1300" cy="372" r="168" /></clipPath>
+          <linearGradient id="aur" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stop-color="#94e2d5" stop-opacity="0" /><stop offset="0.3" stop-color="#94e2d5" stop-opacity="0.45" />
+            <stop offset="0.65" stop-color="#89b4fa" stop-opacity="0.35" /><stop offset="1" stop-color="#cba6f7" stop-opacity="0" />
+          </linearGradient>
+          <filter id="soft" x="-10%" y="-50%" width="120%" height="200%"><feGaussianBlur stdDeviation="18" /></filter>
+          <linearGradient id="lake" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#2b2a44" /><stop offset="1" stop-color="#11111b" />
+          </linearGradient>
+        </defs>
+        <rect width="1920" height="1040" fill="url(#sky)" />
+        <rect width="1920" height="1040" fill="url(#glow)" />
+        <g id="stars" fill="#f5e0dc"></g>
+        <!-- aurora -->
+        <path d="M640 520 C 900 380, 1100 470, 1330 380 S 1760 300, 1960 360 L 1960 470 C 1700 420, 1500 520, 1300 500 S 860 560, 640 620 Z" fill="url(#aur)" filter="url(#soft)" />
+        <!-- ringed planet: back half of the ring, the body, the front half -->
+        <g transform="rotate(-16 1300 372)">
+          <path d="M1040 372 A260 54 0 0 1 1560 372" fill="none" stroke="#b4befe" stroke-opacity="0.55" stroke-width="10" />
+          <path d="M1060 372 A240 44 0 0 1 1540 372" fill="none" stroke="#f5c2e7" stroke-opacity="0.35" stroke-width="4" />
+        </g>
+        <circle cx="1300" cy="372" r="168" fill="url(#planet)" />
+        <g clip-path="url(#planet-clip)" opacity="0.5">
+          <path d="M1120 320 Q1300 296 1480 330" stroke="#f5e0dc" stroke-width="14" fill="none" opacity="0.5" />
+          <path d="M1120 392 Q1300 368 1490 404" stroke="#eba0ac" stroke-width="18" fill="none" opacity="0.45" />
+          <path d="M1120 452 Q1300 430 1480 466" stroke="#cba6f7" stroke-width="12" fill="none" opacity="0.6" />
+          <circle cx="1238" cy="300" r="16" fill="#fab387" opacity="0.55" />
+          <circle cx="1350" cy="430" r="10" fill="#f5c2e7" opacity="0.6" />
+        </g>
+        <circle cx="1300" cy="372" r="168" fill="url(#planet-shade)" />
+        <g transform="rotate(-16 1300 372)">
+          <path d="M1040 372 A260 54 0 0 0 1560 372" fill="none" stroke="#b4befe" stroke-width="10" />
+          <path d="M1060 372 A240 44 0 0 0 1540 372" fill="none" stroke="#f5c2e7" stroke-opacity="0.8" stroke-width="4" />
+        </g>
+        <circle cx="1640" cy="190" r="22" fill="#b4befe" opacity="0.9" />
+        <circle cx="1632" cy="184" r="22" fill="#2b2a44" opacity="0.55" />
+
+        <!-- far range -->
+        <path d="M0 760 L120 650 L210 700 L360 560 L470 640 L600 520 L760 650 L880 590 L1010 690 L1160 560 L1290 650 L1440 566 L1580 640 L1700 580 L1820 650 L1920 600 L1920 820 L0 820 Z" fill="#45475a" />
+        <path d="M360 560 L400 650 L470 640 Z M600 520 L650 640 L760 650 Z M1160 560 L1200 660 L1290 650 Z M1440 566 L1490 650 L1580 640 Z M1700 580 L1730 650 L1820 650 Z" fill="#585b70" />
+        <path d="M600 520 L628 552 L612 560 L592 548 L578 546 Z M360 560 L382 590 L366 594 L350 580 Z" fill="#f5e0dc" opacity="0.85" />
+        <!-- mid range -->
+        <path d="M0 830 L180 690 L300 780 L460 640 L620 790 L780 700 L930 800 L1080 680 L1240 800 L1390 700 L1560 810 L1720 690 L1920 800 L1920 880 L0 880 Z" fill="#313244" />
+        <path d="M460 640 L520 760 L620 790 Z M1080 680 L1130 780 L1240 800 Z M1720 690 L1780 790 L1920 800 Z M180 690 L220 770 L300 780 Z" fill="#3b3c52" />
+        <!-- lake -->
+        <rect x="0" y="866" width="1920" height="174" fill="url(#lake)" />
+        <g opacity="0.55">
+          <rect x="1150" y="884" width="300" height="5" rx="2.5" fill="#fab387" opacity="0.6" />
+          <rect x="1180" y="904" width="240" height="4" rx="2" fill="#f5c2e7" opacity="0.5" />
+          <rect x="1214" y="922" width="172" height="4" rx="2" fill="#cba6f7" opacity="0.45" />
+          <rect x="1246" y="940" width="108" height="3" rx="1.5" fill="#cba6f7" opacity="0.35" />
+          <rect x="1270" y="956" width="60" height="3" rx="1.5" fill="#b4befe" opacity="0.3" />
+        </g>
+        <g stroke="#45475a" stroke-width="2" stroke-linecap="round" opacity="0.7">
+          <path d="M120 900 h140 M380 930 h90 M760 912 h120 M1560 905 h170 M1700 950 h90 M980 960 h60" />
+        </g>
+        <!-- near shore with pines -->
+        <path d="M0 880 C 240 850, 420 900, 640 872 L640 1040 L0 1040 Z" fill="#181825" />
+        <path d="M1500 1040 L1560 892 C 1680 870, 1800 900, 1920 876 L1920 1040 Z" fill="#181825" />
+        <g id="pines" fill="#11111b"></g>
+      </svg>
+
+      <div class="tiles">
+        <article class="widget win fetch active" data-id="tl-fetch" data-hooks="battery,network,windows,keyboard,media">
+          <div class="titlebar"><b>guest@versailles</b><span>~</span><i>$</i><span style="color:var(--text)">vfetch</span></div>
+          <div class="body">
+            <pre class="logo" aria-hidden="true">   o       o       o
+  / \     / \     / \
+ /   \___/   \___/   \
+ |###################|
+ '-------------------'
+ \\\           /////
+  \\\         /////
+   \\\       /////
+    \\\     /////
+     \\\   /////
+      \\\ /////
+       \\V////
+        \\V///
+         \V//
+          \V/</pre>
+            <div class="facts">
+              <div class="who"><span>guest</span>@<em>versailles</em></div>
+              <div class="rule">────────────────────────────────────────────</div>
+              <dl>
+                <dt>OS</dt><dd>Windows 11</dd>
+                <dt>Shell</dt><dd>Versailles <span class="dim">(one HTML page)</span></dd>
+                <dt>Display</dt><dd id="f-disp">--</dd>
+                <dt>Windows</dt><dd id="f-wins">--</dd>
+                <dt>Focused</dt><dd id="f-focus">--</dd>
+                <dt>Playing</dt><dd id="f-media">--</dd>
+                <dt>Battery</dt><dd id="f-bat">--</dd>
+                <dt>Network</dt><dd id="f-net">--</dd>
+                <dt>Keyboard</dt><dd id="f-kb">--</dd>
+                <dt>Theme</dt><dd>Catppuccin Mocha</dd>
+                <dt>Font</dt><dd>JetBrains Mono</dd>
+              </dl>
+              <div class="swatches" aria-hidden="true">
+                <i style="background:#f38ba8"></i><i style="background:#fab387"></i><i style="background:#f9e2af"></i><i style="background:#a6e3a1"></i>
+                <i style="background:#94e2d5"></i><i style="background:#89b4fa"></i><i style="background:#cba6f7"></i><i style="background:#f5c2e7"></i>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article class="widget win cal" data-id="tl-cal">
+          <div class="titlebar"><b>cal</b><span id="c-month"></span></div>
+          <div class="now"><span class="hm" id="c-hm">--:--</span><span class="s" id="c-s">--</span></div>
+          <div class="day" id="c-day"></div>
+          <div class="grid" id="c-grid"></div>
+        </article>
+
+        <article class="widget win media idle" data-id="tl-media" data-hooks="media" id="tm">
+          <div class="art"><img id="tm-art" alt="" /><span class="src" id="tm-src">no player</span></div>
+          <div><div class="t" id="tm-title">Nothing playing</div><div class="a" id="tm-artist">Start a song in any player</div></div>
+          <div class="bar"><i id="tm-bar"></i></div>
+          <div class="row">
+            <span id="tm-pos">--:--</span>
+            <span class="ctl" id="tm-ctl">
+              <button type="button" id="tm-prev" aria-label="Previous track"><svg viewBox="0 0 24 24"><path d="M6 5h2v14H6zM20 5v14L9 12z"/></svg></button>
+              <button type="button" class="pp" id="tm-pp" aria-label="Play or pause"><svg viewBox="0 0 24 24" id="tm-pp-ico"><path d="M8 5v14l11-7z"/></svg></button>
+              <button type="button" id="tm-next" aria-label="Next track"><svg viewBox="0 0 24 24"><path d="M16 5h2v14h-2zM4 5v14l11-7z"/></svg></button>
+            </span>
+            <span id="tm-dur">--:--</span>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <!-- ===== The bar: pills on the top edge =====
+         Left: the open windows as dots (click one to bring it up) and the
+         window in front. Middle: now playing and the clock. Right: CPU and
+         memory, Wi-Fi, battery, keyboard layout (click: next layout), the
+         notification-area icons, and a button for the launcher. -->
+    <template class="spawnable" data-id="tl-bar" data-anchor="top" data-h="54"
+              data-hooks="windows,windows-control,focus,media,network,battery,keyboard,tray,spawn">
+      <style>
+        html.overlay body:has(.wb) { background: var(--crust); }
+        .wb {
+          height: 100%; width: 100%; display: flex; align-items: center; gap: 8px;
+          padding: 0 12px; background: var(--crust); font: 600 15px/1 var(--mono); color: var(--text); white-space: nowrap;
+        }
+        .wb .grp { display: flex; align-items: center; gap: 8px; min-width: 0; flex: none; }
+        .wb .grp.l { flex: 1 1 0; }
+        .wb .grp.r { flex: 1 1 0; min-width: max-content; justify-content: flex-end; }
+        .wb .pill {
+          height: 40px; display: inline-flex; align-items: center; gap: 10px; padding: 0 15px; border-radius: 13px; flex: none;
+          background: var(--base); box-shadow: inset 0 0 0 1.5px var(--surface0);
+        }
+        .wb button.pill:hover { box-shadow: inset 0 0 0 1.5px var(--surface2); }
+        .wb .pill svg { width: 18px; height: 18px; flex: none; }
+        .wb .home { background: var(--mauve); color: var(--crust); box-shadow: none; padding: 0 12px; }
+        .wb .home svg { width: 18px; height: 18px; }
+        .wb .ws { gap: 7px; padding: 0 12px; }
+        .wb .ws button { width: 12px; height: 12px; border-radius: 6px; background: var(--surface2); padding: 0; transition: width 0.25s ease, background 0.25s ease; }
+        .wb .ws button:hover { background: var(--overlay1); }
+        .wb .ws button.focused { width: 34px; background: var(--mauve); }
+        .wb .ws button.attention { background: var(--red); box-shadow: 0 0 0 3px rgba(243, 139, 168, 0.25); }
+        .wb .ws button.minimized { background: transparent; box-shadow: inset 0 0 0 2px var(--surface2); }
+        .wb .title { flex: 0 1 auto; min-width: 0; color: var(--subtext1); }
+        .wb .title img { width: 18px; height: 18px; flex: none; }
+        .wb .title span { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+        .wb .title b { color: var(--blue); font-weight: 700; }
+        .wb .clock b { font-weight: 800; color: var(--text); font-variant-numeric: tabular-nums; }
+        .wb .clock span { color: var(--subtext0); }
+        .wb .clock svg { color: var(--peach); }
+        .wb .np { max-width: 400px; }
+        .wb .np svg { color: var(--pink); }
+        .wb .np span { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+        .wb .np em { font-style: normal; color: var(--subtext0); }
+        .wb .np .prog { width: 46px; height: 4px; border-radius: 2px; background: var(--surface0); flex: none; overflow: hidden; }
+        .wb .np .prog i { display: block; height: 100%; background: var(--pink); }
+        .wb .stat { gap: 7px; }
+        .wb .stat .k { color: var(--overlay1); }
+        .wb .stat svg.spark { width: 54px; height: 20px; }
+        .wb .stat .v { min-width: 3ch; text-align: right; font-variant-numeric: tabular-nums; }
+        .wb .stat .demo { display: none; color: var(--overlay0); font-size: 11px; font-weight: 500; }
+        .wb .stat.sim .demo { display: inline; }
+        .wb .net svg { color: var(--teal); }
+        .wb .bat svg { color: var(--green); }
+        .wb .bat.low svg, .wb .bat.low { color: var(--red); }
+        .wb .kb { color: var(--peach); font-weight: 800; padding: 0 12px; }
+        .wb .kb[hidden] { display: none; }
+        .wb .tray { gap: 4px; padding: 0 8px; }
+        .wb .tray:empty { display: none; }
+        .wb .tray button { width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; padding: 0; }
+        .wb .tray button:hover { background: var(--surface0); }
+        .wb .tray img { width: 16px; height: 16px; }
+        .wb .go { background: var(--surface0); color: var(--mauve); box-shadow: none; padding: 0 11px; }
+      </style>
+      <div class="wb">
+        <div class="grp l">
+          <button type="button" class="pill home" aria-label="Open the launcher" data-launch>
+            <svg viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="3" width="10" height="18" rx="2.5"/><rect x="15" y="3" width="6" height="8" rx="2"/><rect x="15" y="13" width="6" height="8" rx="2"/></svg>
+          </button>
+          <span class="pill ws" aria-label="Open windows"></span>
+          <span class="pill title"><span>--</span></span>
+        </div>
+        <div class="grp">
+          <span class="pill np" hidden>
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 17.5V5l11-2v12.5"/><circle cx="6.5" cy="17.5" r="2.8"/><circle cx="17.5" cy="15.5" r="2.8"/><path d="M9 5l11-2v3L9 8z"/></svg>
+            <span class="np-t"></span><span class="prog"><i></i></span>
+          </span>
+          <span class="pill clock">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+            <span class="c-d">--</span><b class="c-t">--:--</b>
+          </span>
+        </div>
+        <div class="grp r">
+          <span class="pill stat cpu" title="Processor load"><span class="k">cpu</span><svg class="spark" viewBox="0 0 54 20" preserveAspectRatio="none"><path fill="rgba(137,180,250,0.18)" /><polyline fill="none" stroke="#89b4fa" stroke-width="1.8" stroke-linejoin="round" /></svg><span class="v">--</span><span class="demo">demo</span></span>
+          <span class="pill stat mem" title="Memory in use"><span class="k">mem</span><svg class="spark" viewBox="0 0 54 20" preserveAspectRatio="none"><path fill="rgba(166,227,161,0.18)" /><polyline fill="none" stroke="#a6e3a1" stroke-width="1.8" stroke-linejoin="round" /></svg><span class="v">--</span><span class="demo">demo</span></span>
+          <span class="pill net">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M2 8.5a15 15 0 0 1 20 0M5 12a10.5 10.5 0 0 1 14 0M8.5 15.5a5.5 5.5 0 0 1 7 0"/><circle cx="12" cy="19" r="1.4" fill="currentColor"/></svg>
+            <span class="net-t">--</span>
+          </span>
+          <span class="pill bat">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><rect x="2.5" y="7" width="17" height="10" rx="2.5"/><path d="M21.5 10.5v3"/><rect class="lvl" x="5" y="9.5" width="12" height="5" rx="1" fill="currentColor" stroke="none"/></svg>
+            <span class="bat-t">--</span>
+          </span>
+          <button type="button" class="pill kb" hidden aria-label="Keyboard layout">--</button>
+          <span class="pill tray"></span>
+          <button type="button" class="pill go" aria-label="Open the launcher" data-launch>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
+          </button>
+        </div>
+      </div>
+      <script>
+        (function tiledBar() {
+          var root = document.currentScript && document.currentScript.closest('.spawn-surface');
+          if (!root) return;
+          function $(s) { return root.querySelector(s); }
+          function put(el, t) { if (el.textContent !== t) el.textContent = t; }
+          function tick() {
+            var n = new Date();
+            put($('.c-t'), String(n.getHours()).padStart(2, '0') + ':' + String(n.getMinutes()).padStart(2, '0'));
+            put($('.c-d'), n.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }));
+          }
+          tick(); setInterval(tick, 1000);
+
+          // CPU and memory: the host's sys_stats every 2 s. Outside Versailles
+          // (or if it is refused) the lines are simulated and marked "demo".
+          var hist = { cpu: [], mem: [] }, live = true, phase = 0;
+          function spark(cls, list) {
+            var pill = $('.stat.' + cls), pts = list.map(function (v, i) { return (i * 54 / 23).toFixed(1) + ',' + (19 - v / 100 * 17).toFixed(1); });
+            pill.querySelector('polyline').setAttribute('points', pts.join(' '));
+            pill.querySelector('path').setAttribute('d', 'M0,20 L' + pts.join(' L') + ' L' + ((list.length - 1) * 54 / 23).toFixed(1) + ',20 Z');
+            put(pill.querySelector('.v'), Math.round(list[list.length - 1]) + '%');
+          }
+          function push(s, sim) {
+            ['cpu', 'mem'].forEach(function (k) {
+              var h = hist[k]; h.push(Math.max(1, Math.min(100, s[k])));
+              while (h.length < 24) h.unshift(h[0]);
+              while (h.length > 24) h.shift();
+              spark(k, h);
+              $('.stat.' + k).classList.toggle('sim', sim);
+            });
+          }
+          function fake() {
+            phase += 1;
+            return { cpu: 14 + 9 * Math.sin(phase / 2.3) + 7 * Math.sin(phase / 0.9) + Math.random() * 6, mem: 46 + 3 * Math.sin(phase / 7) + Math.random() };
+          }
+          async function stats() {
+            var v = window.versailles;
+            if (live && v && typeof v.invoke === 'function') {
+              try { var s = await v.invoke('sys_stats'); if (s && typeof s.cpu === 'number') { push(s, false); return; } } catch (e) { live = false; }
+            }
+            push(fake(), true);
+          }
+          for (var i = 0; i < 23; i++) push(fake(), true);
+          stats(); setInterval(stats, 2000);
+
+          (function whenSdk(fn) { window.versailles && typeof window.versailles.for === 'function' ? fn(window.versailles) : setTimeout(function () { whenSdk(fn); }, 50); })(function (v) {
+            var me = v.for('tl-bar');
+            var wins = me.windows, icons = {};
+            root.querySelectorAll('[data-launch]').forEach(function (b) { b.addEventListener('click', function () { me.spawn('tl-launch').catch(function () {}); }); });
+
+            // windows as workspace-style dots
+            var ws = $('.ws');
+            wins.track(function (list) {
+              ws.replaceChildren();
+              list.forEach(function (w) {
+                if (w.icon) icons[w.pid] = w.icon;
+                var d = document.createElement('button');
+                d.type = 'button';
+                d.className = (w.focused ? 'focused' : '') + (w.minimized ? ' minimized' : '') + (w.attention ? ' attention' : '');
+                d.setAttribute('aria-label', w.title); // titles come from other apps: text only
+                d.title = w.title;
+                d.addEventListener('click', function () { (w.focused && !w.minimized ? wins.minimize(w.id) : wins.focus(w.id)).catch(function () {}); });
+                ws.appendChild(d);
+              });
+              paintTitle();
+            }, { icons: true }).catch(function () {});
+
+            // the window in front: app in blue, then the title
+            var front = null;
+            function paintTitle() {
+              var box = $('.title');
+              box.replaceChildren();
+              if (!front || front.self) { var e = document.createElement('span'); e.textContent = 'desktop'; box.appendChild(e); return; }
+              if (icons[front.pid]) { var img = document.createElement('img'); img.src = icons[front.pid]; img.alt = ''; box.appendChild(img); }
+              var t = document.createElement('span');
+              var app = document.createElement('b'); app.textContent = (front.app || '').toLowerCase();
+              t.appendChild(app);
+              var parts = String(front.title || '').split(' - ');
+              if (parts.length > 1) parts.pop(); // drop the trailing app name
+              t.appendChild(document.createTextNode('  ' + parts.join(' - ')));
+              box.appendChild(t);
+            }
+            me.on('focus', function (f) { if (f && !f.self) { front = f; paintTitle(); } }).catch(function () {});
+
+            var np = $('.np'), track = null, at = 0;
+            function paintNp() {
+              if (!track) return;
+              var pos = Math.min(track.durationMs || 0, (track.positionMs || 0) + (track.status === 'playing' ? Date.now() - at : 0));
+              np.querySelector('.prog i').style.width = (track.durationMs > 0 ? pos / track.durationMs * 100 : 0) + '%';
+            }
+            me.on('media', function (m) {
+              var on = m && m.host !== false && m.hasSession !== false && m.status !== 'no-session' && m.title;
+              np.hidden = !on;
+              if (!on) { track = null; return; }
+              track = m; at = Date.now();
+              var t = np.querySelector('.np-t');
+              t.replaceChildren(document.createTextNode(m.title + ' '));
+              if (m.artist) { var a = document.createElement('em'); a.textContent = m.artist; t.appendChild(a); }
+              paintNp();
+            }).catch(function () {});
+            setInterval(paintNp, 1000);
+
+            me.on('network', function (n) {
+              if (!n) return;
+              put($('.net-t'), !n.online ? 'offline' : n.wifi ? (n.name || 'wi-fi') : 'wired');
+            }).catch(function () {});
+            me.on('battery', function (b) {
+              if (!b) return;
+              var pill = $('.bat');
+              if (!b.present) { put($('.bat-t'), 'ac'); return; }
+              put($('.bat-t'), b.percent + '%' + (b.charging ? ' +' : ''));
+              pill.querySelector('.lvl').setAttribute('width', (12 * b.percent / 100).toFixed(1));
+              pill.classList.toggle('low', b.percent <= 15 && !b.charging);
+            }).catch(function () {});
+
+            var kbPill = $('.kb');
+            function paintKb(s) {
+              var layouts = (s && s.layouts) || [];
+              var now = layouts.filter(function (l) { return l.id === s.current; })[0];
+              kbPill.hidden = layouts.length < 2;
+              put(kbPill, now ? now.short.toLowerCase() : '?');
+              kbPill.title = now ? now.name : '';
+            }
+            me.keyboard.onChange(paintKb).catch(function () {});
+            kbPill.addEventListener('click', function () { me.keyboard.next().then(paintKb, function () {}); });
+
+            // notification-area icons (only while Versailles hides the Windows taskbar)
+            var trayBox = $('.tray'), tray = me.tray;
+            tray.track(function (list) {
+              trayBox.replaceChildren();
+              list.forEach(function (t) {
+                if (t.system || !t.icon) return;
+                var b = document.createElement('button');
+                b.type = 'button';
+                if (t.showTip) b.title = t.tip || t.app || '';
+                b.setAttribute('aria-label', t.tip || t.app || '');
+                var img = document.createElement('img'); img.src = t.icon; img.alt = ''; b.appendChild(img);
+                b.addEventListener('click', function (e) { if (e.detail <= 1) tray.click(t.id, 'left').catch(function () {}); });
+                b.addEventListener('dblclick', function () { tray.click(t.id, 'double').catch(function () {}); });
+                b.addEventListener('contextmenu', function (e) { e.preventDefault(); tray.click(t.id, 'right').catch(function () {}); });
+                trayBox.appendChild(b);
+              });
+            }).catch(function () {});
+          });
+        })();
+      </script>
+    </template>
+
+    <!-- ===== Launcher: apps, open windows and recent files =====
+         The Windows key opens it (Start stays reachable from Ctrl+Esc).
+         Type to filter, Tab switches the list, arrows move, Enter opens, Esc closes. -->
+    <template class="spawnable" data-id="tl-launch" data-anchor="c" data-w="880" data-h="560"
+              data-hotkey="Win" data-hooks="hotkey,shell,windows,windows-control">
+      <style>
+        .rofi {
+          position: relative; height: 100%; width: 100%; display: grid; grid-template-columns: 236px minmax(0, 1fr); border-radius: 18px; overflow: hidden;
+          background: var(--base); font: 500 15.5px/1.2 var(--mono); color: var(--text);
+        }
+        .rofi::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 2px var(--mauve); pointer-events: none; }
+        .rofi .side { position: relative; overflow: hidden; background: linear-gradient(170deg, #cba6f7 0%, #f5c2e7 48%, #fab387 100%); color: var(--crust); }
+        .rofi .side svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+        .rofi .side .me { position: absolute; left: 20px; right: 16px; top: 20px; }
+        .rofi .side .me b { display: block; font: 800 44px/1 var(--mono); letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
+        .rofi .side .me span { display: block; margin-top: 6px; font: 700 14px/1.2 var(--mono); opacity: 0.75; }
+        .rofi .main { min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+        .rofi .top { display: flex; align-items: center; gap: 10px; padding: 16px 16px 12px; }
+        .rofi .prompt { height: 40px; padding: 0 14px; border-radius: 11px; display: inline-flex; align-items: center; gap: 8px; background: var(--mauve); color: var(--crust); font-weight: 800; flex: none; }
+        .rofi .prompt svg { width: 16px; height: 16px; }
+        .rofi .q { flex: 1; min-width: 0; height: 40px; padding: 0 14px; border-radius: 11px; border: 0; outline: none; background: var(--surface0); color: var(--text); font: inherit; caret-color: var(--mauve); }
+        .rofi .q::placeholder { color: var(--overlay1); }
+        .rofi .q:focus-visible { box-shadow: inset 0 0 0 1.5px var(--surface2); }
+        .rofi .modes { display: flex; gap: 4px; flex: none; }
+        .rofi .modes button { height: 40px; padding: 0 12px; border-radius: 11px; color: var(--overlay1); font-weight: 700; }
+        .rofi .modes button.on { color: var(--mauve); background: var(--mantle); box-shadow: inset 0 0 0 1.5px var(--surface0); }
+        .rofi .list { flex: 1; min-height: 0; overflow: hidden auto; padding: 4px 10px; display: flex; flex-direction: column; gap: 2px; }
+        .rofi .row { display: flex; align-items: center; gap: 14px; height: 47px; padding: 0 14px; border-radius: 11px; text-align: left; flex: none; width: 100%; }
+        .rofi .row .ico { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; flex: none; }
+        .rofi .row .ico img { width: 24px; height: 24px; display: block; }
+        .rofi .row .ico svg { width: 16px; height: 16px; }
+        .rofi .row .n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .rofi .row .n mark { background: none; color: var(--mauve); font-weight: 800; }
+        .rofi .row .h { color: var(--overlay0); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40%; }
+        .rofi .row.sel { background: var(--surface0); }
+        .rofi .row.sel .n { color: var(--mauve); font-weight: 700; }
+        .rofi .row.sel .h { color: var(--subtext0); }
+        .rofi .empty { padding: 18px 14px; color: var(--overlay1); }
+        .rofi .foot { display: flex; gap: 18px; padding: 12px 18px 14px; color: var(--overlay1); font-size: 12.5px; border-top: 1.5px solid var(--surface0); }
+        .rofi .foot kbd { font: 700 12px/1 var(--mono); color: var(--lavender); padding: 3px 6px; border-radius: 6px; background: var(--surface0); margin-right: 6px; }
+        .rofi .foot .r { margin-left: auto; color: var(--overlay0); }
+      </style>
+      <div class="rofi">
+        <div class="side" aria-hidden="true">
+          <svg viewBox="0 0 236 520" preserveAspectRatio="xMidYMax slice">
+            <g transform="rotate(-16 128 300)"><path d="M48 300 A80 18 0 0 1 208 300" fill="none" stroke="#1e1e2e" stroke-opacity="0.35" stroke-width="5" /></g>
+            <circle cx="128" cy="300" r="52" fill="#f5e0dc" />
+            <circle cx="128" cy="300" r="52" fill="#cba6f7" fill-opacity="0.35" />
+            <path d="M82 286 Q128 276 174 290 M80 312 Q128 302 176 316" stroke="#fab387" stroke-width="7" fill="none" stroke-opacity="0.55" />
+            <g transform="rotate(-16 128 300)"><path d="M48 300 A80 18 0 0 0 208 300" fill="none" stroke="#1e1e2e" stroke-opacity="0.6" stroke-width="5" /></g>
+            <path d="M0 430 L40 392 L78 420 L120 370 L170 424 L206 396 L236 418 L236 520 L0 520 Z" fill="#45475a" fill-opacity="0.55" />
+            <path d="M0 470 L52 430 L96 462 L150 418 L200 458 L236 440 L236 520 L0 520 Z" fill="#313244" />
+            <path d="M0 520 L0 488 C 60 476, 140 498, 236 480 L236 520 Z" fill="#1e1e2e" />
+          </svg>
+          <div class="me"><b class="side-t">--:--</b><span class="side-d">--</span></div>
+        </div>
+        <div class="main">
+        <div class="top">
+          <span class="prompt"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg><span class="pm">apps</span></span>
+          <input class="q" type="text" placeholder="Type to filter" spellcheck="false" autocomplete="off" aria-label="Search" />
+          <div class="modes" role="tablist">
+            <button type="button" data-mode="apps" class="on">apps</button>
+            <button type="button" data-mode="windows">windows</button>
+            <button type="button" data-mode="files">files</button>
+          </div>
+        </div>
+        <div class="list" role="listbox"></div>
+        <div class="foot"><span><kbd>Enter</kbd>open</span><span><kbd>Tab</kbd>switch list</span><span><kbd>Esc</kbd>close</span><span class="r count"></span></div>
+        </div>
+      </div>
+      <script>
+        (function tiledLauncher() {
+          var root = document.currentScript && document.currentScript.closest('.spawn-surface');
+          if (!root) return;
+          function $(s) { return root.querySelector(s); }
+          var input = $('.q'), list = $('.list');
+          function clock() {
+            var n = new Date();
+            $('.side-t').textContent = String(n.getHours()).padStart(2, '0') + ':' + String(n.getMinutes()).padStart(2, '0');
+            $('.side-d').textContent = n.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }).toLowerCase();
+          }
+          clock(); setInterval(clock, 5000);
+          var G = { // small glyphs, one accent colour each
+            term: '<path d="M4 6l6 6-6 6M12 18h8"/>',
+            folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+            globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
+            gear: '<circle cx="12" cy="12" r="3.2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/>',
+            note: '<path d="M6 3h9l4 4v14H6z"/><path d="M9 11h7M9 15h7M9 7h4"/>',
+            calc: '<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8 7h8M8 12h2M14 12h2M8 16h2M14 16h2"/>',
+            brush: '<path d="M14 4l6 6-8 8-6-6z"/><path d="M6 12l-3 7 7-3"/>',
+            pulse: '<path d="M3 12h4l3-7 4 14 3-7h4"/>',
+            cut: '<circle cx="6" cy="18" r="3"/><circle cx="18" cy="18" r="3"/><path d="M8 16L18 4M16 16L6 4"/>',
+            file: '<path d="M6 3h8l5 5v13H6z"/><path d="M14 3v5h5"/>'
+          };
+          // Targets the shell hook can open: installed apps by name, ms-settings: pages.
+          var APPS = [
+            { n: 'Terminal', t: 'wt', h: 'wt', g: 'term', c: '#a6e3a1' },
+            { n: 'File Explorer', t: 'explorer', h: 'explorer', g: 'folder', c: '#f9e2af' },
+            { n: 'Microsoft Edge', t: 'msedge', h: 'msedge', g: 'globe', c: '#89b4fa' },
+            { n: 'Settings', t: 'ms-settings:', h: 'ms-settings:', g: 'gear', c: '#cba6f7' },
+            { n: 'Notepad', t: 'notepad', h: 'notepad', g: 'note', c: '#94e2d5' },
+            { n: 'Calculator', t: 'calc', h: 'calc', g: 'calc', c: '#fab387' },
+            { n: 'Paint', t: 'mspaint', h: 'mspaint', g: 'brush', c: '#f5c2e7' },
+            { n: 'Task Manager', t: 'taskmgr', h: 'taskmgr', g: 'pulse', c: '#f38ba8' },
+            { n: 'Snipping Tool', t: 'snippingtool', h: 'snippingtool', g: 'cut', c: '#74c7ec' }
+          ];
+          var mode = 'apps', items = [], sel = 0, windows = [], files = [], searchSeq = 0;
+          function glyph(name, color) {
+            var s = document.createElement('span'); s.className = 'ico'; s.style.background = color + '22'; s.style.color = color;
+            s.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">' + G[name] + '</svg>';
+            return s;
+          }
+          function marked(text, q) { // the name with the typed letters in mauve; text nodes only
+            var span = document.createElement('span'); span.className = 'n';
+            var i = q ? text.toLowerCase().indexOf(q) : -1;
+            if (i < 0) { span.textContent = text; return span; }
+            span.appendChild(document.createTextNode(text.slice(0, i)));
+            var m = document.createElement('mark'); m.textContent = text.slice(i, i + q.length); span.appendChild(m);
+            span.appendChild(document.createTextNode(text.slice(i + q.length)));
+            return span;
+          }
+          function build() {
+            var q = input.value.trim().toLowerCase();
+            if (mode === 'apps') items = APPS.filter(function (a) { return !q || a.n.toLowerCase().indexOf(q) >= 0; }).map(function (a) { return { label: a.n, hint: a.h, icon: glyph(a.g, a.c), run: function (v) { return v.shell.open(a.t); } }; });
+            if (mode === 'windows') items = windows.filter(function (w) { return !q || (w.title + ' ' + w.app).toLowerCase().indexOf(q) >= 0; }).map(function (w) {
+              var ico = document.createElement('span'); ico.className = 'ico';
+              if (w.icon) { var img = document.createElement('img'); img.src = w.icon; img.alt = ''; ico.appendChild(img); } else ico.appendChild(glyph('file', '#a6adc8').firstChild);
+              return { label: w.title, hint: w.minimized ? 'minimized' : w.focused ? 'in front' : w.app, icon: ico, run: function (v) { return v.windows.focus(w.id); } };
+            });
+            if (mode === 'files') items = files.map(function (f) { return { label: f.name, hint: f.folder || '', icon: glyph(f.kind === 'folder' ? 'folder' : 'file', f.kind === 'folder' ? '#f9e2af' : '#89b4fa'), run: function (v) { return v.shell.open(f.path); } }; });
+            sel = Math.min(sel, Math.max(0, items.length - 1));
+            paint(q);
+          }
+          function paint(q) {
+            list.replaceChildren();
+            items.forEach(function (it, i) {
+              var row = document.createElement('button'); row.type = 'button'; row.className = 'row' + (i === sel ? ' sel' : '');
+              row.setAttribute('role', 'option'); row.setAttribute('aria-selected', i === sel ? 'true' : 'false');
+              row.appendChild(it.icon); row.appendChild(marked(it.label, q));
+              var h = document.createElement('span'); h.className = 'h'; h.textContent = it.hint; row.appendChild(h);
+              row.addEventListener('mousemove', function () { if (sel !== i) { sel = i; paint(q); } });
+              row.addEventListener('click', function () { sel = i; launch(); });
+              list.appendChild(row);
+            });
+            if (!items.length) { var e = document.createElement('div'); e.className = 'empty'; e.textContent = mode === 'files' && q ? 'No files match "' + input.value.trim() + '"' : 'Nothing here yet'; list.appendChild(e); }
+            var cur = list.children[sel]; if (cur && cur.scrollIntoView) cur.scrollIntoView({ block: 'nearest' });
+            $('.count').textContent = items.length + (items.length === 1 ? ' entry' : ' entries');
+          }
+          function setMode(m) {
+            mode = m; sel = 0;
+            root.querySelectorAll('.modes button').forEach(function (b) { b.classList.toggle('on', b.dataset.mode === m); });
+            $('.pm').textContent = m;
+            build();
+            if (m === 'files') findFiles();
+          }
+          root.querySelectorAll('.modes button').forEach(function (b) { b.addEventListener('click', function () { setMode(b.dataset.mode); input.focus(); }); });
+          var api = null;
+          function hide() { if (window.versailles && typeof window.versailles.invoke === 'function') window.versailles.invoke('dismiss_launcher').catch(function () {}); }
+          function launch() {
+            var it = items[sel];
+            if (!it || !api) return;
+            Promise.resolve(it.run(api)).then(hide, function () {});
+          }
+          // files: recent ones with an empty line, the Windows Search index while typing
+          function findFiles() {
+            if (!api) return;
+            var q = input.value.trim(), seq = ++searchSeq;
+            var p = q.length < 2
+              ? api.shell.recent(12).then(function (r) { return Array.isArray(r) ? r : []; })
+              : api.shell.search(q, { limit: 12, settings: false }).then(function (r) { return (r && r.files) || []; });
+            p.then(function (r) { if (seq !== searchSeq) return; files = r.map(function (f) { return { name: f.name || f.path, folder: f.folder || '', path: f.path, kind: f.kind }; }); if (mode === 'files') build(); }, function () {});
+          }
+          var debounce = 0;
+          input.addEventListener('input', function () { sel = 0; build(); if (mode === 'files') { clearTimeout(debounce); debounce = setTimeout(findFiles, 160); } });
+          input.addEventListener('keydown', function (e) {
+            if (e.key === 'ArrowDown') { e.preventDefault(); sel = Math.min(items.length - 1, sel + 1); paint(input.value.trim().toLowerCase()); }
+            else if (e.key === 'ArrowUp') { e.preventDefault(); sel = Math.max(0, sel - 1); paint(input.value.trim().toLowerCase()); }
+            else if (e.key === 'Tab') { e.preventDefault(); var order = ['apps', 'windows', 'files']; setMode(order[(order.indexOf(mode) + (e.shiftKey ? 2 : 1)) % 3]); }
+            else if (e.key === 'Enter') { e.preventDefault(); launch(); }
+            else if (e.key === 'Escape') { e.preventDefault(); hide(); }
+          });
+          build();
+          (function whenSdk(fn) { window.versailles && typeof window.versailles.for === 'function' ? fn(window.versailles) : setTimeout(function () { whenSdk(fn); }, 50); })(function (v) {
+            api = v.for('tl-launch');
+            api.windows.track(function (l) { windows = l; if (mode === 'windows') build(); }, { icons: true }).catch(function () {});
+            // Each time it opens: an empty line, the apps list, the caret in the field.
+            api.on('shown', function () { input.value = ''; setMode('apps'); input.focus(); }).catch(function () {});
+            input.focus();
+          });
+        })();
+      </script>
+    </template>
+
+    <div id="preview-root" hidden></div>
+
+    <script>
+      (function boot() {
+        const params = new URLSearchParams(location.search || '');
+        let m = (params.get('m') || 'desktop').trim().toLowerCase().replace(/-/g, '_');
+        if (m === 'spawnables') m = 'spawn';
+        if (m === 'actionbar') m = 'action_bar';
+        const id = (params.get('id') || '').trim();
+        document.documentElement.dataset.mode = m;
+        document.body.dataset.mode = m;
+        const desktop = document.getElementById('desktop');
+        const preview = document.getElementById('preview-root');
+        // Scripts cloned out of a <template> run once when the clone enters the document.
+        function mountSpawn(tpl, solo) {
+          const wrap = document.createElement('section');
+          wrap.className = 'spawn-surface' + (solo ? ' solo' : '');
+          wrap.dataset.id = tpl.getAttribute('data-id') || '';
+          const hooks = tpl.getAttribute('data-hooks');
+          if (hooks) wrap.setAttribute('data-hooks', hooks);
+          wrap.appendChild(tpl.content.cloneNode(true));
+          preview.appendChild(wrap);
+          return wrap;
+        }
+        const spawnables = function () { return Array.prototype.slice.call(document.querySelectorAll('template.spawnable')); };
+        if (m === 'desktop') return;
+        desktop.hidden = true;
+        preview.hidden = false;
+        document.body.classList.add('preview');
+        if (m === 'widgets') {
+          document.body.classList.add('preview-widgets');
+          Array.prototype.slice.call(desktop.querySelectorAll('article.widget')).forEach(function (el) { preview.appendChild(el); });
+          return;
+        }
+        if (m === 'spawn') {
+          if (id) {
+            document.documentElement.classList.add('overlay');
+            const tpl = spawnables().find(function (t) { return (t.getAttribute('data-id') || '').toLowerCase() === id.toLowerCase(); });
+            if (!tpl) { const p = document.createElement('p'); p.className = 'unknown-spawn'; p.textContent = 'unknown spawnable: ' + id; preview.appendChild(p); return; }
+            if (!(window.__TAURI_INTERNALS__ || window.__TAURI__)) {
+              if (tpl.getAttribute('data-w')) document.body.style.width = tpl.getAttribute('data-w') + 'px';
+              if (tpl.getAttribute('data-h')) document.body.style.height = tpl.getAttribute('data-h') + 'px';
+            }
+            mountSpawn(tpl, true);
+            return;
+          }
+          spawnables().forEach(function (t) { mountSpawn(t, false); });
+          return;
+        }
+        const p = document.createElement('p');
+        p.className = 'unknown-spawn';
+        p.textContent = 'unknown mode: ' + m;
+        preview.appendChild(p);
+      })();
+    </script>
+    <script>
+      (function loadSdk() {
+        if (window.versailles && typeof window.versailles.invoke === 'function') return;
+        var s = document.createElement('script');
+        s.src = location.protocol === 'file:' ? '../.sdk/versailles.js' : '/files/.sdk/versailles.js';
+        document.head.appendChild(s);
+      })();
+    </script>
+
+    <script>
+      /* wallpaper details: stars and pines, placed from a fixed seed so every start looks the same */
+      (function tiledScene() {
+        const NS = 'http://www.w3.org/2000/svg';
+        let seed = 11;
+        const rnd = function () { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+        const stars = document.getElementById('stars');
+        if (!stars) return;
+        for (let i = 0; i < 150; i++) {
+          const c = document.createElementNS(NS, 'circle');
+          const y = Math.pow(rnd(), 1.5) * 620;
+          c.setAttribute('cx', (rnd() * 1920).toFixed(1));
+          c.setAttribute('cy', y.toFixed(1));
+          c.setAttribute('r', (rnd() < 0.1 ? 2.2 : 0.8 + rnd() * 0.9).toFixed(2));
+          c.setAttribute('opacity', (0.35 + rnd() * 0.65 * (1 - y / 700)).toFixed(2));
+          if (rnd() < 0.25) c.setAttribute('fill', rnd() < 0.5 ? '#b4befe' : '#f5c2e7');
+          if (i % 9 === 0) { c.setAttribute('class', 'twinkle'); c.style.animationDelay = (-rnd() * 5).toFixed(2) + 's'; }
+          stars.appendChild(c);
+        }
+        const pines = document.getElementById('pines');
+        function pine(x, base, h) {
+          const w = h * 0.34;
+          let d = '';
+          for (let k = 0; k < 3; k++) {
+            const top = base - h + k * h * 0.24, bot = base - h * 0.32 + k * h * 0.2, ww = w * (0.55 + k * 0.28);
+            d += 'M' + x + ' ' + top.toFixed(1) + ' L' + (x + ww).toFixed(1) + ' ' + bot.toFixed(1) + ' L' + (x - ww).toFixed(1) + ' ' + bot.toFixed(1) + ' Z ';
+          }
+          d += 'M' + (x - 3) + ' ' + (base - h * 0.1).toFixed(1) + ' h6 V' + (base + 6) + ' h-6 Z';
+          const p = document.createElementNS(NS, 'path');
+          p.setAttribute('d', d);
+          pines.appendChild(p);
+        }
+        [[30, 900, 150], [96, 896, 120], [150, 902, 170], [220, 898, 110], [282, 900, 140], [350, 904, 96], [418, 902, 128], [480, 900, 84], [540, 892, 104],
+         [1580, 902, 92], [1640, 900, 136], [1702, 898, 112], [1760, 900, 168], [1830, 896, 124], [1890, 900, 150]].forEach(function (p) { pine(p[0], p[1], p[2]); });
+      })();
+    </script>
+
+    <script>
+      (function tiledCal() {
+        const hm = document.getElementById('c-hm'), sEl = document.getElementById('c-s');
+        const dayEl = document.getElementById('c-day'), grid = document.getElementById('c-grid'), month = document.getElementById('c-month');
+        if (!hm) return;
+        const put = function (el, t) { if (el.textContent !== t) el.textContent = t; };
+        let drawn = '';
+        function cal(n) {
+          const key = n.toDateString();
+          if (key === drawn) return;
+          drawn = key;
+          put(month, n.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' }).toLowerCase());
+          grid.replaceChildren();
+          ['mo', 'tu', 'we', 'th', 'fr', 'sa', 'su'].forEach(function (d, i) { const s = document.createElement('span'); s.className = 'wd' + (i > 4 ? ' we' : ''); s.textContent = d; grid.appendChild(s); });
+          const first = new Date(n.getFullYear(), n.getMonth(), 1);
+          const lead = (first.getDay() + 6) % 7;
+          const start = new Date(first); start.setDate(1 - lead);
+          for (let i = 0; i < 42; i++) {
+            const d = new Date(start); d.setDate(start.getDate() + i);
+            const s = document.createElement('span');
+            const out = d.getMonth() !== n.getMonth();
+            s.className = (out ? 'out' : (i % 7 > 4 ? 'we' : '')) + (d.toDateString() === key ? ' today' : '');
+            s.textContent = d.getDate();
+            grid.appendChild(s);
+          }
+        }
+        function tick() {
+          const n = new Date();
+          put(hm, String(n.getHours()).padStart(2, '0') + ':' + String(n.getMinutes()).padStart(2, '0'));
+          put(sEl, String(n.getSeconds()).padStart(2, '0'));
+          const doy = Math.floor((n - new Date(n.getFullYear(), 0, 0)) / 864e5);
+          dayEl.innerHTML = '';
+          dayEl.appendChild(document.createTextNode(n.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }).toLowerCase() + ', day '));
+          const b = document.createElement('b'); b.textContent = String(doy); dayEl.appendChild(b);
+          cal(n);
+        }
+        tick();
+        setInterval(tick, 1000);
+      })();
+    </script>
+
+    <script>
+      (function tiledMedia() {
+        const shell = document.getElementById('tm');
+        if (!shell) return;
+        const $ = function (id) { return document.getElementById(id); };
+        const PLAY = '<path d="M8 5v14l11-7z"/>', PAUSE = '<path d="M6 5h4v14H6zM14 5h4v14h-4z"/>';
+        let info = null, at = 0, lastArt = '';
+        function fmt(ms) { if (!(ms >= 0)) return '--:--'; const s = Math.floor(ms / 1000); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
+        function idle(i) { return !i || i.host === false || i.hasSession === false || i.status === 'no-session'; }
+        function tick() {
+          if (!info || idle(info)) return;
+          const pos = Math.min(info.durationMs || 0, (info.positionMs || 0) + (info.status === 'playing' ? Date.now() - at : 0));
+          $('tm-pos').textContent = fmt(pos);
+          $('tm-bar').style.width = (info.durationMs > 0 ? pos / info.durationMs * 100 : 0) + '%';
+        }
+        function render(i) {
+          if (!i) return;
+          info = i; at = Date.now();
+          const off = idle(i);
+          shell.classList.toggle('idle', off);
+          ['tm-prev', 'tm-pp', 'tm-next'].forEach(function (b) { $(b).disabled = off; });
+          if (off) {
+            $('tm-title').textContent = 'Nothing playing';
+            $('tm-artist').textContent = i.host === false ? 'Open this page in Versailles' : 'Start a song in any player';
+            $('tm-src').textContent = 'no player';
+            $('tm-art').removeAttribute('src'); lastArt = '';
+            $('tm-pos').textContent = '--:--'; $('tm-dur').textContent = '--:--'; $('tm-bar').style.width = '0';
+            return;
+          }
+          $('tm-title').textContent = i.title || 'Untitled';
+          $('tm-artist').textContent = [i.artist, i.album].filter(Boolean).join(', ') || i.source || '';
+          $('tm-src').textContent = (i.source || 'player').toLowerCase() + (i.status === 'playing' ? ' > playing' : ' > ' + i.status);
+          if (i.thumbnailDataUrl && i.thumbnailDataUrl !== lastArt) { $('tm-art').src = i.thumbnailDataUrl; lastArt = i.thumbnailDataUrl; }
+          if (!i.thumbnailDataUrl) { $('tm-art').removeAttribute('src'); lastArt = ''; }
+          $('tm-dur').textContent = fmt(i.durationMs);
+          $('tm-pp-ico').innerHTML = i.status === 'playing' ? PAUSE : PLAY;
+          tick();
+        }
+        setInterval(tick, 1000);
+        (function whenSdk(fn) { window.versailles && typeof window.versailles.for === 'function' ? fn(window.versailles) : setTimeout(function () { whenSdk(fn); }, 50); })(function (v) {
+          const media = v.for('tl-media').media;
+          media.onChange(render).catch(function () {});
+          function control(fn) { return function (e) { e.stopPropagation(); fn().then(function () { return media.now(); }).then(render).catch(function () {}); }; }
+          $('tm-prev').addEventListener('click', control(function () { return media.previous(); }));
+          $('tm-pp').addEventListener('click', control(function () { return media.playPause(); }));
+          $('tm-next').addEventListener('click', control(function () { return media.next(); }));
+          $('tm-ctl').addEventListener('pointerdown', function (e) { e.stopPropagation(); }, true);
+        });
+      })();
+    </script>
+
+    <script>
+      (function tiledFetch() {
+        const $ = function (id) { return document.getElementById(id); };
+        if (!$('f-wins')) return;
+        const put = function (id, t) { const el = $(id); if (el.textContent !== t) el.textContent = t; };
+        (function whenSdk(fn) { window.versailles && typeof window.versailles.for === 'function' ? fn(window.versailles) : setTimeout(function () { whenSdk(fn); }, 50); })(function (v) {
+          const me = v.for('tl-fetch');
+          Promise.resolve(v.monitor && v.monitor()).then(function (m) {
+            const w = m && (m.bounds || m), sc = m && m.scale;
+            if (w && w.width) put('f-disp', Math.round(w.width * (sc || 1)) + 'x' + Math.round(w.height * (sc || 1)) + (sc ? ' @ ' + Math.round(sc * 100) + '%' : ''));
+            else put('f-disp', window.screen.width + 'x' + window.screen.height);
+          }).catch(function () { put('f-disp', window.screen.width + 'x' + window.screen.height); });
+          me.windows.track(function (list) {
+            const front = list.filter(function (w) { return w.focused; })[0];
+            const min = list.filter(function (w) { return w.minimized; }).length;
+            const ask = list.filter(function (w) { return w.attention; }).length;
+            put('f-wins', list.length + ' open' + (min ? ', ' + min + ' minimized' : '') + (ask ? ', ' + ask + ' asking' : ''));
+            put('f-focus', front ? front.app.toLowerCase() : 'desktop');
+          }).catch(function () {});
+          me.on('media', function (m) {
+            put('f-media', m && m.title && m.hasSession !== false ? m.title + (m.artist ? ' by ' + m.artist : '') : 'nothing');
+          }).catch(function () {});
+          me.on('battery', function (b) {
+            if (!b) return;
+            put('f-bat', !b.present ? 'none (mains)' : b.percent + '% ' + (b.charging ? '(charging)' : b.plugged ? '(plugged in)' : '(discharging)'));
+          }).catch(function () {});
+          me.on('network', function (n) {
+            if (!n) return;
+            put('f-net', !n.online ? 'offline' : (n.name || 'online') + (n.wifi ? ' (wi-fi, ' + (n.signalBars || 0) + '/5)' : ' (wired)'));
+          }).catch(function () {});
+          me.keyboard.onChange(function (s) {
+            const l = s && (s.layouts || []).filter(function (x) { return x.id === s.current; })[0];
+            put('f-kb', l ? l.short + ' (' + (l.layout || l.name) + ')' : '--');
+          }).catch(function () {});
+        });
+      })();
+    </script>
+  </body>
+</html>

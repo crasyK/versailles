@@ -1,0 +1,571 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Zen</title>
+    <!--
+      Zen: a Versailles showcase desktop. Almost nothing, on purpose.
+
+        zen-day      widget      the date in words, and a hairline that fills with the day
+        zen-clock    widget      the time, very large
+        zen-intent   widget      the one thing you chose for this hour (set in zen-focus)
+        zen-sound    widget      one line of now playing (media); click it to pause
+        zen-bar      bottom bar  auto-hides: open windows as words, quiet mode, battery, network
+        zen-focus    overlay     Ctrl+Alt+Space: choose an intention and a length, silence
+                                 notifications, return to a window or a recent file
+
+      The overlay and the wallpaper share the session through localStorage (same page,
+      same origin) and the bus. Copy to Documents\Widgets\desktop\index.html.
+      Preview: ?m=desktop | widgets | spawn | spawn&id=zen-focus
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;1,300;1,400;1,500&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --serif: "Cormorant Garamond", "Cormorant", "Garamond", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+        --lacquer: #121916;
+        --moss: #1a231f;
+        --pine: #22302a;
+        --ember: #d29462;
+        --bone: #ede5d5;
+        --ash: #958f80;
+        --hair: rgba(237, 229, 213, 0.16);
+      }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body { width: 100%; height: 100%; }
+      body {
+        font-family: var(--serif);
+        color: var(--bone);
+        background: var(--lacquer);
+        overflow: hidden;
+        -webkit-font-smoothing: antialiased;
+        font-kerning: normal;
+      }
+      html.overlay, html.overlay body { background: transparent; }
+      button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+      button:focus-visible, input:focus-visible { outline: 1px solid var(--ember); outline-offset: 4px; }
+      ::selection { background: rgba(210, 148, 98, 0.35); }
+
+      /* ---------- The wallpaper: lacquer, one breathing ember, grain ---------- */
+      #desktop { position: relative; width: 100%; height: 100%; overflow: hidden; }
+      .room { position: absolute; inset: 0; pointer-events: none; }
+      .room .base {
+        position: absolute; inset: 0;
+        background:
+          radial-gradient(70% 60% at 82% 0%, rgba(54, 74, 70, 0.55), transparent 70%),
+          radial-gradient(90% 70% at 10% 100%, rgba(40, 36, 28, 0.9), transparent 70%),
+          linear-gradient(180deg, #141c19 0%, var(--lacquer) 55%, #0f1513 100%);
+      }
+      .room .breath {
+        position: absolute; left: 50%; top: 47%; width: 1500px; height: 1000px; margin: -500px 0 0 -750px; border-radius: 50%;
+        background: radial-gradient(closest-side, rgba(210, 148, 98, 0.22) 0%, rgba(180, 120, 76, 0.13) 30%, rgba(150, 100, 64, 0.06) 58%, rgba(120, 80, 50, 0.02) 80%, transparent 100%);
+        animation: breathe 11s ease-in-out infinite; will-change: transform, opacity;
+      }
+      @keyframes breathe {
+        0%, 100% { transform: scale(0.92); opacity: 0.7; }
+        50% { transform: scale(1.06); opacity: 1; }
+      }
+      .room .grain {
+        position: absolute; inset: 0; opacity: 0.11; mix-blend-mode: soft-light;
+        background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 1.4 -0.2'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+      }
+      .room .vignette { position: absolute; inset: 0; background: radial-gradient(120% 95% at 50% 45%, transparent 30%, rgba(5, 8, 7, 0.18) 60%, rgba(5, 8, 7, 0.55) 100%); }
+      html.still .breath { animation-play-state: paused; }
+      @media (prefers-reduced-motion: reduce) { .room .breath { animation: none; } }
+
+      /* ---------- Widgets: one centred column ---------- */
+      .column {
+        position: absolute; left: 0; right: 0; top: 47%; transform: translateY(-50%);
+        display: flex; flex-direction: column; align-items: center; text-align: center; z-index: 2;
+      }
+      .day { display: flex; flex-direction: column; align-items: center; }
+      .day .words { font-style: italic; font-weight: 400; font-size: 34px; letter-spacing: 0.01em; color: var(--ash); }
+      .clock {
+        margin-top: 4px; font-weight: 300; font-size: 380px; line-height: 0.82; letter-spacing: -0.02em;
+        font-variant-numeric: lining-nums tabular-nums; color: var(--bone);
+        text-shadow: 0 0 120px rgba(210, 148, 98, 0.18);
+      }
+      .clock .sep { display: inline-block; color: var(--ash); opacity: 0.5; margin: 0 0.03em; transform: translateY(-0.07em); }
+      .hairline { position: relative; width: 420px; height: 1px; margin: 44px auto 0; background: var(--hair); }
+      .hairline i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: var(--bone); opacity: 0.75; }
+      .hairline b { position: absolute; top: -3px; width: 7px; height: 7px; margin-left: -3.5px; border-radius: 50%; background: var(--ember); box-shadow: 0 0 14px rgba(210, 148, 98, 0.8); }
+      .intent { max-width: 1100px; }
+      .intent .what { font-style: italic; font-weight: 400; font-size: 44px; line-height: 1.15; color: var(--bone); }
+      .intent .left { margin-top: 10px; font-size: 22px; font-weight: 400; color: var(--ash); min-height: 1em; }
+      .intent.empty .what { color: var(--ash); font-weight: 300; }
+
+      .sound {
+        position: absolute; left: 50%; bottom: 128px; transform: translateX(-50%); z-index: 2;
+        display: inline-flex; align-items: baseline; gap: 14px; white-space: nowrap; max-width: 80vw;
+        font-size: 26px; color: var(--ash); transition: opacity 0.6s ease;
+      }
+      .sound button { display: inline-flex; align-items: baseline; gap: 14px; max-width: 100%; }
+      .sound .pulse { align-self: center; width: 8px; height: 8px; border-radius: 50%; background: var(--ember); box-shadow: 0 0 12px rgba(210, 148, 98, 0.9); }
+      .sound.paused .pulse { background: transparent; box-shadow: inset 0 0 0 1.5px var(--ash); }
+      .sound .song { font-style: italic; color: var(--bone); overflow: hidden; text-overflow: ellipsis; }
+      .sound .by { overflow: hidden; text-overflow: ellipsis; }
+      .sound.idle { opacity: 0; }
+
+      /* ---------- Previews (?m=widgets / ?m=spawn) ---------- */
+      #preview-root { display: none; }
+      body.preview { overflow: auto; }
+      body.preview #preview-root { display: flex; flex-wrap: wrap; gap: 48px; padding: 48px; align-items: flex-start; }
+      body.preview #preview-root > article.widget { position: relative; inset: auto; transform: none; }
+      html.overlay body.preview { overflow: hidden; }
+      html.overlay body.preview #preview-root { display: block; padding: 0; width: 100%; height: 100%; }
+      .spawn-surface { position: relative; }
+      .spawn-surface.solo { width: 100%; height: 100%; }
+      .unknown-spawn { padding: 18px; font-size: 18px; }
+    </style>
+  </head>
+  <body>
+    <section id="desktop">
+      <div class="room" aria-hidden="true">
+        <div class="base"></div>
+        <div class="breath"></div>
+        <div class="vignette"></div>
+        <div class="grain"></div>
+      </div>
+
+      <div class="column">
+        <article class="widget day" data-id="zen-day">
+          <div class="words"></div>
+        </article>
+        <article class="widget clock" data-id="zen-clock">
+          <span class="hh">--</span><span class="sep">:</span><span class="mm">--</span>
+        </article>
+        <article class="widget intent empty" data-id="zen-intent" data-hooks="bus">
+          <div class="hairline" aria-hidden="true"><i></i><b></b></div>
+          <div class="intentbody" style="margin-top: 34px">
+            <div class="what">One thing at a time.</div>
+            <div class="left"></div>
+          </div>
+        </article>
+      </div>
+
+      <article class="widget sound idle" data-id="zen-sound" data-hooks="media">
+        <button type="button" aria-label="Play or pause">
+          <span class="pulse" aria-hidden="true"></span><span class="song"></span><span class="by"></span>
+        </button>
+      </article>
+    </section>
+
+    <!-- ===== Bar: tucked under the bottom edge, slides up when the mouse
+         touches it. Windows as words; the focused one in full ink. ===== -->
+    <template class="spawnable" data-id="zen-bar" data-anchor="bottom" data-dock="auto-hide" data-peek="3" data-h="58"
+              data-hooks="windows,windows-control,battery,network,dnd,spawn">
+      <style>
+        .zb {
+          height: 100%; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 24px; padding: 0 30px;
+          background: linear-gradient(180deg, #1c2622, #151d1a); border-top: 1px solid rgba(237, 229, 213, 0.22);
+          font: 400 21px/1 var(--serif); color: var(--ash); white-space: nowrap; overflow: hidden;
+        }
+        .zb .l, .zb .r { display: flex; align-items: center; gap: 26px; min-width: 0; }
+        .zb .r { justify-content: flex-end; }
+        .zb .focus { display: inline-flex; align-items: baseline; gap: 12px; color: var(--bone); font-style: italic; }
+        .zb .focus kbd { font: 400 15px/1 var(--serif); font-style: normal; color: var(--ash); letter-spacing: 0.04em; }
+        .zb .focus:hover { color: #fff; }
+        .zb .quiet { color: var(--ember); font-style: italic; }
+        .zb .quiet[hidden] { display: none; }
+        .zb .wins { display: flex; align-items: center; gap: 30px; min-width: 0; overflow: hidden; }
+        .zb .win { position: relative; padding: 6px 0; color: var(--ash); }
+        .zb .win:hover { color: var(--bone); }
+        .zb .win.focused { color: var(--bone); }
+        .zb .win.focused::after { content: ""; position: absolute; left: 0; right: 0; bottom: 1px; height: 1px; background: var(--bone); }
+        .zb .win.minimized { font-style: italic; opacity: 0.55; }
+        .zb .win.attention::before {
+          content: ""; position: absolute; right: -11px; top: 4px; width: 6px; height: 6px; border-radius: 50%;
+          background: var(--ember); box-shadow: 0 0 10px rgba(210, 148, 98, 0.9);
+        }
+        .zb .win .prog { position: absolute; left: 0; bottom: 1px; height: 1.5px; background: var(--ember); box-shadow: 0 0 6px rgba(210, 148, 98, 0.7); }
+        .zb .tm { color: var(--bone); font-variant-numeric: lining-nums tabular-nums; }
+        .zb .none { font-style: italic; }
+      </style>
+      <div class="zb">
+        <div class="l">
+          <button type="button" class="focus">Focus <kbd>Ctrl Alt Space</kbd></button>
+          <button type="button" class="quiet" hidden title="Turn notifications back on">Quiet</button>
+        </div>
+        <div class="wins"><span class="none">Nothing open</span></div>
+        <div class="r"><span class="bat"></span><span class="net"></span><span class="tm">--:--</span></div>
+      </div>
+      <script>
+        (function zenBar() {
+          var root = document.currentScript && document.currentScript.closest('.spawn-surface');
+          if (!root) return;
+          var $ = function (s) { return root.querySelector(s); };
+          function put(el, t) { if (el.textContent !== t) el.textContent = t; }
+          function tick() { var n = new Date(); put($('.tm'), String(n.getHours()).padStart(2, '0') + ':' + String(n.getMinutes()).padStart(2, '0')); }
+          tick(); setInterval(tick, 1000);
+          // "README.md - versailles - Visual Studio Code" -> "Visual Studio Code"
+          function nameOf(w) { var p = String(w.title || '').split(' - '); return (p.length > 1 ? p[p.length - 1] : p[0]) || w.app || 'Window'; }
+          (function whenSdk(fn) { window.versailles && typeof window.versailles.for === 'function' ? fn(window.versailles) : setTimeout(function () { whenSdk(fn); }, 50); })(function (v) {
+            var me = v.for('zen-bar');
+            $('.focus').addEventListener('click', function () { me.spawn('zen-focus').catch(function () {}); });
+            me.on('battery', function (b) { if (b && b.host !== false) put($('.bat'), b.present ? b.percent + '%' + (b.charging ? ', charging' : '') : ''); }).catch(function () {});
+            me.on('network', function (n) { if (n && n.host !== false) put($('.net'), n.online ? (n.name || 'Online') : 'Offline'); }).catch(function () {});
+            me.on('dnd', function (d) { if (d && d.host !== false) $('.quiet').hidden = !d.mode || d.mode === 'off'; }).catch(function () {});
+            $('.quiet').addEventListener('click', function () {
+              me.dnd.set('off').then(function () { $('.quiet').hidden = true; }, function () {});
+            });
+            var box = $('.wins');
+            me.windows.track(function (list) {
+              box.replaceChildren();
+              if (!list.length) { box.innerHTML = '<span class="none">Nothing open</span>'; return; }
+              list.forEach(function (w) {
+                var b = document.createElement('button');
+                b.type = 'button';
+                b.className = 'win' + (w.focused ? ' focused' : '') + (w.minimized ? ' minimized' : '') + (w.attention ? ' attention' : '');
+                b.textContent = nameOf(w);
+                b.setAttribute('aria-label', w.title + (w.attention ? ', wants attention' : ''));
+                if (w.progress && w.progress.value != null) {
+                  var p = document.createElement('span');
+                  p.className = 'prog';
+                  p.style.width = Math.round(w.progress.value * 100) + '%';
+                  b.appendChild(p);
+                }
+                b.addEventListener('click', function () {
+                  (w.focused && !w.minimized ? me.windows.minimize(w.id) : me.windows.focus(w.id)).catch(function () {});
+                });
+                box.appendChild(b);
+              });
+            }).catch(function () {});
+          });
+        })();
+      </script>
+    </template>
+
+    <!-- ===== Focus: a quiet centred panel. Choose the one thing, how long,
+         and whether Windows should hold its notifications. ===== -->
+    <template class="spawnable" data-id="zen-focus" data-anchor="c" data-w="880" data-h="560"
+              data-hooks="hotkey,storage,dnd,bus,shell,windows,windows-control" data-hotkey="Ctrl+Alt+Space">
+      <style>
+        .zf {
+          position: absolute; inset: 0; overflow: hidden; display: flex; flex-direction: column; padding: 52px 64px 44px;
+          background:
+            radial-gradient(80% 70% at 50% 0%, rgba(210, 148, 98, 0.12), transparent 70%),
+            linear-gradient(180deg, #1d2723 0%, #161e1b 100%);
+          border: 1px solid rgba(237, 229, 213, 0.18); border-radius: 6px;
+          font: 400 21px/1.35 var(--serif); color: var(--bone);
+        }
+        .zf h1 { font-weight: 300; font-size: 50px; line-height: 1.05; letter-spacing: -0.005em; }
+        .zf .ask { margin-top: 22px; width: 100%; border: 0; border-bottom: 1px solid rgba(237, 229, 213, 0.3); background: transparent; color: var(--bone);
+                   font: italic 400 32px/1.3 var(--serif); padding: 4px 0 12px; outline: none; }
+        .zf .ask::placeholder { color: rgba(149, 143, 128, 0.75); }
+        .zf .ask:focus { border-bottom-color: var(--ember); outline: none; }
+        .zf .opts { margin-top: 26px; display: flex; align-items: baseline; gap: 34px; }
+        .zf .len { color: var(--ash); padding-bottom: 3px; border-bottom: 1px solid transparent; }
+        .zf .len:hover { color: var(--bone); }
+        .zf .len[aria-pressed="true"] { color: var(--bone); border-bottom-color: var(--bone); }
+        .zf .hush { display: inline-flex; align-items: baseline; gap: 10px; color: var(--ash); cursor: pointer; margin-left: auto; }
+        .zf .hush input { appearance: none; width: 15px; height: 15px; border: 1px solid var(--ash); border-radius: 50%; transform: translateY(1px); cursor: pointer; }
+        .zf .hush input:checked { background: var(--ember); border-color: var(--ember); box-shadow: 0 0 10px rgba(210, 148, 98, 0.6); }
+        .zf .go { margin-left: 18px; font-style: italic; font-size: 26px; color: var(--lacquer); background: var(--bone); padding: 8px 26px 10px; border-radius: 999px; }
+        .zf .go:hover { background: #fff; }
+        .zf .rule { margin: 34px 0 22px; height: 1px; background: rgba(237, 229, 213, 0.14); }
+        .zf .lists { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; min-height: 0; flex: 1; }
+        .zf h2 { font-weight: 400; font-style: italic; font-size: 19px; color: var(--ash); margin-bottom: 8px; }
+        .zf ul { list-style: none; }
+        .zf li button { display: flex; align-items: baseline; gap: 10px; width: 100%; text-align: left; padding: 3px 0; color: var(--bone); white-space: nowrap; overflow: hidden; }
+        .zf li button span { overflow: hidden; text-overflow: ellipsis; }
+        .zf li button small { font-size: 16px; color: var(--ash); font-style: italic; flex: none; }
+        .zf li button:hover span { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 5px; }
+        .zf li .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ember); box-shadow: 0 0 8px rgba(210, 148, 98, 0.9); flex: none; transform: translateY(-3px); }
+        .zf .muted { color: var(--ash); font-style: italic; }
+        /* While a session runs */
+        .zf .running { display: none; }
+        .zf.is-running .setup { display: none; }
+        .zf.is-running .running { display: block; }
+        .zf .running .now { margin-top: 18px; font: italic 400 40px/1.2 var(--serif); }
+        .zf .running .rem { margin-top: 10px; color: var(--ash); }
+        .zf .running .end { margin-top: 24px; font-style: italic; color: var(--bone); border-bottom: 1px solid var(--bone); padding-bottom: 2px; }
+        .zf .msg { position: absolute; right: 64px; bottom: 18px; font-size: 16px; font-style: italic; color: var(--ember); }
+      </style>
+      <div class="zf">
+        <div class="setup">
+          <h1>What deserves the next hour?</h1>
+          <input class="ask" type="text" maxlength="80" spellcheck="false" autocomplete="off" placeholder="Write the opening chapter" aria-label="Your intention" />
+          <div class="opts">
+            <button type="button" class="len" data-min="25" aria-pressed="false">25 minutes</button>
+            <button type="button" class="len" data-min="50" aria-pressed="true">50 minutes</button>
+            <button type="button" class="len" data-min="90" aria-pressed="false">90 minutes</button>
+            <label class="hush"><input type="checkbox" class="dnd" checked /> Hold notifications</label>
+            <button type="button" class="go">Begin</button>
+          </div>
+        </div>
+        <div class="running">
+          <h1>You chose</h1>
+          <div class="now"></div>
+          <div class="rem"></div>
+          <button type="button" class="end">End the session</button>
+        </div>
+        <div class="rule"></div>
+        <div class="lists">
+          <div><h2>Return to</h2><ul class="wl"><li class="muted">Nothing open</li></ul></div>
+          <div><h2>Recently opened</h2><ul class="rl"><li class="muted">Nothing recent</li></ul></div>
+        </div>
+        <div class="msg" role="status"></div>
+      </div>
+      <script>
+        (function zenFocus() {
+          var root = document.currentScript && document.currentScript.closest('.spawn-surface');
+          if (!root) return;
+          var $ = function (s) { return root.querySelector(s); };
+          var KEY = 'zen.session';
+          var panel = $('.zf'), ask = $('.ask'), minutes = 50;
+          function read() { try { var s = JSON.parse(localStorage.getItem(KEY) || 'null'); return s && s.endsAt > Date.now() ? s : null; } catch (_) { return null; } }
+          function write(s) { try { s ? localStorage.setItem(KEY, JSON.stringify(s)) : localStorage.removeItem(KEY); } catch (_) {} }
+          function nameOf(w) { var p = String(w.title || '').split(' - '); return (p.length > 1 ? p[p.length - 1] : p[0]) || w.app || 'Window'; }
+          root.querySelectorAll('.len').forEach(function (b) {
+            b.addEventListener('click', function () {
+              minutes = Number(b.dataset.min);
+              root.querySelectorAll('.len').forEach(function (o) { o.setAttribute('aria-pressed', String(o === b)); });
+            });
+          });
+          function paint() {
+            var s = read();
+            panel.classList.toggle('is-running', !!s);
+            if (s) {
+              $('.now').textContent = s.text;
+              var m = Math.max(1, Math.ceil((s.endsAt - Date.now()) / 60000));
+              $('.rem').textContent = m + (m === 1 ? ' minute' : ' minutes') + ' left' + (s.dnd ? ', notifications held' : '');
+            }
+          }
+          paint();
+          setInterval(paint, 15000);
+          (function whenSdk(fn) { window.versailles && typeof window.versailles.for === 'function' ? fn(window.versailles) : setTimeout(function () { whenSdk(fn); }, 50); })(function (v) {
+            var me = v.for('zen-focus');
+            function say(t) { $('.msg').textContent = t || ''; }
+            function close() { v.invoke('dismiss_launcher').catch(function () {}); }
+            function begin() {
+              var text = ask.value.trim() || ask.placeholder;
+              var s = { text: text, minutes: minutes, startedAt: Date.now(), endsAt: Date.now() + minutes * 60000, dnd: $('.dnd').checked };
+              write(s);
+              me.storage.set('last', { text: text, minutes: minutes }).catch(function () {});
+              me.bus.publish('zen.session', s).catch(function () {});
+              if (s.dnd) me.dnd.set('priority').catch(function (e) { say(e && e.message); });
+              paint();
+              setTimeout(close, 450);
+            }
+            $('.go').addEventListener('click', begin);
+            ask.addEventListener('keydown', function (e) { if (e.key === 'Enter') begin(); });
+            root.addEventListener('keydown', function (e) { if (e.key === 'Escape') close(); });
+            $('.end').addEventListener('click', function () {
+              var s = read();
+              write(null);
+              me.bus.publish('zen.session', null).catch(function () {});
+              if (s && s.dnd) me.dnd.set('off').catch(function () {});
+              paint();
+            });
+            me.storage.get('last').then(function (l) {
+              if (l && l.text) ask.placeholder = l.text;
+            }).catch(function () {});
+
+            var wl = $('.wl');
+            me.windows.track(function (list) {
+              wl.replaceChildren();
+              list.slice(0, 5).forEach(function (w) {
+                var li = document.createElement('li'), b = document.createElement('button');
+                b.type = 'button';
+                var name = document.createElement('span');
+                name.textContent = nameOf(w);
+                b.appendChild(name);
+                if (w.attention) { var d = document.createElement('i'); d.className = 'dot'; b.appendChild(d); }
+                if (w.minimized) { var m = document.createElement('small'); m.textContent = 'minimized'; b.appendChild(m); }
+                b.addEventListener('click', function () { me.windows.focus(w.id).then(close, function () {}); });
+                li.appendChild(b); wl.appendChild(li);
+              });
+              if (!list.length) wl.innerHTML = '<li class="muted">Nothing open</li>';
+            }).catch(function () {});
+
+            function recent() {
+              me.shell.recent(5).then(function (files) {
+                if (!Array.isArray(files) || !files.length) return;
+                var rl = $('.rl');
+                rl.replaceChildren();
+                files.forEach(function (f) {
+                  var li = document.createElement('li'), b = document.createElement('button');
+                  b.type = 'button';
+                  var n = document.createElement('span'); n.textContent = f.name;
+                  var where = document.createElement('small'); where.textContent = String(f.folder || '').split('\\').pop();
+                  b.append(n, where);
+                  b.addEventListener('click', function () { me.shell.open(f.path).then(close, function () {}); });
+                  li.appendChild(b); rl.appendChild(li);
+                });
+              }).catch(function () {});
+            }
+            recent();
+            me.on('shown', function () { say(''); paint(); recent(); if (!read()) { ask.value = ''; ask.focus(); } }).catch(function () {});
+          });
+        })();
+      </script>
+    </template>
+
+    <div id="preview-root" hidden></div>
+
+    <script>
+      (function boot() {
+        const params = new URLSearchParams(location.search || '');
+        let m = (params.get('m') || 'desktop').trim().toLowerCase().replace(/-/g, '_');
+        if (m === 'spawnables') m = 'spawn';
+        const id = (params.get('id') || '').trim();
+        document.documentElement.dataset.mode = m;
+        document.body.dataset.mode = m;
+
+        const desktop = document.getElementById('desktop');
+        const preview = document.getElementById('preview-root');
+
+        // Scripts cloned out of a <template> run once when the clone enters the document.
+        function mountSpawn(tpl, solo, parent) {
+          const wrap = document.createElement('section');
+          wrap.className = 'spawn-surface' + (solo ? ' solo' : '');
+          wrap.dataset.id = tpl.getAttribute('data-id') || '';
+          const hooks = tpl.getAttribute('data-hooks');
+          if (hooks) wrap.setAttribute('data-hooks', hooks);
+          wrap.appendChild(tpl.content.cloneNode(true));
+          parent.appendChild(wrap);
+          return wrap;
+        }
+        function spawnables() { return Array.prototype.slice.call(document.querySelectorAll('template.spawnable')); }
+        function findSpawn(needle) {
+          const want = (needle || '').toLowerCase();
+          return spawnables().find(function (t) { return (t.getAttribute('data-id') || '').toLowerCase() === want; });
+        }
+
+        if (m === 'desktop') return;
+        desktop.hidden = true;
+        preview.hidden = false;
+        document.body.classList.add('preview');
+
+        if (m === 'widgets') {
+          Array.prototype.slice.call(desktop.querySelectorAll('article.widget')).forEach(function (el) { preview.appendChild(el); });
+          return;
+        }
+        desktop.remove();
+        if (m === 'spawn') {
+          if (id) {
+            document.documentElement.classList.add('overlay');
+            const tpl = findSpawn(id);
+            if (!tpl) {
+              const p = document.createElement('p');
+              p.className = 'unknown-spawn';
+              p.textContent = 'unknown spawnable: ' + id;
+              preview.appendChild(p);
+              return;
+            }
+            const hosted = !!(window.__TAURI_INTERNALS__ || window.__TAURI__);
+            if (!hosted) {
+              document.body.style.width = (tpl.getAttribute('data-w') || (tpl.dataset.anchor === 'top' || tpl.dataset.anchor === 'bottom' ? '1280' : '400')) + 'px';
+              document.body.style.height = (tpl.getAttribute('data-h') || '200') + 'px';
+            }
+            mountSpawn(tpl, true, preview);
+            return;
+          }
+          spawnables().forEach(function (t) {
+            const w = mountSpawn(t, false, preview);
+            w.style.width = (t.getAttribute('data-w') || '1280') + 'px';
+            w.style.height = (t.getAttribute('data-h') || '200') + 'px';
+          });
+          return;
+        }
+        const p = document.createElement('p');
+        p.className = 'unknown-spawn';
+        p.textContent = 'unknown mode: ' + m;
+        preview.appendChild(p);
+      })();
+    </script>
+    <script>
+      (function loadSdk() {
+        if (window.versailles && typeof window.versailles.invoke === 'function') return;
+        var s = document.createElement('script');
+        s.src = location.protocol === 'file:' ? '../.sdk/versailles.js' : '/files/.sdk/versailles.js';
+        document.head.appendChild(s);
+      })();
+    </script>
+    <script>
+      function zenWhenSdk(fn) {
+        window.versailles && typeof window.versailles.for === 'function' ? fn(window.versailles) : setTimeout(function () { zenWhenSdk(fn); }, 50);
+      }
+
+      (function zenTime() {
+        var clock = document.querySelector('.clock');
+        if (!clock) return;
+        var hh = clock.querySelector('.hh'), mm = clock.querySelector('.mm');
+        var words = document.querySelector('.day .words');
+        var fill = document.querySelector('.hairline i'), mark = document.querySelector('.hairline b');
+        var ORD = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth', 'eleventh', 'twelfth',
+          'thirteenth', 'fourteenth', 'fifteenth', 'sixteenth', 'seventeenth', 'eighteenth', 'nineteenth', 'twentieth', 'twenty-first',
+          'twenty-second', 'twenty-third', 'twenty-fourth', 'twenty-fifth', 'twenty-sixth', 'twenty-seventh', 'twenty-eighth',
+          'twenty-ninth', 'thirtieth', 'thirty-first'];
+        var DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+        var MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+        function put(el, t) { if (el && el.textContent !== t) el.textContent = t; }
+        function tick() {
+          var n = new Date();
+          put(hh, String(n.getHours()).padStart(2, '0'));
+          put(mm, String(n.getMinutes()).padStart(2, '0'));
+          put(words, DAYS[n.getDay()] + ', the ' + ORD[n.getDate() - 1] + ' of ' + MONTHS[n.getMonth()]);
+          if (fill) {
+            var p = ((n.getHours() * 60 + n.getMinutes()) / 1440 * 100).toFixed(2) + '%';
+            fill.style.width = p; mark.style.left = p;
+          }
+        }
+        tick();
+        setInterval(tick, 1000);
+        zenWhenSdk(function (v) {
+          var me = v.for('zen-clock');
+          me.on('idle', function () { document.documentElement.classList.add('still'); }).catch(function () {});
+          me.on('active', function () { document.documentElement.classList.remove('still'); }).catch(function () {});
+        });
+      })();
+
+      (function zenIntent() {
+        var box = document.querySelector('.intent');
+        if (!box) return;
+        var what = box.querySelector('.what'), left = box.querySelector('.left');
+        var KEY = 'zen.session';
+        var session = null;
+        function read() { try { return JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (_) { return null; } }
+        function paint() {
+          var s = session || read();
+          if (s && s.endsAt > Date.now()) {
+            box.classList.remove('empty');
+            what.textContent = s.text;
+            var m = Math.max(1, Math.ceil((s.endsAt - Date.now()) / 60000));
+            left.textContent = m + (m === 1 ? ' minute' : ' minutes') + ' left';
+          } else {
+            box.classList.add('empty');
+            what.textContent = s && s.endsAt ? 'Done. Breathe out.' : 'One thing at a time.';
+            left.textContent = '';
+          }
+        }
+        window.addEventListener('storage', function (e) { if (e.key === KEY) { session = null; paint(); } });
+        paint();
+        setInterval(paint, 10000);
+        zenWhenSdk(function (v) {
+          v.for('zen-intent').bus.subscribe('zen.session', function (s) { session = s; paint(); }).catch(function () {});
+        });
+      })();
+
+      (function zenSound() {
+        var box = document.querySelector('.sound');
+        if (!box) return;
+        var song = box.querySelector('.song'), by = box.querySelector('.by');
+        zenWhenSdk(function (v) {
+          var media = v.for('zen-sound').media;
+          media.onChange(function (m) {
+            var idle = !m || m.host === false || m.hasSession === false || !m.title;
+            box.classList.toggle('idle', idle);
+            if (idle) return;
+            box.classList.toggle('paused', m.status !== 'playing');
+            song.textContent = m.title;
+            by.textContent = m.artist ? 'by ' + m.artist : '';
+          }).catch(function () {});
+          box.querySelector('button').addEventListener('click', function () { media.playPause().catch(function () {}); });
+        });
+      })();
+    </script>
+  </body>
+</html>

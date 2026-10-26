@@ -14,6 +14,7 @@ Pieces to copy into your page, `%USERPROFILE%\Documents\Widgets\desktop\index.ht
 
 | Path | What |
 | ---- | ---- |
+| [`showcase/`](showcase/) | Whole desktops to start from: `home`, `harbor`, `ninety-five`, `phosphor`, `neon`, `tiled`, `zen`. Copy one `index.html` to `Documents\Widgets\desktop\index.html`. `ninety-five`, `phosphor`, `neon` and `tiled` hide the Windows taskbar (`"hideTaskbar": true`); delete that line to keep it |
 | [`gallery/index.html`](gallery/index.html) | A full page: quote, weather, watch, to-do, pomodoro, now playing, calculator, calendar, notes, command bar |
 | [`widgets/`](widgets/) | One tile each |
 | [`spawnables/`](spawnables/) | Calculator, calendar, notes as overlay templates |

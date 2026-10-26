@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Home</title>
+    <!--
+      Home: a Versailles desktop shaped in a conversation with an AI assistant.
+      Copy to Documents\Widgets\desktop\index.html.
+      Preview: ?m=desktop | widgets | spawn
+    -->
+    <script type="application/json" id="versailles">
+    {
+      "autostart": true,
+      "shell": { "hideTaskbar": false }
+    }
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Inter+Tight:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --serif: "Instrument Serif", "Iowan Old Style", Georgia, serif;
+        --sans: "Inter Tight", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+        /* Dusk over hills, turned down. */
+        --sky-top: #3a4157;
+        --sky-mid: #8f7a86;
+        --sky-low: #c9b3a4;
+        --hill-far: #6f6879;
+        --hill-mid: #545066;
+        --hill-near: #3a3849;
+        --ink: #f4efe9;
+        --soft: rgba(244, 239, 233, 0.6);
+        --clock-size: 200px;
+      }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body { width: 100%; height: 100%; overflow: hidden; }
+      body { font-family: var(--sans); color: var(--ink); background: var(--sky-top); }
+      [hidden] { display: none !important; }
+
+      #desktop { position: fixed; inset: 0; overflow: hidden;
+        background: linear-gradient(180deg, var(--sky-top) 0%, var(--sky-mid) 58%, var(--sky-low) 78%); }
+      .sun { position: absolute; left: 62%; top: 60%; width: 180px; height: 180px; border-radius: 50%;
+        background: radial-gradient(circle, rgba(250, 236, 216, 0.55) 0 40%, rgba(250, 236, 216, 0) 70%); transform: translate(-50%, -50%); }
+      .hills { position: absolute; left: 0; right: 0; bottom: 0; width: 100%; height: 46%; }
+      .hills .far { fill: var(--hill-far); }
+      .hills .mid { fill: var(--hill-mid); }
+      .hills .near { fill: var(--hill-near); }
+
+      .widget.clock { position: absolute; left: 120px; top: 34%; transform: translateY(-50%); text-align: left; }
+      .clock .time { font: 400 var(--clock-size)/0.9 var(--serif); letter-spacing: -0.02em; opacity: 0.92; }
+      .clock .date { font: 400 18px var(--sans); letter-spacing: 0.06em; color: var(--soft); margin-top: 10px; }
+
+      /* Quiet cards: what's playing, the month. */
+      .card { position: absolute; padding: 18px 20px; border-radius: 18px; background: rgba(30, 30, 44, 0.28);
+        border: 1px solid rgba(244, 239, 233, 0.14); backdrop-filter: blur(14px); }
+      .widget.playing { left: 120px; bottom: 120px; width: 380px; display: grid; grid-template-columns: 64px 1fr; gap: 16px; align-items: center; }
+      .playing img { width: 64px; height: 64px; border-radius: 12px; object-fit: cover; background: rgba(244, 239, 233, 0.1); }
+      .playing .title { font: 400 28px/1.05 var(--serif); }
+      .playing .artist { font: 400 14px var(--sans); color: var(--soft); margin-top: 4px; }
+      .playing .bar { grid-column: 1 / -1; height: 2px; background: rgba(244, 239, 233, 0.16); border-radius: 2px; overflow: hidden; }
+      .playing .bar i { display: block; height: 100%; width: 0; background: var(--ink); }
+      .playing.idle { opacity: 0.55; }
+      .widget.month { right: 120px; top: 120px; width: 300px; }
+      .month .head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 12px; }
+      .month .name { font: 400 30px var(--serif); }
+      .month .year { font: 400 14px var(--sans); color: var(--soft); }
+      .month .grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; text-align: center; font: 500 13px var(--sans); font-variant-numeric: tabular-nums; }
+      .month .grid b { font-weight: 600; color: var(--soft); font-size: 11px; letter-spacing: 0.06em; }
+      .month .grid span { padding: 6px 0; border-radius: 8px; color: var(--soft); }
+      .month .grid span.today { background: var(--ink); color: #2e2c3a; font-weight: 700; }
+      /* The top bar: daily apps with their own icons, in place of the taskbar. */
+      .topbar { height: 100%; display: flex; align-items: center; gap: 6px; padding: 0 14px;
+        background: linear-gradient(180deg, #343a50, #2f3446); color: var(--ink); font: 500 13px var(--sans); }
+      .topbar .apps { display: flex; gap: 4px; }
+      .topbar button { all: unset; cursor: pointer; position: relative; width: 36px; height: 36px; border-radius: 10px;
+        display: grid; place-items: center; color: var(--ink); }
+      .topbar button:hover, .topbar button:focus-visible { background: rgba(244, 239, 233, 0.12); }
+      .topbar button svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+      .topbar button.open::after { content: ""; position: absolute; bottom: 3px; left: 50%; width: 4px; height: 4px; margin-left: -2px; border-radius: 50%; background: var(--ink); }
+      .topbar button.front::after { width: 14px; margin-left: -7px; border-radius: 2px; }
+      .topbar .right { margin-left: auto; display: flex; gap: 18px; align-items: center; color: var(--soft); font-variant-numeric: tabular-nums; }
+      .topbar .right .t { color: var(--ink); font-weight: 600; }
+      .topbar .tray { display: flex; gap: 2px; }
+      .topbar .tray .ti { width: 28px; height: 28px; border-radius: 8px; }
+      .topbar .tray .ti img { width: 16px; height: 16px; }
+      /* The launcher: type, arrow, Enter. */
+      .launch { height: 100%; display: flex; flex-direction: column; gap: 10px; padding: 18px; border-radius: 18px;
+        background: #2b2f40; border: 1px solid rgba(244, 239, 233, 0.16); color: var(--ink); font: 500 15px var(--sans); }
+      .launch .prompt { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-radius: 12px; background: rgba(244, 239, 233, 0.08);
+        font: 500 22px ui-monospace, "Cascadia Mono", Consolas, monospace; }
+      .launch .prompt span { color: var(--soft); }
+      .launch input { all: unset; flex: 1; font: inherit; color: var(--ink); caret-color: var(--ink); }
+      .launch ul { list-style: none; display: grid; gap: 2px; overflow: auto; }
+      .launch li { display: flex; justify-content: space-between; padding: 10px 14px; border-radius: 10px; color: var(--soft); }
+      .launch li.on { background: rgba(244, 239, 233, 0.12); color: var(--ink); }
+      .launch li kbd { font: 600 11px var(--sans); letter-spacing: 0.08em; text-transform: uppercase; color: var(--soft); }
+      /* Previews (?m=widgets / ?m=spawn) */
+      body.preview { background: #1d1b2b; overflow: auto; padding: 24px; }
+      #preview-root { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
+      body.preview .widget { position: relative; left: auto; top: auto; right: auto; bottom: auto; transform: none; }
+      .spawn-surface { position: relative; }
+      .spawn-surface.solo { width: 100%; height: 100%; }
+    </style>
+  </head>
+  <body>
+    <section id="desktop">
+      <div class="sun" aria-hidden="true"></div>
+      <svg class="hills" viewBox="0 0 1920 500" preserveAspectRatio="none" aria-hidden="true">
+        <path class="far" d="M0 210 C 220 120 420 170 620 150 C 860 125 1040 60 1280 110 C 1500 150 1700 90 1920 130 L1920 500 L0 500 Z" />
+        <path class="mid" d="M0 300 C 260 220 520 290 760 250 C 1000 210 1200 280 1440 240 C 1640 210 1800 250 1920 235 L1920 500 L0 500 Z" />
+        <path class="near" d="M0 390 C 300 330 600 400 900 360 C 1200 320 1500 390 1920 350 L1920 500 L0 500 Z" />
+      </svg>
+
+      <article class="widget clock" data-id="clock">
+        <div class="time">--:--</div>
+        <div class="date"></div>
+      </article>
+      <script>
+        (function clock() {
+          const el = document.querySelector('.widget.clock');
+          const time = el.querySelector('.time');
+          const date = el.querySelector('.date');
+          let last = '';
+          function tick() {
+            const now = new Date();
+            const t = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+            if (t !== last) {
+              last = t;
+              time.textContent = t;
+              date.textContent = now.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+            }
+          }
+          tick();
+          setInterval(tick, 1000);
+        })();
+      </script>
+
+      <article class="widget card playing idle" data-id="playing" data-hooks="media">
+        <img alt="" />
+        <div><div class="title">Nothing playing</div><div class="artist">&nbsp;</div></div>
+        <div class="bar"><i></i></div>
+      </article>
+      <script>
+        (function playing() {
+          const el = document.querySelector('.widget.playing');
+          const art = el.querySelector('img'), title = el.querySelector('.title'), artist = el.querySelector('.artist'), bar = el.querySelector('.bar i');
+          function show(m) {
+            const on = m && m.hasSession !== false && m.title;
+            el.classList.toggle('idle', !on);
+            title.textContent = on ? m.title : 'Nothing playing';
+            artist.textContent = on ? [m.artist, m.album].filter(Boolean).join(' \u00b7 ') : '\u00a0';
+            if (on && m.thumbnailDataUrl) art.src = m.thumbnailDataUrl; else art.removeAttribute('src');
+            bar.style.width = on && m.durationMs ? Math.min(100, (100 * m.positionMs) / m.durationMs) + '%' : '0';
+          }
+          (function whenSdk(fn) { window.versailles && typeof window.versailles.for === 'function' ? fn(window.versailles) : setTimeout(() => whenSdk(fn), 50); })((v) => {
+            v.for('playing').media.onChange(show).catch(() => {});
+          });
+        })();
+      </script>
+
+      <article class="widget card month" data-id="month">
+        <div class="head"><span class="name"></span><span class="year"></span></div>
+        <div class="grid"></div>
+      </article>
+      <script>
+        (function month() {
+          const el = document.querySelector('.widget.month');
+          const now = new Date();
+          el.querySelector('.name').textContent = now.toLocaleDateString('en-GB', { month: 'long' });
+          el.querySelector('.year').textContent = now.getFullYear();
+          const grid = el.querySelector('.grid');
+          grid.innerHTML = ['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((d) => '<b>' + d + '</b>').join('');
+          const first = new Date(now.getFullYear(), now.getMonth(), 1);
+          const pad = (first.getDay() + 6) % 7;
+          const days = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+          for (let i = 0; i < pad; i++) grid.appendChild(document.createElement('span'));
+          for (let d = 1; d <= days; d++) {
+            const s = document.createElement('span');
+            s.textContent = d;
+            if (d === now.getDate()) s.className = 'today';
+            grid.appendChild(s);
+          }
+        })();
+      </script>
+    </section>
+
+    <div id="preview-root" hidden></div>
+
+    <template class="spawnable" data-id="launch" data-anchor="tc" data-w="640" data-h="360" data-hotkey="Win" data-hooks="hotkey,shell">
+      <div class="launch">
+        <label class="prompt"><span>&gt;</span><input placeholder="open something" spellcheck="false" /></label>
+        <ul></ul>
+      </div>
+      <script>
+        (function launcher() {
+          const root = document.currentScript.closest('.spawn-surface') || document;
+          const input = root.querySelector('input'), list = root.querySelector('ul');
+          const ITEMS = [
+            ['code', 'Visual Studio Code'], ['browser', 'Microsoft Edge'], ['files', 'shell:MyComputerFolder'], ['terminal', 'Terminal'],
+            ['notes', 'Notepad'], ['music', 'Spotify'], ['settings', 'ms-settings:'], ['downloads', 'shell:Downloads'],
+          ];
+          let shown = ITEMS, pick = 0;
+          function draw() {
+            const q = input.value.trim().toLowerCase();
+            shown = ITEMS.filter(([n]) => n.includes(q));
+            pick = Math.min(pick, Math.max(0, shown.length - 1));
+            list.innerHTML = shown.map(([n], i) => '<li class="' + (i === pick ? 'on' : '') + '"><span>' + n + '</span>' + (i === pick ? '<kbd>enter</kbd>' : '') + '</li>').join('');
+          }
+          input.addEventListener('input', () => { pick = 0; draw(); });
+          (function whenSdk(fn) { window.versailles && typeof window.versailles.for === 'function' ? fn(window.versailles) : setTimeout(() => whenSdk(fn), 50); })((v) => {
+            const me = v.for('launch');
+            input.addEventListener('keydown', (e) => {
+              if (e.key === 'ArrowDown') { pick = Math.min(pick + 1, shown.length - 1); draw(); e.preventDefault(); }
+              if (e.key === 'ArrowUp') { pick = Math.max(pick - 1, 0); draw(); e.preventDefault(); }
+              if (e.key === 'Enter' && shown[pick]) me.shell.open(shown[pick][1]).then(() => v.invoke('dismiss_launcher')).catch(() => {});
+            });
+            me.on('shown', () => { input.value = ''; pick = 0; draw(); input.focus(); }).catch(() => {});
+          });
+          draw();
+        })();
+      </script>
+    </template>
+
+
+    <template class="spawnable" data-id="topbar" data-anchor="top" data-h="44" data-hooks="shell,windows,battery,network,tray">
+      <div class="topbar">
+        <div class="apps">
+          <button data-open="shell:MyComputerFolder" data-match="explorer" title="Files"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></button>
+          <button data-open="Microsoft Edge" data-match="msedge" title="Browser"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.2 3 14.8 0 18M12 3c-3 3.2-3 14.8 0 18"/></svg></button>
+          <button data-open="Visual Studio Code" data-match="code" title="Code"><svg viewBox="0 0 24 24"><path d="m8 7-5 5 5 5M16 7l5 5-5 5M14 4l-4 16"/></svg></button>
+          <button data-open="Terminal" data-match="windowsterminal,cmd,pwsh,powershell" title="Terminal"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M12 15h5"/></svg></button>
+          <button data-open="Notepad" data-match="notepad" title="Notes"><svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6z"/><path d="M9 9h6M9 13h6M9 17h4"/></svg></button>
+          <button data-open="ms-settings:" data-match="systemsettings" title="Settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg></button>
+        </div>
+        <div class="right"><span class="tray"></span><span class="net"></span><span class="bat"></span><span class="t"></span></div>
+      </div>
+      <script>
+        (function topbar() {
+          const root = document.currentScript.closest('.spawn-surface') || document;
+          const buttons = Array.from(root.querySelectorAll('.apps button'));
+          const t = root.querySelector('.t'), bat = root.querySelector('.bat'), net = root.querySelector('.net');
+          const tick = () => (t.textContent = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }));
+          tick(); setInterval(tick, 5000);
+          (function whenSdk(fn) { window.versailles && typeof window.versailles.for === 'function' ? fn(window.versailles) : setTimeout(() => whenSdk(fn), 50); })((v) => {
+            const me = v.for('topbar');
+            buttons.forEach((b) => (b.onclick = () => me.shell.open(b.dataset.open).catch(() => {})));
+            me.windows.track((list) => {
+              buttons.forEach((b) => {
+                const names = b.dataset.match.split(',');
+                const mine = list.filter((w) => names.includes(String(w.app || '').toLowerCase()));
+                b.classList.toggle('open', mine.length > 0);
+                b.classList.toggle('front', mine.some((w) => w.focused));
+              });
+            }).catch(() => {});
+            me.on('battery', (b) => (bat.textContent = b && b.present ? b.percent + '%' : '')).catch(() => {});
+            me.on('network', (n) => (net.textContent = n && n.online ? n.name || 'online' : 'offline')).catch(() => {});
+            // The tray icons (Versailles' own included), while the Windows taskbar is hidden.
+            const tray = root.querySelector('.tray');
+            me.tray.track((icons) => {
+              tray.replaceChildren(...icons.filter((i) => !i.system && i.icon).map((i) => {
+                const b = document.createElement('button');
+                b.className = 'ti'; b.title = i.showTip ? i.tip : '';
+                b.innerHTML = '<img alt="" src="' + i.icon + '">';
+                b.onclick = (e) => e.detail === 1 && me.tray.click(i.id, 'left').catch(() => {});
+                b.ondblclick = () => me.tray.click(i.id, 'double').catch(() => {});
+                b.oncontextmenu = (e) => { e.preventDefault(); me.tray.click(i.id, 'right').catch(() => {}); };
+                return b;
+              }));
+            }).catch(() => {});
+          });
+        })();
+      </script>
+    </template>
+
+
+    <script>
+      (function boot() {
+        const params = new URLSearchParams(location.search || '');
+        let m = (params.get('m') || 'desktop').trim().toLowerCase().replace(/-/g, '_');
+        if (m === 'spawnables') m = 'spawn';
+        const id = (params.get('id') || '').trim();
+        const desktop = document.getElementById('desktop');
+        const preview = document.getElementById('preview-root');
+        function mountSpawn(tpl, solo, parent) {
+          const wrap = document.createElement('section');
+          wrap.className = 'spawn-surface' + (solo ? ' solo' : '');
+          wrap.dataset.id = tpl.getAttribute('data-id') || '';
+          const hooks = tpl.getAttribute('data-hooks');
+          if (hooks) wrap.setAttribute('data-hooks', hooks);
+          wrap.appendChild(tpl.content.cloneNode(true));
+          parent.appendChild(wrap);
+          return wrap;
+        }
+        const spawnables = () => Array.from(document.querySelectorAll('template.spawnable'));
+        if (m === 'desktop') return;
+        desktop.hidden = true;
+        preview.hidden = false;
+        document.body.classList.add('preview');
+        if (m === 'widgets') {
+          desktop.querySelectorAll('article.widget').forEach((el) => preview.appendChild(el));
+          return;
+        }
+        desktop.remove();
+        if (m === 'spawn') {
+          const tpl = id && spawnables().find((t) => (t.dataset.id || '').toLowerCase() === id.toLowerCase());
+          if (tpl) {
+            document.body.classList.remove('preview');
+            document.body.style.padding = '0';
+            mountSpawn(tpl, true, preview);
+            return;
+          }
+          spawnables().forEach((t) => {
+            const w = mountSpawn(t, false, preview);
+            w.style.width = (t.dataset.w || '1280') + 'px';
+            w.style.height = (t.dataset.h || '200') + 'px';
+          });
+        }
+      })();
+    </script>
+    <script>
+      (function loadSdk() {
+        if (window.versailles && typeof window.versailles.invoke === 'function') return;
+        const s = document.createElement('script');
+        s.src = location.protocol === 'file:' ? '../.sdk/versailles.js' : '/files/.sdk/versailles.js';
+        document.head.appendChild(s);
+      })();
+    </script>
+  </body>
+</html>

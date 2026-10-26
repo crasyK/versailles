@@ -1,0 +1,1065 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light" />
+    <title>Ninety-Five</title>
+    <!--
+      Ninety-Five: a showcase desktop for Versailles.
+      A teal wallpaper with beveled grey windows (widgets), a taskbar docked to
+      the bottom of every monitor that lists your real windows, and a Start
+      menu on the Win key.
+
+      Pieces
+        article.widget  desktop-icons   double-click opens a folder (shell)
+        article.widget  media-player    now playing (media)
+        article.widget  system-monitor  CPU history, battery, network (battery, network)
+        article.widget  welcome         tips
+        article.widget  notes           a note kept in this browser's storage
+        template        taskbar         data-anchor="bottom": windows, tray, clock
+        template        start           data-anchor="bl", data-hotkey="Win"
+
+      The #versailles block hides the Windows taskbar while this page runs
+      (it comes back when you remove the line or quit Versailles).
+      Preview: ?m=desktop (default) | widgets | spawn | spawn&id=start
+    -->
+    <script type="application/json" id="versailles">
+{ "shell": { "hideTaskbar": true } }
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400..700&family=VT323&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --ui: "Pixelify Sans", "Tahoma", "Verdana", sans-serif;
+        --lcd: "VT323", "Consolas", "Courier New", monospace;
+        --teal: #008080;
+        --face: #c0c0c0;
+        --hi: #ffffff;
+        --lt: #dfdfdf;
+        --sh: #808080;
+        --dk: #0a0a0a;
+        --navy: #000080;
+        --navy2: #1084d0;
+        --tip: #ffffe1;
+        --ink: #000000;
+        /* Bevels at 2x: every line of the classic 1 px look is 2 px here. */
+        --raised: inset -2px -2px 0 var(--dk), inset 2px 2px 0 var(--lt), inset -4px -4px 0 var(--sh), inset 4px 4px 0 var(--hi);
+        --raised-btn: inset -2px -2px 0 var(--dk), inset 2px 2px 0 var(--hi), inset -4px -4px 0 var(--sh), inset 4px 4px 0 var(--lt);
+        --pressed: inset -2px -2px 0 var(--hi), inset 2px 2px 0 var(--dk), inset -4px -4px 0 var(--lt), inset 4px 4px 0 var(--sh);
+        --sunken: inset -2px -2px 0 var(--hi), inset 2px 2px 0 var(--sh), inset -4px -4px 0 var(--lt), inset 4px 4px 0 var(--dk);
+        --shallow: inset -2px -2px 0 var(--hi), inset 2px 2px 0 var(--sh);
+        --checker: repeating-conic-gradient(var(--hi) 0 25%, var(--face) 0 50%) 0 0 / 4px 4px;
+      }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body { width: 100%; height: 100%; }
+      body {
+        font: 400 17px/1.25 var(--ui);
+        color: var(--ink);
+        background: var(--teal);
+        overflow: hidden;
+        -webkit-font-smoothing: none;
+        font-variant-ligatures: none;
+        user-select: none;
+      }
+      button { font: inherit; color: inherit; border: 0; background: none; cursor: default; }
+      :focus-visible { outline: 2px dotted var(--ink); outline-offset: -8px; }
+      html.overlay, html.overlay body { width: 100% !important; height: 100% !important; background: transparent; overflow: hidden; }
+
+      /* ---------- shared 95 chrome ---------- */
+      .win {
+        position: absolute;
+        background: var(--face);
+        box-shadow: var(--raised);
+        padding: 6px;
+        display: flex;
+        flex-direction: column;
+      }
+      .tbar {
+        flex: none;
+        height: 34px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 0 4px 0 6px;
+        background: linear-gradient(90deg, #808080, #b5b5b5);
+        color: var(--face);
+        font-weight: 700;
+        font-size: 18px;
+        letter-spacing: 0.01em;
+        white-space: nowrap;
+      }
+      .win.active .tbar { background: linear-gradient(90deg, var(--navy), var(--navy2)); color: var(--hi); }
+      .tbar .ttl { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+      .tbar .tico { flex: none; width: 24px; height: 24px; display: grid; }
+      .tbar .tbtns { flex: none; display: flex; gap: 0; }
+      .tbtn {
+        width: 30px; height: 26px; display: grid; place-items: center;
+        background: var(--face); box-shadow: var(--raised-btn); color: var(--ink);
+      }
+      .tbtn + .tbtn.x { margin-left: 4px; }
+      .tbtn:active { box-shadow: var(--pressed); }
+      .tbtn svg { display: block; }
+      .menubar { flex: none; display: flex; gap: 2px; padding: 4px 2px 2px; font-size: 17px; }
+      .menubar span { padding: 2px 10px; }
+      .menubar u { text-decoration: underline; text-underline-offset: 2px; }
+      .btn {
+        min-width: 112px; height: 40px; padding: 0 16px;
+        background: var(--face); box-shadow: var(--raised-btn); font-size: 17px;
+        display: inline-grid; place-items: center;
+      }
+      .btn.default { box-shadow: inset 0 0 0 2px var(--dk), inset -4px -4px 0 var(--dk), inset 4px 4px 0 var(--hi), inset -6px -6px 0 var(--sh), inset 6px 6px 0 var(--lt); }
+      .btn:active { box-shadow: var(--pressed); }
+      .win.shaded > :not(.tbar) { display: none !important; }
+      .win.shaded { height: auto !important; }
+      .win.gone { display: none; }
+      .status { flex: none; display: flex; gap: 4px; margin-top: 6px; font-size: 16px; }
+      .status span { box-shadow: var(--shallow); padding: 3px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .status span:first-child { flex: 1; min-width: 0; }
+      .px { display: block; image-rendering: pixelated; }
+
+      /* ---------- desktop ---------- */
+      .desk { position: relative; width: 100%; height: 100%; }
+      .icons {
+        position: absolute; left: 18px; top: 18px;
+        display: flex; flex-direction: column; gap: 14px;
+      }
+      .dicon {
+        width: 120px; display: flex; flex-direction: column; align-items: center; gap: 6px;
+        padding: 4px 0; color: var(--hi); font-size: 17px; text-align: center;
+      }
+      .dicon .ic { width: 64px; height: 64px; display: grid; position: relative; }
+      .dicon .lbl { padding: 1px 4px; line-height: 1.15; text-shadow: none; }
+      .dicon.sel .ic svg { filter: brightness(0.55) sepia(1) hue-rotate(185deg) saturate(5); }
+      .dicon.sel .lbl { background: var(--navy); outline: 2px dotted #ffff7f; outline-offset: 0; }
+      .dicon:focus-visible { outline: none; }
+      .dicon:focus-visible .lbl { outline: 2px dotted #ffff7f; }
+
+      /* media player (the hero) */
+      .player { left: 196px; top: 64px; width: 900px; }
+      .player .body { display: grid; grid-template-columns: 312px 1fr; gap: 14px; padding: 8px 4px 2px; }
+      .art {
+        width: 312px; height: 312px; padding: 4px; box-shadow: var(--sunken); background: var(--dk);
+      }
+      .art img { width: 100%; height: 100%; object-fit: cover; display: block; image-rendering: auto; }
+      .art img:not([src]) { visibility: hidden; }
+      .deck { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+      .lcd {
+        position: relative; height: 162px; padding: 10px 16px 8px; background: #050805; box-shadow: var(--sunken);
+        color: #3dff6e; font-family: var(--lcd); overflow: hidden;
+        display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto 1fr auto; column-gap: 18px;
+      }
+      .lcd::after { content: ""; position: absolute; inset: 4px; pointer-events: none; background: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.28) 0 1px, transparent 1px 3px); }
+      .lcd .clock { grid-row: 1 / 3; position: relative; font-size: 84px; line-height: 0.9; letter-spacing: 0.02em; text-shadow: 0 0 10px rgba(61, 255, 110, 0.55); }
+      .lcd .clock .ghost { position: absolute; inset: 0; color: rgba(61, 255, 110, 0.1); text-shadow: none; }
+      .lcd .state { font-size: 22px; line-height: 1; color: #b9ffcb; display: flex; gap: 12px; align-items: center; justify-content: flex-end; }
+      .lcd .state b { font-weight: 400; padding: 0 6px; background: #3dff6e; color: #050805; }
+      .spectrum { align-self: end; justify-self: end; display: flex; gap: 3px; align-items: flex-end; height: 64px; }
+      .spectrum { --h: 64px; }
+      .spectrum i { width: 9px; height: 10%; background:
+          linear-gradient(0deg, #3dff6e 0 55%, #e8ff3d 55% 80%, #ff4b3d 80%) bottom / 100% var(--h),
+          #050805;
+        -webkit-mask: repeating-linear-gradient(0deg, transparent 0 2px, #000 2px 6px) bottom / 100% 100%;
+      }
+      .marquee { grid-column: 1 / 3; overflow: hidden; white-space: nowrap; font-size: 34px; line-height: 1.1; padding-top: 8px; border-top: 2px solid rgba(61, 255, 110, 0.18); margin-top: 6px; }
+      .marquee span { display: inline-block; padding-left: 0; text-shadow: 0 0 8px rgba(61, 255, 110, 0.5); }
+      .marquee.run span { animation: marq var(--marq-t, 18s) steps(var(--marq-n, 60)) infinite; }
+      @keyframes marq { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+      .seek { position: relative; height: 26px; margin: 2px 2px 0; }
+      .seek .track { position: absolute; left: 0; right: 0; top: 9px; height: 8px; box-shadow: var(--sunken); background: var(--hi); }
+      .seek .fill { position: absolute; left: 4px; top: 13px; height: 0; }
+      .seek .thumb { position: absolute; top: 0; width: 22px; height: 26px; margin-left: -11px; background: var(--face); box-shadow: var(--raised-btn); }
+      .transport { display: flex; gap: 6px; align-items: center; }
+      .transport .tbn { width: 58px; height: 44px; display: grid; place-items: center; background: var(--face); box-shadow: var(--raised-btn); }
+      .transport .tbn:active, .transport .tbn.on { box-shadow: var(--pressed); background: var(--checker); }
+      .transport .tbn:disabled svg { opacity: 0.4; }
+      .transport .times { margin-left: auto; font-family: var(--lcd); font-size: 26px; padding: 4px 10px; box-shadow: var(--shallow); background: var(--face); }
+      .player .meta { display: flex; flex-direction: column; gap: 2px; padding: 2px 2px 0; min-width: 0; }
+      .player .meta b { font-size: 24px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .player .meta span { font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #303030; }
+
+      /* system monitor */
+      .sysmon { left: 1150px; top: 420px; width: 470px; }
+      .tabs { display: flex; padding: 8px 4px 0; position: relative; z-index: 1; }
+      .tabs span { padding: 5px 14px 4px; box-shadow: inset 2px 2px 0 var(--hi), inset -2px 0 0 var(--dk), inset -4px 0 0 var(--sh); background: var(--face); margin-top: 4px; font-size: 16px; }
+      .tabs span.on { margin-top: 0; padding-bottom: 8px; margin-bottom: -2px; }
+      .panel { box-shadow: var(--raised); background: var(--face); padding: 14px 12px 12px; display: grid; grid-template-columns: 112px 1fr; gap: 10px 12px; margin: 0 4px; }
+      .group { position: relative; padding: 16px 10px 10px; box-shadow: inset 2px 2px 0 var(--sh), inset -2px -2px 0 var(--hi), inset 4px 4px 0 var(--hi), inset -4px -4px 0 var(--sh); }
+      .group > legend, .group > .lg { position: absolute; top: -10px; left: 10px; padding: 0 5px; background: var(--face); font-size: 16px; }
+      .meter { height: 148px; background: #000; box-shadow: var(--sunken); padding: 8px 10px; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+      .meter .leds { flex: 1; width: 44px; display: flex; flex-direction: column-reverse; gap: 2px; }
+      .meter .leds i { flex: 1; background: #004000; display: flex; gap: 2px; }
+      .meter .leds i.on { background: #00ff00; }
+      .meter .leds i::before { content: ""; flex: 1; }
+      .meter .leds i { background: linear-gradient(90deg, currentColor 0 47%, #000 47% 53%, currentColor 53%); color: #005500; }
+      .meter .leds i.on { color: #00ff3a; }
+      .meter b { font: 400 24px/1 var(--lcd); color: #00ff3a; }
+      .graph { height: 148px; background: #000; box-shadow: var(--sunken); padding: 4px; }
+      .graph canvas { width: 100%; height: 100%; display: block; image-rendering: pixelated; }
+      .readouts { grid-column: 1 / 3; display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; }
+      .readouts .group { display: flex; align-items: center; gap: 10px; min-height: 58px; padding: 14px 10px 8px; }
+      .readouts .big { font-size: 22px; font-weight: 700; }
+      .readouts .sub { font-size: 15px; color: #303030; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .readouts .col { display: flex; flex-direction: column; min-width: 0; }
+      .bars { flex: none; display: flex; gap: 3px; align-items: flex-end; height: 24px; }
+      .bars i { width: 6px; background: var(--sh); box-shadow: inset -1px -1px 0 var(--dk); }
+      .bars i.on { background: var(--navy); }
+      .cell { flex: none; position: relative; width: 52px; height: 24px; box-shadow: inset 0 0 0 2px var(--dk); padding: 4px; background: var(--hi); }
+      .cell::after { content: ""; position: absolute; right: -6px; top: 7px; width: 4px; height: 10px; background: var(--dk); }
+      .cell i { display: block; height: 100%; background: repeating-linear-gradient(90deg, var(--navy) 0 6px, transparent 6px 8px); }
+
+      /* welcome / tips */
+      .welcome { left: 1170px; top: 40px; width: 700px; }
+      .welcome .body { display: grid; grid-template-columns: 1fr 140px; gap: 14px; padding: 14px 8px 8px; }
+      .welcome h1 { grid-column: 1 / 3; font-size: 40px; font-weight: 400; letter-spacing: -0.01em; line-height: 1; }
+      .welcome h1 b { font-weight: 700; }
+      .welcome h1 em { font-style: normal; font-weight: 700; color: var(--navy); }
+      .tipbox { display: grid; grid-template-columns: 72px 1fr; gap: 0; background: var(--tip); box-shadow: var(--sunken); padding: 16px 16px 16px 12px; min-height: 150px; }
+      .tipbox .bulb { width: 64px; height: 64px; }
+      .tipbox h2 { font-size: 22px; font-weight: 700; margin-bottom: 8px; }
+      .tipbox p { font-size: 18px; line-height: 1.35; max-width: 34ch; }
+      .tipbox kbd { font: inherit; font-weight: 700; padding: 0 6px; background: var(--face); box-shadow: var(--raised-btn); }
+      .welcome .side { display: flex; flex-direction: column; gap: 8px; }
+      .welcome .side .btn { width: 100%; min-width: 0; }
+      .welcome .check { grid-column: 1 / 3; display: flex; align-items: center; gap: 10px; font-size: 16px; }
+      .welcome .check i { width: 22px; height: 22px; background: var(--hi); box-shadow: var(--sunken); display: grid; place-items: center; }
+      .welcome .check.off svg { visibility: hidden; }
+      html.idle *, html.idle *::before, html.idle *::after { animation-play-state: paused !important; }
+
+      /* clock */
+      .clockw { left: 1650px; top: 420px; width: 244px; }
+      .clockw .face { margin-top: 6px; background: var(--face); box-shadow: var(--sunken); padding: 8px; display: grid; place-items: center; }
+      .clockw canvas { width: 216px; height: 216px; display: block; image-rendering: pixelated; }
+      .clockw .date { margin-top: 6px; box-shadow: var(--shallow); padding: 4px 8px; font-size: 17px; text-align: center; white-space: nowrap; }
+
+      /* notes */
+      .notes { left: 760px; top: 600px; width: 330px; }
+      .notes textarea {
+        display: block; width: 100%; height: 232px; margin-top: 6px; resize: none; border: 0; outline: none;
+        padding: 10px 12px; background: var(--tip); box-shadow: var(--sunken);
+        font: 400 23px/28px var(--lcd); color: #1a1a1a;
+        background-image: repeating-linear-gradient(transparent 0 27px, rgba(0, 0, 128, 0.14) 27px 28px);
+        background-position: 0 10px; user-select: text;
+      }
+
+      /* ---------- preview modes ---------- */
+      #preview-root { display: none; }
+      body.preview { overflow: auto; }
+      body.preview #preview-root { display: flex; flex-wrap: wrap; gap: 24px; padding: 24px; align-items: flex-start; }
+      body.preview-widgets .win, body.preview-widgets .icons { position: relative; left: auto; top: auto; }
+      .spawn-surface { position: relative; }
+      .spawn-surface.solo { width: 100%; height: 100%; }
+      html.overlay #preview-root, html.overlay body.preview #preview-root { display: block !important; width: 100%; height: 100%; padding: 0; overflow: hidden; }
+      .unknown-spawn { color: var(--hi); font-size: 18px; }
+      @media (prefers-reduced-motion: reduce) { .marquee.run span { animation: none; } }
+    </style>
+    <script>
+      /* Pixel sprites: 16x16 (or 12x12) maps of palette letters, drawn as crisp SVG rects. */
+      (function () {
+        var P = { k: '#000000', w: '#ffffff', l: '#dfdfdf', g: '#c0c0c0', d: '#808080', n: '#000080', b: '#1084d0', t: '#008080', c: '#00ffff', y: '#ffff00', o: '#808000', r: '#ff0000', m: '#800000', e: '#00a800', f: '#004000' };
+        var S = {
+          computer: ['................', '..kkkkkkkkkkkk..', '..kwwwwwwwwwdk..', '..kwttttttttdk..', '..kwtcctttttdk..', '..kwtcttttttdk..', '..kwttttttttdk..', '..kwttttttttdk..', '..kddddddddddk..', '..kkkkkkkkkkkk..', '......kddk......', '.kkkkkkkkkkkkkk.', '.kwwwwwwwwwwwdk.', '.kwgggggggeggdk.', '.kddddddddddddk.', '.kkkkkkkkkkkkkk.'],
+          folder: ['................', '................', '..kkkkkk........', '.kwyyyyyk.......', '.kwyyyyyykkkkkk.', '.kwwwwwwwwwwwwk.', '.kwyyyyyyyyyyok.', '.kwyyyyyyyyyyok.', '.kwyyyyyyyyyyok.', '.kwyyyyyyyyyyok.', '.kwyyyyyyyyyyok.', '.kwyyyyyyyyyyok.', '.kwyyyyyyyyyyok.', '.kooooooooooook.', '.kkkkkkkkkkkkkk.', '................'],
+          globe: ['................', '.....kkkkkk.....', '...kkbbeebbkk...', '..kbbeeeebbbbk..', '.kbbeeeeebbbbbk.', '.kbbbeeebbbeebk.', 'kbbbbbeebbbeeebk', 'kbbbbbbbbbbeeebk', 'kbbeebbbbbbbeebk', 'kbeeeebbbbbbbbbk', '.kbeeeebbbbbbbk.', '.kbbeeebbbbbbbk.', '..kbbeebbbbbbk..', '...kkbbbbbbkk...', '.....kkkkkk.....', '................'],
+          trash: ['................', '......kkkk......', '..kkkkkkkkkkkk..', '.kwwwwwwwwwwwdk.', '.kkkkkkkkkkkkkk.', '..kwgdggdggdgk..', '..kwgdggdggdgk..', '..kwgdggdggdgk..', '..kwgdggdggdgk..', '..kwgdggdggdgk..', '..kwgdggdggdgk..', '..kwgdggdggdgk..', '..kwgdggdggdgk..', '...kddddddddk...', '...kkkkkkkkkk...', '................'],
+          disc: ['................', '.....kkkkkk.....', '...kkwwwwwwkk...', '..kwwccwwwwggk..', '.kwwccwwwwwgggk.', '.kwccwwwwwggggk.', 'kwwcwwwkkwwgggdk', 'kwwwwwk..kwggddk', 'kwwwwwk..kgggddk', 'kwwwwwwkkgggdddk', '.kwwwwwgggggddk.', '.kwwwggggggdddk.', '..kwgggggddddk..', '...kkggddddkk...', '.....kkkkkk.....', '................'],
+          bulb: ['......kkkk......', '....kkyyyykk....', '...kyywyyyyyk...', '..kyywyyyyyyyk..', '..kywyyyyyyyyk..', '..kywyyyyyyyok..', '..kyyyyyyyyyok..', '...kyyyyyyyok...', '....kyyyyyok....', '.....kyyyok.....', '.....kgggdk.....', '.....kddddk.....', '.....kgggdk.....', '......kkkk......', '................', '................'],
+          note: ['................', '..kkkkkkkkkk....', '..kwwwwwwwwkk...', '..kwddddddwkwk..', '..kwwwwwwwwkkkk.', '..kwddddddwwwk..', '..kwwwwwwwwwwk..', '..kwdddddddwwk..', '..kwwwwwwwwwwk..', '..kwddddddwwwk..', '..kwwwwwwwwwwk..', '..kwdddddddwwk..', '..kwwwwwwwwwwk..', '..kkkkkkkkkkkk..', '................', '................'],
+          crown: ['................', '................', '.kk....kk....kk.', '.kyk..kyyk..kyk.', '.kyyk.kyyk.kyyk.', '.kyyykkyykkyyyk.', '.kyyyyyyyyyyyyk.', '.kyyryyyyyybyyk.', '.kyrrryyyybbbyk.', '.kyyryyeeyybyyk.', '.kyyyyeeeeyyyyk.', '.kooooooooooook.', '.kyyyyyyyyyyyyk.', '.kkkkkkkkkkkkkk.', '................', '................'],
+          term: ['................', '.dddddddddddddd.', '.dnnnnnnnnnnnnd.', '.dkkkkkkkkkkkkd.', '.dkkkkkkkkkkkkd.', '.dkekkkkkkkkkkd.', '.dkkekkkkkkkkkd.', '.dkkkekkkkkkkkd.', '.dkkekkkkkkkkkd.', '.dkekkeeeekkkkd.', '.dkkkkkkkkkkkkd.', '.dkkkkkkkkkkkkd.', '.dkkkkkkkkkkkkd.', '.dddddddddddddd.', '................', '................'],
+          book: ['................', '...kkkkkkkkkkk..', '..kbnnnnnnnnnk..', '..kbnnnyyynnnk..', '..kbnnynnnynnk..', '..kbnnnnnnynnk..', '..kbnnnnnynnnk..', '..kbnnnnynnnnk..', '..kbnnnnynnnnk..', '..kbnnnnnnnnnk..', '..kbnnnnynnnnk..', '..kbnnnnnnnnnk..', '..kbwwwwwwwwwk..', '..kbkkkkkkkkkk..', '...kkkkkkkkkkk..', '................'],
+          panel: ['................', '.dddddddddddddd.', '.dnnnnnnnnnnnnd.', '.dwwwwwwwwwwwwd.', '.dwwkwwwkwwwkwd.', '.dwrrrwwkwwwkwd.', '.dwwkwwwkwwbbbd.', '.dwwkwwwkwwwkwd.', '.dwwkweeewwwkwd.', '.dwwkwwwkwwwkwd.', '.dwwkwwwkwwwkwd.', '.dwwwwwwwwwwwwd.', '.dddddddddddddd.', '................', '................', '................'],
+          run: ['................', '.dddddddddddddd.', '.dnnnnnnnnnnnnd.', '.dwwwwwwwwwwwwd.', '.dwwwwwwwwwwwwd.', '.dwwwwwwwnwwwwd.', '.dwwwwwwwnnwwwd.', '.dwnnnnnnnnnwwd.', '.dwnnnnnnnnnnwd.', '.dwnnnnnnnnnwwd.', '.dwwwwwwwnnwwwd.', '.dwwwwwwwnwwwwd.', '.dwwwwwwwwwwwwd.', '.dddddddddddddd.', '................', '................'],
+          speaker: ['............', '.....k......', '....kk..k...', '...kwk...k..', 'kkkwgk.k..k.', 'kwwggk..k.k.', 'kwggdk..k.k.', 'kddddk.k..k.', '...kdk...k..', '....kk..k...', '.....k......', '............']
+        };
+        function svg(name, size, pal) {
+          var rows = S[name];
+          if (!rows) return '';
+          var n = rows.length, out = '';
+          for (var y = 0; y < n; y++) {
+            var row = rows[y], x = 0;
+            while (x < row.length) {
+              var ch = row[x], run = 1;
+              while (x + run < row.length && row[x + run] === ch) run++;
+              var col = (pal && pal[ch]) || P[ch];
+              if (ch !== '.' && col) out += '<rect x="' + x + '" y="' + y + '" width="' + run + '" height="1" fill="' + col + '"/>';
+              x += run;
+            }
+          }
+          return '<svg class="px" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + n + ' ' + n + '" width="' + size + '" height="' + size + '" shape-rendering="crispEdges" aria-hidden="true">' + out + '</svg>';
+        }
+        window.PX = { svg: svg, fill: function (root) {
+          (root || document).querySelectorAll('[data-sprite]').forEach(function (el) {
+            var pal = el.dataset.pal ? JSON.parse(el.dataset.pal) : null;
+            el.innerHTML = svg(el.dataset.sprite, +el.dataset.size || 32, pal);
+          });
+        } };
+        window.whenSdk = function whenSdk(fn) {
+          window.versailles && typeof window.versailles.for === 'function' ? fn(window.versailles) : setTimeout(function () { whenSdk(fn); }, 50);
+        };
+      })();
+    </script>
+  </head>
+  <body>
+    <section id="desktop" class="desk">
+      <!-- Desktop icons: double-click (or Enter) opens the folder. -->
+      <article class="widget icons" data-id="desktop-icons" data-hooks="shell" id="icons">
+        <button type="button" class="dicon" data-open="shell:MyComputerFolder"><span class="ic" data-sprite="computer" data-size="64"></span><span class="lbl">Computer</span></button>
+        <button type="button" class="dicon" data-open="shell:Personal"><span class="ic" data-sprite="folder" data-size="64"></span><span class="lbl">Documents</span></button>
+        <button type="button" class="dicon" data-open="ms-settings:network"><span class="ic" data-sprite="globe" data-size="64"></span><span class="lbl">Network</span></button>
+        <button type="button" class="dicon" data-open="shell:RecycleBinFolder"><span class="ic" data-sprite="trash" data-size="64"></span><span class="lbl">Trash</span></button>
+      </article>
+
+      <article class="widget win welcome" data-id="welcome" data-hooks="spawn" id="welcome">
+        <header class="tbar"><span class="tico" data-sprite="bulb" data-size="24"></span><span class="ttl">Welcome</span>
+          <span class="tbtns"><button type="button" class="tbtn x" data-act="close" aria-label="Close"><svg width="16" height="14" viewBox="0 0 8 7" shape-rendering="crispEdges"><path d="M0 0h2v1h1v1h2V1h1V0h2v1H7v1H6v1H5v1h1v1h1v1h1v1H6V6H5V5H3v1H2v1H0V6h1V5h1V4h1V3H2V2H1V1H0z"/></svg></button></span>
+        </header>
+        <div class="body">
+          <h1>Welcome to <b>Ninety</b>-<em>Five</em></h1>
+          <div class="tipbox">
+            <span class="bulb" data-sprite="bulb" data-size="64"></span>
+            <div>
+              <h2>Did you know&hellip;</h2>
+              <p id="tip-text">This whole desktop is one HTML file. Edit it, save it, and it reloads.</p>
+            </div>
+          </div>
+          <div class="side">
+            <button type="button" class="btn" id="tip-start">Open Start</button>
+            <button type="button" class="btn default" id="tip-next">Next Tip</button>
+            <button type="button" class="btn" data-act="close">Close</button>
+          </div>
+          <label class="check" id="tip-check"><i><svg width="14" height="14" viewBox="0 0 7 7" shape-rendering="crispEdges"><path d="M6 0h1v2H6v1H5v1H4v1H3v1H2V5H1V4H0V2h1v1h1v1h1V3h1V2h1V1h1z"/></svg></i>Show this Welcome screen when the desktop loads</label>
+        </div>
+      </article>
+
+      <article class="widget win player active" data-id="media-player" data-hooks="media" id="player">
+        <header class="tbar"><span class="tico" data-sprite="disc" data-size="24"></span><span class="ttl" id="mp-wtitle">Media Player</span>
+          <span class="tbtns">
+            <button type="button" class="tbtn" data-act="min" aria-label="Roll up"><svg width="12" height="12" viewBox="0 0 6 6" shape-rendering="crispEdges"><path d="M0 4h5v2H0z"/></svg></button>
+            <button type="button" class="tbtn x" data-act="close" aria-label="Close"><svg width="16" height="14" viewBox="0 0 8 7" shape-rendering="crispEdges"><path d="M0 0h2v1h1v1h2V1h1V0h2v1H7v1H6v1H5v1h1v1h1v1h1v1H6V6H5V5H3v1H2v1H0V6h1V5h1V4h1V3H2V2H1V1H0z"/></svg></button>
+          </span>
+        </header>
+        <div class="menubar"><span><u>F</u>ile</span><span><u>V</u>iew</span><span><u>P</u>lay</span><span><u>H</u>elp</span></div>
+        <div class="body">
+          <div class="art"><img id="mp-art" alt="" /></div>
+          <div class="deck">
+            <div class="lcd">
+              <div class="clock"><span class="ghost">88:88</span><span id="mp-pos">--:--</span></div>
+              <div class="state"><span id="mp-src">NO DISC</span><b id="mp-state">STOP</b></div>
+              <div class="spectrum" id="mp-spec"></div>
+              <div class="marquee" id="mp-marq"><span id="mp-scroll">INSERT A TRACK AND PRESS PLAY</span></div>
+            </div>
+            <div class="seek"><div class="track"></div><div class="thumb" id="mp-thumb" style="left: 11px"></div></div>
+            <div class="transport" id="mp-controls">
+              <button type="button" class="tbn" id="mp-prev" aria-label="Previous"><svg width="24" height="20" viewBox="0 0 12 10" shape-rendering="crispEdges"><path d="M0 0h2v10H0zM9 0h2v1h-1v1H9v1H8v1H7v2h1v1h1v1h1v1h1v1H9V9H8V8H7V7H6V6H5V4h1V3h1V2h1V1h1z"/></svg></button>
+              <button type="button" class="tbn" id="mp-play" aria-label="Play"><svg width="22" height="22" viewBox="0 0 11 11" shape-rendering="crispEdges"><path d="M1 0h2v1h2v1h2v1h2v1h2v3H9v1H7v1H5v1H3v1H1z"/></svg></button>
+              <button type="button" class="tbn" id="mp-pause" aria-label="Pause"><svg width="20" height="22" viewBox="0 0 10 11" shape-rendering="crispEdges"><path d="M1 0h3v11H1zM6 0h3v11H6z"/></svg></button>
+              <button type="button" class="tbn" id="mp-next" aria-label="Next"><svg width="24" height="20" viewBox="0 0 12 10" shape-rendering="crispEdges"><path d="M10 0h2v10h-2zM1 0h2v1h1v1h1v1h1v1h1v2H6v1H5v1H4v1H3v1H1V9h1V8h1V7h1V6h1V4H4V3H3V2H2V1H1z"/></svg></button>
+              <span class="times" id="mp-times">0:00 / 0:00</span>
+            </div>
+            <div class="meta"><b id="mp-title">Nothing playing</b><span id="mp-artist">Play something in any app; it shows up here.</span></div>
+          </div>
+        </div>
+        <div class="status"><span id="mp-status">Ready</span><span id="mp-album">&nbsp;</span><span id="mp-pct">0%</span></div>
+      </article>
+
+      <article class="widget win sysmon" data-id="system-monitor" data-hooks="battery,network" id="sysmon">
+        <header class="tbar"><span class="tico" data-sprite="computer" data-size="24" data-pal='{"t":"#000000","c":"#00ff00"}'></span><span class="ttl">System Monitor</span>
+          <span class="tbtns">
+            <button type="button" class="tbtn" data-act="min" aria-label="Roll up"><svg width="12" height="12" viewBox="0 0 6 6" shape-rendering="crispEdges"><path d="M0 4h5v2H0z"/></svg></button>
+            <button type="button" class="tbtn x" data-act="close" aria-label="Close"><svg width="16" height="14" viewBox="0 0 8 7" shape-rendering="crispEdges"><path d="M0 0h2v1h1v1h2V1h1V0h2v1H7v1H6v1H5v1h1v1h1v1h1v1H6V6H5V5H3v1H2v1H0V6h1V5h1V4h1V3H2V2H1V1H0z"/></svg></button>
+          </span>
+        </header>
+        <div class="tabs"><span>Applications</span><span class="on">Performance</span></div>
+        <div class="panel">
+          <div class="group"><span class="lg">CPU</span><div class="meter"><div class="leds" id="sm-leds"></div><b id="sm-cpu">0%</b></div></div>
+          <div class="group"><span class="lg">CPU history</span><div class="graph"><canvas id="sm-graph" width="300" height="140"></canvas></div></div>
+          <div class="readouts">
+            <div class="group"><span class="lg">Power</span><div class="cell"><i id="sm-batfill" style="width: 0%"></i></div><div class="col"><span class="big" id="sm-bat">--</span><span class="sub" id="sm-batsub">reading&hellip;</span></div></div>
+            <div class="group"><span class="lg">Network</span><div class="bars" id="sm-bars"><i style="height: 25%"></i><i style="height: 50%"></i><i style="height: 75%"></i><i style="height: 100%"></i></div><div class="col"><span class="big" id="sm-net">--</span><span class="sub" id="sm-netsub">reading&hellip;</span></div></div>
+          </div>
+        </div>
+        <div class="status"><span id="sm-procs">Memory in use: --</span><span id="sm-mem">--</span></div>
+      </article>
+
+      <article class="widget win clockw" data-id="clock" id="clockw">
+        <header class="tbar"><span class="tico" data-sprite="computer" data-size="24" data-pal='{"t":"#008080","c":"#ffffff"}'></span><span class="ttl">Clock</span>
+          <span class="tbtns">
+            <button type="button" class="tbtn" data-act="min" aria-label="Roll up"><svg width="12" height="12" viewBox="0 0 6 6" shape-rendering="crispEdges"><path d="M0 4h5v2H0z"/></svg></button>
+          </span>
+        </header>
+        <div class="face"><canvas id="clk" width="72" height="72" aria-label="Clock"></canvas></div>
+        <div class="date" id="clk-date">&nbsp;</div>
+      </article>
+
+      <article class="widget win notes" data-id="notes" id="notes">
+        <header class="tbar"><span class="tico" data-sprite="note" data-size="24"></span><span class="ttl">todo.txt</span>
+          <span class="tbtns">
+            <button type="button" class="tbtn" data-act="min" aria-label="Roll up"><svg width="12" height="12" viewBox="0 0 6 6" shape-rendering="crispEdges"><path d="M0 4h5v2H0z"/></svg></button>
+          </span>
+        </header>
+        <textarea id="notes-text" spellcheck="false" aria-label="Notes"></textarea>
+      </article>
+    </section>
+
+    <!-- ===== Taskbar: a docked bar on every monitor =====
+         Start, then this monitor's app windows as beveled buttons (the focused
+         one is pressed in), the notification-area icons, volume, network,
+         battery and the clock. Click a window to bring it up, click the
+         pressed one to minimize it, middle-click to close it. -->
+    <template class="spawnable" data-id="taskbar" data-anchor="bottom" data-h="48" data-monitor="all"
+              data-hooks="windows,windows-control,tray,audio,network,battery,spawn,bus,shell">
+      <style>
+        .tk {
+          position: absolute; inset: 0; display: flex; align-items: center; gap: 6px; padding: 4px 4px 2px;
+          background: var(--face); box-shadow: inset 0 2px 0 var(--lt), inset 0 4px 0 var(--hi);
+        }
+        .tk-start {
+          flex: none; height: 40px; display: flex; align-items: center; gap: 8px; padding: 0 14px 0 8px;
+          background: var(--face); box-shadow: var(--raised-btn); font-weight: 700; font-size: 20px;
+        }
+        .tk-start.on { box-shadow: var(--pressed); padding: 2px 13px 0 9px; }
+        .tk-start.on .lbl { outline: 2px dotted var(--ink); outline-offset: 2px; }
+        .tk-sep { flex: none; width: 4px; height: 38px; box-shadow: inset 2px 0 0 var(--sh), inset -2px 0 0 var(--hi); margin: 0 2px; }
+        .tk-wins { flex: 1; min-width: 0; display: flex; gap: 6px; overflow: hidden; height: 40px; }
+        .tk-win {
+          position: relative; flex: 0 1 236px; min-width: 64px; height: 40px; display: flex; align-items: center; gap: 8px;
+          padding: 0 12px 0 8px; background: var(--face); box-shadow: var(--raised-btn); font-size: 17px; text-align: left;
+        }
+        .tk-win .ico { flex: none; position: relative; width: 24px; height: 24px; }
+        .tk-win .ico img { width: 24px; height: 24px; display: block; }
+        .tk-win .ico .badge { position: absolute; right: -6px; bottom: -6px; width: 14px; height: 14px; }
+        .tk-win .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .tk-win.focused { box-shadow: var(--pressed); background: var(--checker); font-weight: 700; padding-top: 2px; padding-left: 10px; }
+        .tk-win.attention { background: var(--navy); color: var(--hi); }
+        .tk.blink-off .tk-win.attention { background: var(--face); color: var(--ink); }
+        .tk-win.minimized .t { color: #404040; }
+        .tk-win .prog { position: absolute; left: 40px; right: 10px; bottom: 5px; height: 6px; box-shadow: inset 1px 1px 0 var(--sh), inset -1px -1px 0 var(--hi); padding: 1px; }
+        .tk-win .prog i { display: block; height: 100%; background: repeating-linear-gradient(90deg, var(--navy) 0 6px, transparent 6px 8px); }
+        .tk-win .prog[data-state="paused"] i { background: repeating-linear-gradient(90deg, #808000 0 6px, transparent 6px 8px); }
+        .tk-win .prog[data-state="error"] i { background: repeating-linear-gradient(90deg, #c00000 0 6px, transparent 6px 8px); }
+        .tk-win .prog[data-state="indeterminate"] i { width: 40% !important; animation: tk-busy 1.6s steps(12) infinite alternate; }
+        @keyframes tk-busy { to { margin-left: 60%; } }
+        .tk-tray {
+          flex: none; height: 40px; display: flex; align-items: center; gap: 6px; padding: 0 12px 0 10px;
+          box-shadow: var(--shallow);
+        }
+        .tk-tray button { width: 28px; height: 32px; display: grid; place-items: center; }
+        .tk-tray img { width: 22px; height: 22px; display: block; }
+        .tk-tray .apps { display: flex; gap: 2px; }
+        .tk-net { display: flex; gap: 2px; align-items: flex-end; height: 20px; }
+        .tk-net i { width: 4px; background: var(--sh); }
+        .tk-net i.on { background: var(--ink); }
+        .tk-bat { position: relative; width: 26px; height: 14px; box-shadow: inset 0 0 0 2px var(--ink); padding: 3px; }
+        .tk-bat::after { content: ""; position: absolute; right: -4px; top: 4px; width: 2px; height: 6px; background: var(--ink); }
+        .tk-bat i { display: block; height: 100%; background: var(--ink); }
+        .tk-bat.low i { background: #c00000; }
+        .tk-clock { font-size: 19px; padding-left: 6px; white-space: nowrap; min-width: 84px; text-align: right; }
+        @media (prefers-reduced-motion: reduce) { .tk-win .prog[data-state="indeterminate"] i { animation: none; width: 100% !important; } }
+      </style>
+      <div class="tk" id="tk">
+        <button type="button" class="tk-start" id="tk-start" aria-label="Start"><span data-sprite="crown" data-size="32"></span><span class="lbl">Start</span></button>
+        <span class="tk-sep" aria-hidden="true"></span>
+        <div class="tk-wins" id="tk-wins"></div>
+        <div class="tk-tray" id="tk-tray">
+          <span class="apps" id="tk-apps"></span>
+          <button type="button" id="tk-vol" aria-label="Volume" data-open="ms-settings:sound"><span data-sprite="speaker" data-size="24"></span></button>
+          <button type="button" id="tk-netb" aria-label="Network" data-open="ms-settings:network"><span class="tk-net" id="tk-net"><i style="height: 5px"></i><i style="height: 10px"></i><i style="height: 15px"></i><i style="height: 20px"></i></span></button>
+          <button type="button" id="tk-batb" aria-label="Battery" data-open="ms-settings:batterysaver"><span class="tk-bat" id="tk-bat"><i style="width: 0%"></i></span></button>
+          <span class="tk-clock" id="tk-clock">--:--</span>
+        </div>
+      </div>
+      <script>
+        (function taskbar() {
+          var root = document.currentScript && document.currentScript.closest('.spawn-surface');
+          if (!root) return;
+          window.PX.fill(root);
+          var tk = root.querySelector('#tk'), bar = root.querySelector('#tk-wins'), apps = root.querySelector('#tk-apps');
+          var startBtn = root.querySelector('#tk-start'), clock = root.querySelector('#tk-clock');
+          function put(el, text) { if (el.textContent !== text) el.textContent = text; }
+          function tick() { put(clock, new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })); }
+          tick(); setInterval(tick, 1000);
+          window.whenSdk(function (v) {
+            var me = v.for('taskbar'), wins = me.windows;
+            // Start: pressed while the menu is up (the menu says so on the bus).
+            var menuOpen = false, menuClosedAt = 0;
+            me.bus.subscribe('start', function (d) {
+              menuOpen = !!(d && d.open);
+              if (!menuOpen) menuClosedAt = Date.now();
+              startBtn.classList.toggle('on', menuOpen);
+            }).catch(function () {});
+            startBtn.addEventListener('click', function () {
+              // A click here first blurs the menu, which closes it: do not reopen it.
+              if (Date.now() - menuClosedAt < 350) return;
+              me.spawn('start').catch(function () {});
+            });
+            root.querySelectorAll('[data-open]').forEach(function (b) {
+              b.addEventListener('click', function () { me.shell.open(b.dataset.open).catch(function () {}); });
+            });
+            clock.addEventListener('dblclick', function () { me.shell.open('ms-settings:dateandtime').catch(function () {}); });
+
+            var previewId = null, previewTimer = 0;
+            function previewOff() { clearTimeout(previewTimer); if (previewId != null) wins.preview(null).catch(function () {}); previewId = null; }
+            bar.addEventListener('mouseleave', previewOff);
+            function render(list, here) {
+              bar.replaceChildren();
+              list.forEach(function (w) {
+                if (here != null && w.monitor !== here) return;
+                var b = document.createElement('button');
+                b.type = 'button';
+                b.className = 'tk-win' + (w.focused && !w.minimized ? ' focused' : '') + (w.minimized ? ' minimized' : '') + (w.attention ? ' attention' : '');
+                var p = w.progress;
+                b.setAttribute('aria-label', w.title + (w.attention ? ' (wants attention)' : '') + (p && p.value != null ? ' (' + Math.round(p.value * 100) + ' %)' : ''));
+                var ico = document.createElement('span');
+                ico.className = 'ico';
+                if (w.icon) { var img = document.createElement('img'); img.src = w.icon; img.alt = ''; ico.appendChild(img); }
+                else ico.innerHTML = window.PX.svg('run', 24);
+                if (w.badge && w.badge.icon) { var bd = document.createElement('img'); bd.className = 'badge'; bd.src = w.badge.icon; bd.alt = ''; ico.appendChild(bd); }
+                b.appendChild(ico);
+                var t = document.createElement('span');
+                t.className = 't';
+                t.textContent = w.title; // titles come from other apps: text only
+                b.appendChild(t);
+                if (p) {
+                  var tr = document.createElement('span'); tr.className = 'prog'; tr.dataset.state = p.state;
+                  var f = document.createElement('i'); f.style.width = (p.value != null ? Math.round(p.value * 100) : 100) + '%';
+                  tr.appendChild(f); b.appendChild(tr);
+                }
+                b.addEventListener('click', function () { previewOff(); (w.focused && !w.minimized ? wins.minimize(w.id) : wins.focus(w.id)).catch(function () {}); });
+                b.addEventListener('auxclick', function (e) { if (e.button === 1) wins.close(w.id).catch(function () {}); });
+                b.addEventListener('mouseenter', function () {
+                  clearTimeout(previewTimer);
+                  previewTimer = setTimeout(function () { previewId = w.id; wins.preview(w.id, b).catch(function () {}); }, previewId != null ? 0 : 400);
+                });
+                bar.appendChild(b);
+                if (previewId === w.id) wins.preview(w.id, b).catch(function () {});
+              });
+              if (previewId != null && !list.some(function (w) { return w.id === previewId; })) previewOff();
+              blink(!!bar.querySelector('.tk-win.attention'));
+            }
+            // Flash like the old taskbar: a class flipped every 0.6 s, only while some window wants attention.
+            var blinkTimer = 0, still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            function blink(on) {
+              if (on && !still && !blinkTimer) blinkTimer = setInterval(function () { tk.classList.toggle('blink-off'); }, 600);
+              else if (!on && blinkTimer) { clearInterval(blinkTimer); blinkTimer = 0; tk.classList.remove('blink-off'); }
+            }
+            v.monitor().then(function (m) {
+              var here = m ? m.number : null;
+              return wins.track(function (list) { render(list, here); }, { icons: true });
+            }).catch(function () {});
+
+            // Notification-area icons (only while Versailles hides the Windows taskbar).
+            me.tray.track(function (icons) {
+              apps.replaceChildren();
+              icons.forEach(function (ic) {
+                if (ic.system || !ic.icon) return;
+                var b = document.createElement('button'); b.type = 'button';
+                if (ic.showTip) b.title = ic.tip || ic.app || '';
+                b.setAttribute('aria-label', ic.tip || ic.app || '');
+                var img = document.createElement('img'); img.src = ic.icon; img.alt = ''; b.appendChild(img);
+                b.addEventListener('click', function (e) { if (e.detail === 1) me.tray.click(ic.id, 'left').catch(function () {}); });
+                b.addEventListener('dblclick', function () { me.tray.click(ic.id, 'double').catch(function () {}); });
+                b.addEventListener('contextmenu', function (e) { e.preventDefault(); me.tray.click(ic.id, 'right').catch(function () {}); });
+                apps.appendChild(b);
+              });
+            }).catch(function () {});
+
+            me.on('audio', function (a) {
+              if (!a) return;
+              var vol = root.querySelector('#tk-vol');
+              vol.title = a.muted ? 'Muted' : 'Volume ' + a.volume + '%';
+              vol.style.opacity = a.muted ? '0.45' : '1';
+            }).catch(function () {});
+            me.on('network', function (n) {
+              if (!n) return;
+              var bars = n.online ? (n.wifi ? (n.signalBars == null ? 4 : n.signalBars) : 4) : 0;
+              root.querySelectorAll('#tk-net i').forEach(function (i, k) { i.classList.toggle('on', k < bars); });
+              root.querySelector('#tk-netb').title = n.online ? (n.name || 'Connected') : 'Not connected';
+            }).catch(function () {});
+            me.on('battery', function (b) {
+              var box = root.querySelector('#tk-batb');
+              if (!b || !b.present) { box.hidden = true; return; }
+              box.hidden = false;
+              var cell = root.querySelector('#tk-bat');
+              cell.querySelector('i').style.width = b.percent + '%';
+              cell.classList.toggle('low', b.percent <= 15 && !b.charging);
+              box.title = b.percent + '%' + (b.charging ? ', charging' : '');
+            }).catch(function () {});
+          });
+        })();
+      </script>
+    </template>
+
+    <!-- ===== Start menu: an overlay at the bottom-left, on the Win key =====
+         Each item opens something with the shell hook. Run opens what you type
+         (an app name, a folder, a web address). Shut Down asks first. -->
+    <template class="spawnable" data-id="start" data-anchor="bl" data-dim="none" data-hotkey="Win"
+              data-w="380" data-h="404" data-hooks="hotkey,shell,power,bus">
+      <style>
+        .sm { position: absolute; inset: 0; background: var(--face); box-shadow: var(--raised); padding: 6px; display: flex; }
+        .sm-band {
+          flex: none; width: 46px; background: linear-gradient(0deg, var(--navy), var(--navy2) 80%);
+          display: flex; align-items: flex-end; justify-content: center; padding-bottom: 12px;
+        }
+        .sm-band span { writing-mode: vertical-rl; transform: rotate(180deg); color: var(--face); font-size: 30px; line-height: 1; white-space: nowrap; letter-spacing: 0.01em; }
+        .sm-band span b { color: var(--hi); font-weight: 700; }
+        .sm-list { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 2px 0 0 2px; }
+        .sm-item {
+          height: 52px; display: flex; align-items: center; gap: 14px; padding: 0 12px 0 10px; font-size: 20px; text-align: left; width: 100%;
+        }
+        .sm-item .i { flex: none; width: 32px; height: 32px; }
+        .sm-item .l { flex: 1; }
+        .sm-item u { text-decoration: underline; text-underline-offset: 3px; }
+        .sm-item .arr { flex: none; width: 10px; height: 14px; }
+        .sm-item.hot, .sm-item:hover { background: var(--navy); color: var(--hi); }
+        .sm-item.hot .arr path, .sm-item:hover .arr path { fill: var(--hi); }
+        .sm-rule { height: 4px; margin: 5px 4px; box-shadow: inset 0 2px 0 var(--sh), inset 0 -2px 0 var(--hi); flex: none; }
+        .sm-pane { display: none; flex: 1; flex-direction: column; gap: 12px; padding: 14px 12px 8px 14px; font-size: 18px; }
+        .sm[data-view="run"] .sm-pane.run, .sm[data-view="off"] .sm-pane.off { display: flex; }
+        .sm[data-view="run"] .sm-list, .sm[data-view="off"] .sm-list { display: none; }
+        .sm-pane h3 { font-size: 21px; font-weight: 700; display: flex; align-items: center; gap: 10px; }
+        .sm-pane p { line-height: 1.3; }
+        .sm-pane input {
+          height: 40px; border: 0; outline: none; padding: 0 10px; font: 400 24px var(--lcd); background: var(--hi); box-shadow: var(--sunken); user-select: text;
+        }
+        .sm-pane .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: auto; }
+        .sm-pane .btn { min-width: 0; flex: 1; }
+        .sm-radio { display: flex; flex-direction: column; gap: 6px; }
+        .sm-radio label { display: flex; align-items: center; gap: 10px; padding: 3px 4px; }
+        .sm-radio input { appearance: none; width: 22px; height: 22px; border-radius: 50%; background: var(--hi); box-shadow: inset 2px 2px 0 var(--sh), inset -2px -2px 0 var(--hi), inset 4px 4px 0 var(--dk), inset -4px -4px 0 var(--lt); flex: none; display: grid; place-items: center; }
+        .sm-radio input:checked { background: radial-gradient(circle, var(--ink) 0 3px, var(--hi) 3.5px); }
+        .sm-err { color: #a00000; font-size: 16px; min-height: 20px; }
+      </style>
+      <div class="sm" id="sm" data-view="menu">
+        <div class="sm-band" aria-hidden="true"><span><b>Ninety</b>-Five</span></div>
+        <div class="sm-list" role="menu" id="sm-list">
+          <button type="button" class="sm-item" role="menuitem" data-open="shell:AppsFolder"><span class="i" data-sprite="folder"></span><span class="l"><u>P</u>rograms</span><svg class="arr" viewBox="0 0 5 7" shape-rendering="crispEdges"><path d="M0 0h1v1h1v1h1v1h1v1H3v1H2v1H1v1H0z"/></svg></button>
+          <button type="button" class="sm-item" role="menuitem" data-open="shell:Personal"><span class="i" data-sprite="note"></span><span class="l"><u>D</u>ocuments</span><svg class="arr" viewBox="0 0 5 7" shape-rendering="crispEdges"><path d="M0 0h1v1h1v1h1v1h1v1H3v1H2v1H1v1H0z"/></svg></button>
+          <button type="button" class="sm-item" role="menuitem" data-open="ms-settings:"><span class="i" data-sprite="panel"></span><span class="l"><u>S</u>ettings</span><svg class="arr" viewBox="0 0 5 7" shape-rendering="crispEdges"><path d="M0 0h1v1h1v1h1v1h1v1H3v1H2v1H1v1H0z"/></svg></button>
+          <button type="button" class="sm-item" role="menuitem" data-open="wt"><span class="i" data-sprite="term"></span><span class="l"><u>T</u>erminal</span></button>
+          <button type="button" class="sm-item" role="menuitem" data-open="https://github.com/crasyK/versailles"><span class="i" data-sprite="book"></span><span class="l"><u>H</u>elp</span></button>
+          <button type="button" class="sm-item" role="menuitem" data-view="run"><span class="i" data-sprite="run"></span><span class="l"><u>R</u>un&hellip;</span></button>
+          <div class="sm-rule" role="separator"></div>
+          <button type="button" class="sm-item" role="menuitem" data-view="off"><span class="i" data-sprite="computer" data-pal='{"t":"#000080","c":"#000080"}'></span><span class="l">Sh<u>u</u>t Down&hellip;</span></button>
+        </div>
+        <form class="sm-pane run" id="sm-run">
+          <h3><span data-sprite="run" data-size="32"></span>Run</h3>
+          <p>Type the name of a program, folder or web address, and it opens.</p>
+          <input id="sm-run-in" spellcheck="false" autocomplete="off" aria-label="Open" placeholder="notepad" />
+          <div class="sm-err" id="sm-run-err"></div>
+          <div class="row"><button type="submit" class="btn default">OK</button><button type="button" class="btn" data-view="menu">Cancel</button></div>
+        </form>
+        <form class="sm-pane off" id="sm-off">
+          <h3><span data-sprite="computer" data-size="32" data-pal='{"t":"#000080","c":"#000080"}'></span>Shut Down</h3>
+          <p>What do you want the computer to do?</p>
+          <div class="sm-radio">
+            <label><input type="radio" name="pw" value="lock" checked />Lock</label>
+            <label><input type="radio" name="pw" value="sleep" />Sleep</label>
+            <label><input type="radio" name="pw" value="restart" />Restart</label>
+            <label><input type="radio" name="pw" value="shutdown" />Shut down</label>
+          </div>
+          <div class="sm-err" id="sm-off-err"></div>
+          <div class="row"><button type="submit" class="btn default">OK</button><button type="button" class="btn" data-view="menu">Cancel</button></div>
+        </form>
+      </div>
+      <script>
+        (function startMenu() {
+          var root = document.currentScript && document.currentScript.closest('.spawn-surface');
+          if (!root) return;
+          window.PX.fill(root);
+          var sm = root.querySelector('#sm');
+          var items = Array.prototype.slice.call(root.querySelectorAll('.sm-item'));
+          var hot = -1;
+          function setHot(i) { items.forEach(function (it, k) { it.classList.toggle('hot', k === i); }); hot = i; if (items[i]) items[i].focus(); }
+          function view(name) {
+            sm.dataset.view = name;
+            if (name === 'run') { var inp = root.querySelector('#sm-run-in'); inp.value = ''; inp.focus(); }
+            if (name === 'off') root.querySelector('#sm-off input:checked').focus();
+            if (name === 'menu') setHot(-1);
+          }
+          window.whenSdk(function (v) {
+            var me = v.for('start');
+            function close() { v.invoke('dismiss_launcher').catch(function () {}); }
+            function say(open) { me.bus.publish('start', { open: open }).catch(function () {}); }
+            me.on('shown', function () { view('menu'); say(true); }).catch(function () {});
+            me.on('hidden', function () { say(false); }).catch(function () {});
+            items.forEach(function (it, k) {
+              it.addEventListener('mouseenter', function () { setHot(k); });
+              it.addEventListener('click', function () {
+                if (it.dataset.view) { view(it.dataset.view); return; }
+                me.shell.open(it.dataset.open).then(close, function () {});
+              });
+            });
+            root.querySelectorAll('button[data-view="menu"]').forEach(function (b) { b.addEventListener('click', function () { view('menu'); }); });
+            root.querySelector('#sm-run').addEventListener('submit', function (e) {
+              e.preventDefault();
+              var what = root.querySelector('#sm-run-in').value.trim();
+              var err = root.querySelector('#sm-run-err');
+              if (!what) { err.textContent = 'Type something to open.'; return; }
+              me.shell.open(what).then(close, function (x) { err.textContent = 'Could not open "' + what + '".' + (x && x.message ? ' ' + x.message : ''); });
+            });
+            root.querySelector('#sm-off').addEventListener('submit', function (e) {
+              e.preventDefault();
+              var act = root.querySelector('#sm-off input:checked').value;
+              var call = { lock: me.power.lock, sleep: me.power.sleep, restart: me.power.restart, shutdown: me.power.shutdown }[act];
+              call.call(me.power).then(close, function (x) { root.querySelector('#sm-off-err').textContent = (x && x.message) || 'Windows refused.'; });
+            });
+            document.addEventListener('keydown', function (e) {
+              if (e.key === 'Escape') { if (sm.dataset.view !== 'menu') view('menu'); else close(); e.preventDefault(); return; }
+              if (sm.dataset.view !== 'menu') return;
+              if (e.key === 'ArrowDown') { setHot((hot + 1) % items.length); e.preventDefault(); }
+              else if (e.key === 'ArrowUp') { setHot((hot - 1 + items.length) % items.length); e.preventDefault(); }
+              else if (e.key.length === 1) {
+                var k = items.findIndex(function (it) { var u = it.querySelector('u'); return u && u.textContent.toLowerCase() === e.key.toLowerCase(); });
+                if (k >= 0) { setHot(k); items[k].click(); }
+              }
+            });
+          });
+        })();
+      </script>
+    </template>
+
+    <div id="preview-root" hidden></div>
+
+    <script>
+      (function boot() {
+        const params = new URLSearchParams(location.search || '');
+        let m = (params.get('m') || 'desktop').trim().toLowerCase().replace(/-/g, '_');
+        if (m === 'spawnables') m = 'spawn';
+        const id = (params.get('id') || '').trim();
+        document.documentElement.dataset.mode = m;
+        document.body.dataset.mode = m;
+        const desktop = document.getElementById('desktop');
+        const preview = document.getElementById('preview-root');
+        function materialize(tpl, solo) {
+          const wrap = document.createElement('section');
+          wrap.className = 'spawn-surface' + (solo ? ' solo' : '');
+          wrap.dataset.id = tpl.getAttribute('data-id') || '';
+          const hooks = tpl.getAttribute('data-hooks');
+          if (hooks) wrap.setAttribute('data-hooks', hooks);
+          wrap.appendChild(tpl.content.cloneNode(true));
+          return wrap;
+        }
+        // Scripts cloned out of a <template> run once, when the clone enters the document.
+        function mountSpawn(tpl, solo, parent) {
+          const wrap = materialize(tpl, solo);
+          if (!solo) { wrap.style.width = /^(top|bottom)$/.test(tpl.dataset.anchor || '') ? '100%' : (tpl.dataset.w || 480) + 'px'; wrap.style.height = (tpl.dataset.h || 200) + 'px'; }
+          parent.appendChild(wrap);
+          return wrap;
+        }
+        function findSpawn(needle) {
+          const want = (needle || '').toLowerCase();
+          return Array.prototype.slice.call(document.querySelectorAll('template.spawnable')).find(function (t) {
+            return (t.getAttribute('data-id') || '').toLowerCase() === want;
+          });
+        }
+        if (m === 'desktop') return;
+        desktop.hidden = true;
+        preview.hidden = false;
+        document.body.classList.add('preview');
+        if (m === 'widgets') {
+          document.body.classList.add('preview-widgets');
+          Array.prototype.slice.call(desktop.querySelectorAll('article.widget')).forEach(function (el) { preview.appendChild(el); });
+          return;
+        }
+        desktop.remove();
+        if (m === 'spawn' && id) {
+          document.documentElement.classList.add('overlay');
+          const tpl = findSpawn(id);
+          if (!tpl) { const p = document.createElement('p'); p.className = 'unknown-spawn'; p.textContent = 'unknown spawnable: ' + id; preview.appendChild(p); return; }
+          if (!(window.__TAURI_INTERNALS__ || window.__TAURI__)) {
+            if (tpl.dataset.w && !/^(top|bottom)$/.test(tpl.dataset.anchor || '')) document.body.style.width = tpl.dataset.w + 'px';
+            if (tpl.dataset.h && !/^(left|right)$/.test(tpl.dataset.anchor || '')) document.body.style.height = tpl.dataset.h + 'px';
+          }
+          mountSpawn(tpl, true, preview);
+          return;
+        }
+        if (m === 'spawn') {
+          document.querySelectorAll('template.spawnable').forEach(function (t) { mountSpawn(t, false, preview); });
+          return;
+        }
+        const p = document.createElement('p');
+        p.className = 'unknown-spawn';
+        p.textContent = 'unknown mode: ' + m;
+        preview.appendChild(p);
+      })();
+    </script>
+    <script>
+      (function loadSdk() {
+        if (window.versailles && typeof window.versailles.invoke === 'function') return;
+        var s = document.createElement('script');
+        s.src = location.protocol === 'file:' ? '../.sdk/versailles.js' : '/files/.sdk/versailles.js';
+        document.head.appendChild(s);
+      })();
+      // Nobody at the keyboard for a minute: pause the animations (and the spectrum below).
+      window.whenSdk(function (v) {
+        v.on('idle', function () { document.documentElement.classList.add('idle'); }).catch(function () {});
+        v.on('active', function () { document.documentElement.classList.remove('idle'); }).catch(function () {});
+      });
+    </script>
+    <script>
+      (function desktopPieces() {
+        const desk = document.getElementById('desktop');
+        if (!desk || !document.body.contains(desk)) return;
+        window.PX.fill(desk);
+
+        /* Window buttons: roll up / close (closed windows come back on a double-click on the wallpaper). */
+        const KEY = 'ninety-five-closed';
+        let closed = [];
+        try { closed = JSON.parse(localStorage.getItem(KEY) || '[]'); } catch (_) {}
+        function saveClosed() { try { localStorage.setItem(KEY, JSON.stringify(closed)); } catch (_) {} }
+        closed.forEach(function (id) { const w = document.getElementById(id); if (w) w.classList.add('gone'); });
+        desk.querySelectorAll('.win').forEach(function (w) {
+          w.querySelectorAll('[data-act]').forEach(function (b) {
+            b.addEventListener('click', function () {
+              if (b.dataset.act === 'min') w.classList.toggle('shaded');
+              if (b.dataset.act === 'close') { w.classList.add('gone'); if (closed.indexOf(w.id) < 0) closed.push(w.id); saveClosed(); }
+            });
+          });
+          w.addEventListener('pointerdown', function () {
+            desk.querySelectorAll('.win.active').forEach(function (o) { o.classList.remove('active'); });
+            w.classList.add('active');
+            w.style.zIndex = String(++z);
+          });
+          w.querySelector('.tbar').addEventListener('dblclick', function () { w.classList.toggle('shaded'); });
+        });
+        let z = 10;
+        desk.addEventListener('dblclick', function (e) {
+          if (e.target !== desk) return;
+          closed = []; saveClosed();
+          desk.querySelectorAll('.win.gone').forEach(function (w) { w.classList.remove('gone'); });
+        });
+
+        /* Desktop icons: click selects, double-click or Enter opens. */
+        const icons = document.getElementById('icons');
+        icons.querySelectorAll('.dicon').forEach(function (b) {
+          b.addEventListener('click', function () { icons.querySelectorAll('.sel').forEach(function (o) { o.classList.remove('sel'); }); b.classList.add('sel'); });
+          b.addEventListener('dblclick', function () {
+            window.whenSdk(function (v) { v.for('desktop-icons').shell.open(b.dataset.open).catch(function () {}); });
+          });
+          b.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); b.dispatchEvent(new MouseEvent('dblclick')); } });
+        });
+        desk.addEventListener('pointerdown', function (e) { if (e.target === desk) icons.querySelectorAll('.sel').forEach(function (o) { o.classList.remove('sel'); }); });
+
+        /* Welcome tips. */
+        const tips = [
+          'This whole desktop is one HTML file. Edit it, save it, and it reloads.',
+          'Press the <kbd>Win</kbd> key to open the Start menu. Press it again to close it.',
+          'Click the pressed button on the taskbar to minimize that window.',
+          'Middle-click a taskbar button to close its window.',
+          'Double-click the title bar of a window here to roll it up.',
+          'Closed one of these windows? Double-click the wallpaper to bring it back.'
+        ];
+        let tip = 0;
+        const tipText = document.getElementById('tip-text');
+        document.getElementById('tip-next').addEventListener('click', function () { tip = (tip + 1) % tips.length; tipText.innerHTML = tips[tip]; });
+        document.getElementById('tip-start').addEventListener('click', function () {
+          window.whenSdk(function (v) { v.for('welcome').spawn('start').catch(function () {}); });
+        });
+
+        /* "Show this Welcome screen": unticked, the window stays closed on the next load. */
+        const check = document.getElementById('tip-check');
+        let quiet = false;
+        try { quiet = localStorage.getItem('ninety-five-quiet') === '1'; } catch (_) {}
+        check.classList.toggle('off', quiet);
+        if (quiet) document.getElementById('welcome').classList.add('gone');
+        check.addEventListener('click', function () {
+          quiet = !quiet; check.classList.toggle('off', quiet);
+          try { localStorage.setItem('ninety-five-quiet', quiet ? '1' : '0'); } catch (_) {}
+        });
+
+        /* Notes: kept in this browser's storage. */
+        const notes = document.getElementById('notes-text');
+        const NKEY = 'ninety-five-notes';
+        let saved = null;
+        try { saved = localStorage.getItem(NKEY); } catch (_) {}
+        notes.value = saved != null ? saved : 'TO DO\n- back up the floppies\n- defrag drive C:\n- new high score in pinball\n- tape the show at 8';
+        let nt = 0;
+        notes.addEventListener('input', function () { clearTimeout(nt); nt = setTimeout(function () { try { localStorage.setItem(NKEY, notes.value); } catch (_) {} }, 300); });
+      })();
+    </script>
+    <script>
+      (function analogClock() {
+        const cv = document.getElementById('clk');
+        if (!cv || !document.body.contains(cv)) return;
+        const g = cv.getContext('2d'), N = cv.width, C = (N - 1) / 2;
+        function dot(x, y, s, col) { g.fillStyle = col; g.fillRect(Math.round(x - s / 2), Math.round(y - s / 2), s, s); }
+        function hand(a, len, s, col) {
+          // Hands are plotted pixel by pixel so they stay crisp when scaled up.
+          const ex = C + Math.sin(a) * len, ey = C - Math.cos(a) * len, n = Math.ceil(len * 1.5);
+          for (let k = 0; k <= n; k++) dot(C + (ex - C) * k / n, C + (ey - C) * k / n, s, col);
+        }
+        function draw() {
+          const d = new Date();
+          g.clearRect(0, 0, N, N);
+          for (let i = 0; i < 60; i++) {
+            const a = i / 60 * Math.PI * 2, r = C - 3;
+            if (i % 5 === 0) dot(C + Math.sin(a) * r, C - Math.cos(a) * r, 4, '#008080');
+            else dot(C + Math.sin(a) * r, C - Math.cos(a) * r, 1, '#000080');
+          }
+          const s = d.getSeconds(), m = d.getMinutes() + s / 60, h = d.getHours() % 12 + m / 60;
+          hand(h / 12 * Math.PI * 2, C * 0.5, 4, '#008080');
+          hand(m / 60 * Math.PI * 2, C * 0.75, 3, '#008080');
+          hand(s / 60 * Math.PI * 2, C * 0.8, 1, '#000000');
+          dot(C, C, 4, '#000080');
+          const t = d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+          const el = document.getElementById('clk-date'); if (el.textContent !== t) el.textContent = t;
+        }
+        draw(); setInterval(draw, 1000);
+      })();
+      (function mediaPlayer() {
+        const shell = document.getElementById('player');
+        if (!shell || !document.body.contains(shell)) return;
+        const $ = function (id) { return document.getElementById(id); };
+        const spec = $('mp-spec');
+        const BARS = 18;
+        for (let i = 0; i < BARS; i++) spec.appendChild(document.createElement('i'));
+        const bars = Array.prototype.slice.call(spec.children);
+        let info = null, at = 0, specTimer = 0, lastArt = '';
+        const still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        function fmt(ms) { if (!(ms >= 0)) return '0:00'; const s = Math.floor(ms / 1000); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
+        function lcdTime(ms) { const s = Math.max(0, Math.floor((ms || 0) / 1000)); return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0'); }
+        function position() { if (!info) return 0; let p = info.positionMs || 0; if (info.status === 'playing') p += Date.now() - at; return Math.min(p, info.durationMs || p); }
+        function paintSpec(playing) {
+          bars.forEach(function (b, i) {
+            const base = playing ? 0.25 + 0.6 * Math.abs(Math.sin(i * 0.7 + Date.now() / 420)) * (1 - i / (BARS * 1.6)) : 0.06;
+            const h = playing ? Math.min(1, base + Math.random() * 0.25) : base;
+            b.style.height = Math.round(h * 16) / 16 * 100 + '%';
+          });
+        }
+        function setSpec(playing) {
+          if (playing && !still && !specTimer) specTimer = setInterval(function () { if (!document.documentElement.classList.contains('idle')) paintSpec(true); }, 110);
+          if (!playing && specTimer) { clearInterval(specTimer); specTimer = 0; }
+          paintSpec(playing);
+        }
+        function paintTime() {
+          const pos = position(), dur = info ? info.durationMs || 0 : 0;
+          $('mp-pos').textContent = info && info.hasSession !== false ? lcdTime(pos) : '--:--';
+          $('mp-times').textContent = fmt(pos) + ' / ' + fmt(dur);
+          const pct = dur > 0 ? Math.min(1, pos / dur) : 0;
+          const track = shell.querySelector('.seek');
+          $('mp-thumb').style.left = (11 + pct * (track.clientWidth - 22)) + 'px';
+          $('mp-pct').textContent = Math.round(pct * 100) + '%';
+        }
+        function render(i) {
+          const idle = !i || i.host === false || i.hasSession === false || i.status === 'no-session';
+          info = idle ? null : i; at = Date.now();
+          shell.classList.toggle('idle', idle);
+          ['mp-prev', 'mp-play', 'mp-pause', 'mp-next'].forEach(function (b) { $(b).disabled = idle; });
+          if (idle) {
+            $('mp-title').textContent = 'Nothing playing';
+            $('mp-artist').textContent = i && i.host === false ? 'Open this page in Versailles to see your music.' : 'Play something in any app; it shows up here.';
+            $('mp-scroll').textContent = 'INSERT A TRACK AND PRESS PLAY';
+            $('mp-marq').classList.remove('run');
+            $('mp-src').textContent = 'NO DISC'; $('mp-state').textContent = 'STOP';
+            $('mp-status').textContent = 'Ready'; $('mp-album').innerHTML = '&nbsp;';
+            $('mp-art').removeAttribute('src'); lastArt = '';
+            $('mp-wtitle').textContent = 'Media Player';
+            setSpec(false); paintTime();
+            return;
+          }
+          const playing = i.status === 'playing';
+          $('mp-title').textContent = i.title || 'Untitled';
+          $('mp-artist').textContent = i.artist || i.source || '';
+          $('mp-wtitle').textContent = (i.title || 'Media Player') + ' - Media Player';
+          const line = [i.title, i.artist, i.album].filter(Boolean).join('  ***  ').toUpperCase() + '  ***  ';
+          $('mp-scroll').textContent = line + line;
+          // The LCD scrolls one whole character at a time.
+          $('mp-marq').style.setProperty('--marq-n', line.length);
+          $('mp-marq').style.setProperty('--marq-t', (line.length * 0.22).toFixed(2) + 's');
+          $('mp-marq').classList.toggle('run', playing);
+          $('mp-src').textContent = (i.source || 'AUDIO').toUpperCase();
+          $('mp-state').textContent = playing ? 'PLAY' : 'PAUSE';
+          $('mp-play').classList.toggle('on', playing);
+          $('mp-pause').classList.toggle('on', !playing);
+          $('mp-status').textContent = playing ? 'Playing' : 'Paused';
+          $('mp-album').textContent = i.album || i.source || '';
+          if (i.thumbnailDataUrl && i.thumbnailDataUrl !== lastArt) { $('mp-art').src = i.thumbnailDataUrl; lastArt = i.thumbnailDataUrl; }
+          if (!i.thumbnailDataUrl) { $('mp-art').removeAttribute('src'); lastArt = ''; }
+          setSpec(playing); paintTime();
+        }
+        setInterval(paintTime, 1000);
+        render(null);
+        window.whenSdk(function (v) {
+          const media = v.for('media-player').media;
+          media.onChange(render).catch(function () {});
+          function act(fn) { return function () { fn().catch(function () {}); }; }
+          $('mp-prev').addEventListener('click', act(function () { return media.previous(); }));
+          $('mp-next').addEventListener('click', act(function () { return media.next(); }));
+          $('mp-play').addEventListener('click', act(function () { return info && info.status === 'playing' ? Promise.resolve() : media.playPause(); }));
+          $('mp-pause').addEventListener('click', act(function () { return info && info.status === 'playing' ? media.playPause() : Promise.resolve(); }));
+        });
+      })();
+    </script>
+    <script>
+      (function systemMonitor() {
+        const shell = document.getElementById('sysmon');
+        if (!shell || !document.body.contains(shell)) return;
+        const $ = function (id) { return document.getElementById(id); };
+        const leds = $('sm-leds');
+        for (let i = 0; i < 14; i++) leds.appendChild(document.createElement('i'));
+        const cv = $('sm-graph'), g = cv.getContext('2d');
+        const hist = [];
+        let cpu = 18, mem = 54, gridOff = 0;
+        for (let i = 0; i < 60; i++) { cpu = walk(cpu); hist.push(cpu); }
+        function walk(v) { return Math.max(3, Math.min(96, v + (Math.random() - 0.48) * 14)); }
+        function draw() {
+          const W = cv.width, H = cv.height;
+          g.fillStyle = '#000'; g.fillRect(0, 0, W, H);
+          g.fillStyle = '#006000';
+          for (let x = W - gridOff; x > 0; x -= 20) g.fillRect(x, 0, 1, H);
+          for (let y = 0; y < H; y += 20) g.fillRect(0, y, W, 1);
+          g.fillStyle = '#00ff3a';
+          const step = W / (hist.length - 1);
+          let px = null, py = null;
+          hist.forEach(function (v, i) {
+            const x = Math.round(i * step), y = Math.round(H - 2 - (v / 100) * (H - 4));
+            if (px != null) {
+              const n = Math.max(Math.abs(x - px), Math.abs(y - py));
+              for (let k = 0; k <= n; k++) g.fillRect(Math.round(px + (x - px) * k / n), Math.round(py + (y - py) * k / n), 2, 2);
+            }
+            px = x; py = y;
+          });
+        }
+        function paint() {
+          const on = Math.round(cpu / 100 * leds.children.length);
+          Array.prototype.forEach.call(leds.children, function (l, i) { l.classList.toggle('on', i < on); });
+          $('sm-cpu').textContent = Math.round(cpu) + '%';
+          $('sm-mem').textContent = Math.round(mem) + '% RAM';
+          $('sm-procs').textContent = 'Memory in use: ' + Math.round(mem) + '%';
+          draw();
+        }
+        async function sample() {
+          let s = null;
+          try { if (window.versailles && typeof window.versailles.invoke === 'function') s = await window.versailles.invoke('sys_stats'); } catch (_) {}
+          if (s && typeof s.cpu === 'number') { cpu = s.cpu; if (typeof s.mem === 'number') mem = s.mem; }
+          else { cpu = walk(cpu); mem = Math.max(30, Math.min(80, mem + (Math.random() - 0.5) * 2)); }
+          hist.push(cpu); if (hist.length > 60) hist.shift();
+          gridOff = (gridOff + 5) % 20;
+          paint();
+        }
+        paint();
+        setInterval(sample, 1500);
+        window.whenSdk(function (v) {
+          const me = v.for('system-monitor');
+          me.on('battery', function (b) {
+            if (!b) return;
+            if (!b.present) { $('sm-bat').textContent = 'AC power'; $('sm-batsub').textContent = 'No battery'; $('sm-batfill').style.width = '100%'; return; }
+            $('sm-bat').textContent = b.percent + '%';
+            $('sm-batfill').style.width = b.percent + '%';
+            const left = b.secondsLeft > 0 ? Math.floor(b.secondsLeft / 3600) + ' h ' + Math.floor(b.secondsLeft % 3600 / 60) + ' min left' : '';
+            $('sm-batsub').textContent = b.charging ? 'Charging' : b.plugged ? 'Plugged in' : (left || 'On battery');
+          }).catch(function () {});
+          me.on('network', function (n) {
+            if (!n) return;
+            const bars = n.online ? (n.wifi ? (n.signalBars == null ? 4 : n.signalBars) : 4) : 0;
+            $('sm-bars').querySelectorAll('i').forEach(function (i, k) { i.classList.toggle('on', k < bars); });
+            $('sm-net').textContent = n.online ? (n.name || 'Connected') : 'Offline';
+            $('sm-netsub').textContent = n.online ? (n.wifi ? 'Wireless, ' + bars + ' of 4 bars' : 'Wired') : 'Not connected';
+          }).catch(function () {});
+        });
+      })();
+    </script>
+  </body>
+</html>

@@ -1,0 +1,912 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>Phosphor</title>
+    <!--
+      Phosphor: a showcase desktop for Versailles.
+      A green-phosphor CRT: the wallpaper is a tiled terminal (big block clock,
+      a top-like process view of your real windows, now playing with the album
+      art drawn in ASCII, system info, a fortune), a tmux-style status bar
+      docked to the bottom of every monitor, and a command prompt on Alt+Space.
+
+      Pieces
+        article.widget  clock        block-letter clock
+        article.widget  sysinfo      battery, Wi-Fi, volume (battery, network, audio)
+        article.widget  top          CPU / memory / disk and your windows as processes (windows)
+        article.widget  now-playing  ASCII album art, spectrum, controls (media)
+        article.widget  fortune      a fortune, told by a cow
+        template        status       data-anchor="bottom": sessions = windows, battery, Wi-Fi, clock, now playing
+        template        prompt       data-anchor="tc", data-hotkey="Alt+Space": switch windows, run commands
+
+      The #versailles block hides the Windows taskbar while this page runs
+      (it comes back when you remove the line or quit Versailles).
+      Preview: ?m=desktop (default) | widgets | spawn | spawn&id=prompt
+    -->
+    <script type="application/json" id="versailles">
+{ "shell": { "hideTaskbar": true } }
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=VT323&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --vt: "VT323", "Cascadia Mono", "Consolas", monospace;
+        --grid: "JetBrains Mono", "Cascadia Mono", "Consolas", monospace;
+        --black: #000000;
+        --core: #e2ffe9;
+        --p1: #4dff88;
+        --p2: #26b45a;
+        --p3: #11602e;
+        --p4: #072b15;
+        --glow: 0 0 1px rgba(77, 255, 136, 0.9), 0 0 9px rgba(77, 255, 136, 0.45);
+        --glow-hot: 0 0 2px rgba(226, 255, 233, 0.9), 0 0 14px rgba(77, 255, 136, 0.75), 0 0 40px rgba(77, 255, 136, 0.3);
+      }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body { width: 100%; height: 100%; }
+      body {
+        background: var(--black);
+        color: var(--p1);
+        font: 400 24px/1.15 var(--vt);
+        text-shadow: var(--glow);
+        font-variant-ligatures: none;
+        overflow: hidden;
+        user-select: none;
+      }
+      button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; text-shadow: inherit; }
+      :focus-visible { outline: 2px solid var(--p1); outline-offset: 2px; }
+      ::selection { background: var(--p1); color: var(--black); text-shadow: none; }
+      html.overlay, html.overlay body { width: 100% !important; height: 100% !important; background: transparent; overflow: hidden; }
+
+      /* ---------- the tube ---------- */
+      .tube { position: relative; width: 100%; height: 100%; overflow: hidden;
+        background: radial-gradient(120% 95% at 50% 45%, #04170b 0%, #010903 55%, #000 100%); }
+      /* Scanlines, vignette and the curve of the glass: one layer over everything, never takes clicks. */
+      .crt::after {
+        content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 50;
+        background:
+          repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.32) 0 1px, transparent 1px 3px),
+          radial-gradient(140% 120% at 50% 50%, transparent 58%, rgba(0, 0, 0, 0.55) 82%, #000 100%);
+      }
+      .crt::before {
+        content: ""; position: absolute; left: 0; right: 0; top: -30%; height: 30%; pointer-events: none; z-index: 49;
+        background: linear-gradient(180deg, transparent, rgba(77, 255, 136, 0.035) 60%, transparent);
+        animation: roll 9s linear infinite;
+      }
+      @keyframes roll { to { transform: translateY(440%); } }
+      .tube.crt { border-radius: 26px / 22px; }
+
+      .panes {
+        position: absolute; inset: 30px 34px 26px;
+        display: grid; gap: 22px;
+        grid-template-columns: 1.08fr 1fr 0.86fr;
+        grid-template-rows: 0.98fr 1fr;
+      }
+      .pane {
+        position: relative; min-width: 0; min-height: 0;
+        border: 2px solid var(--p3); padding: 26px 26px 20px;
+        box-shadow: 0 0 18px rgba(77, 255, 136, 0.06), inset 0 0 30px rgba(77, 255, 136, 0.04);
+      }
+      .pane.active { border-color: var(--p1); box-shadow: 0 0 14px rgba(77, 255, 136, 0.35), inset 0 0 22px rgba(77, 255, 136, 0.1); }
+      .pane > .ttl {
+        position: absolute; top: -16px; left: 18px; padding: 0 10px; background: #020c05;
+        font-size: 26px; line-height: 30px; color: var(--p2); white-space: nowrap;
+      }
+      .pane.active > .ttl { color: var(--p1); }
+      .pane > .ttl b { font-weight: 400; color: var(--core); text-shadow: var(--glow-hot); }
+      .pane > .hint { position: absolute; bottom: -15px; right: 18px; padding: 0 10px; background: #010a04; font-size: 22px; line-height: 28px; color: var(--p3); white-space: nowrap; text-shadow: none; }
+      .dim { color: var(--p2); }
+      .faint { color: var(--p3); text-shadow: none; }
+      .hot { color: var(--core); text-shadow: var(--glow-hot); }
+
+      /* clock */
+      .clock { grid-column: 1 / 3; display: flex; flex-direction: column; justify-content: center; padding: 30px 44px 26px; }
+      .big {
+        font: 700 37px/1 var(--grid); letter-spacing: 0; white-space: pre; color: var(--p1);
+        text-shadow: 0 0 3px rgba(226, 255, 233, 0.7), 0 0 18px rgba(77, 255, 136, 0.65), 0 0 60px rgba(77, 255, 136, 0.25);
+      }
+      .big .s { color: var(--p3); text-shadow: none; font-weight: 400; }
+      .big .c { color: var(--core); }
+      .clock .under { display: flex; align-items: baseline; gap: 34px; margin-top: 26px; font-size: 40px; line-height: 1; white-space: nowrap; }
+      .clock .under .date { color: var(--core); text-shadow: var(--glow-hot); }
+      .clock .under .sec { margin-left: auto; font-family: var(--grid); font-size: 20px; letter-spacing: 1px; color: var(--p2); }
+      .clock .under .sec i { font-style: normal; color: var(--p1); }
+
+      /* sysinfo */
+      .sysinfo { display: grid; grid-template-columns: 1fr; grid-template-rows: auto 1fr; gap: 18px; align-items: start; }
+      .sysinfo .logo { position: absolute; right: 24px; bottom: 30px; }
+      .logo { font: 700 21px/1.05 var(--grid); white-space: pre; color: var(--p1); text-shadow: var(--glow-hot); margin-top: 6px; }
+      .facts { font-size: 28px; line-height: 1.24; min-width: 0; }
+      .facts .who { color: var(--core); text-shadow: var(--glow-hot); font-size: 32px; }
+      .facts .rule { color: var(--p3); text-shadow: none; overflow: hidden; white-space: nowrap; }
+      .facts p { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .facts p b { display: inline-block; width: 4.2em; font-weight: 400; color: var(--p2); }
+      .swatch { display: flex; gap: 0; margin-top: 12px; }
+      .swatch i { width: 38px; height: 22px; }
+
+      /* top */
+      .top { display: flex; flex-direction: column; gap: 14px; }
+      .meters { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; font-size: 26px; line-height: 1; }
+      .meters .k { color: var(--p2); }
+      .meter { white-space: pre; font-family: var(--grid); font-size: 18px; line-height: 26px; overflow: hidden; }
+      .meter .on { color: var(--p1); }
+      .meter .off { color: var(--p4); text-shadow: none; }
+      .meter .br { color: var(--core); }
+      .spark { position: relative; font: 400 16px/16px var(--grid); white-space: pre; color: var(--p1); overflow: hidden; border-left: 2px solid var(--p3); border-bottom: 2px solid var(--p3); padding: 4px 0 0 6px; }
+      .spark .lo { color: var(--p2); }
+      .spark .ax { position: absolute; right: 0; top: 0; font: 400 20px/1 var(--vt); color: var(--p2); background: #010a04; padding: 0 0 0 6px; }
+      .procs { flex: 1; min-height: 0; overflow: hidden; font-size: 25px; line-height: 1.12; }
+      .procs .row { display: grid; grid-template-columns: 3.6em 6.4em 1.6em 3.8em 1fr; white-space: nowrap; }
+      .procs .row span { overflow: hidden; text-overflow: ellipsis; }
+      .procs .head { background: var(--p1); color: var(--black); text-shadow: none; box-shadow: 0 0 12px rgba(77, 255, 136, 0.5); }
+      .procs .row.sel { background: var(--p3); color: var(--core); }
+      .procs .row.att span:nth-child(3) { color: var(--core); text-shadow: var(--glow-hot); }
+
+      /* now playing */
+      .np { display: grid; grid-template-columns: auto 1fr; grid-template-rows: 1fr auto; gap: 16px 26px; }
+      .ascii { font: 700 10px/10px var(--grid); white-space: pre; color: var(--p1); letter-spacing: 0; text-shadow: 0 0 6px rgba(77, 255, 136, 0.5); align-self: start; }
+      .np .meta { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+      .np .meta .state { font-size: 24px; color: var(--p2); }
+      .np .meta .title { font-size: 50px; line-height: 0.95; color: var(--core); text-shadow: var(--glow-hot); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+      .np .meta .artist { font-size: 30px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+      .np .meta .album { font-size: 24px; color: var(--p2); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+      .np .bar { margin-top: auto; font-family: var(--grid); font-size: 17px; white-space: pre; overflow: hidden; }
+      .np .times { font-size: 26px; display: flex; justify-content: space-between; }
+      .np .ctl { display: flex; gap: 12px; font-size: 28px; }
+      .np .ctl button { padding: 0 2px; color: var(--p1); }
+      .np .ctl button:hover { background: var(--p1); color: var(--black); text-shadow: none; }
+      .np .ctl button:disabled { color: var(--p3); text-shadow: none; cursor: default; background: none; }
+      .spec { grid-column: 1 / 3; font: 400 16px/16px var(--grid); white-space: pre; color: var(--p1); overflow: hidden; height: 64px; }
+      .spec .pk { color: var(--core); }
+
+      /* fortune */
+      .fortune { display: flex; flex-direction: column; gap: 10px; font-size: 26px; }
+      .fortune .cmd { color: var(--p2); }
+      .say { font: 400 22px/1.2 var(--grid); white-space: pre; color: var(--p1); }
+      .say .q { color: var(--core); text-shadow: var(--glow-hot); }
+      .fortune .prompt { margin-top: auto; }
+      .caret { display: inline-block; width: 0.55em; height: 0.95em; vertical-align: -0.12em; background: var(--p1); box-shadow: 0 0 10px rgba(77, 255, 136, 0.8); animation: blink 1.06s steps(1) infinite; }
+      @keyframes blink { 50% { opacity: 0.3; } }
+
+      /* ---------- preview modes ---------- */
+      #preview-root { display: none; }
+      body.preview { overflow: auto; }
+      body.preview #preview-root { display: flex; flex-wrap: wrap; gap: 24px; padding: 30px; align-items: flex-start; }
+      body.preview-widgets #preview-root { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 40px; }
+      body.preview-widgets .pane { min-height: 380px; }
+      .spawn-surface { position: relative; }
+      .spawn-surface.solo { width: 100%; height: 100%; }
+      html.overlay #preview-root, html.overlay body.preview #preview-root { display: block !important; width: 100%; height: 100%; padding: 0; overflow: hidden; }
+      .unknown-spawn { font-size: 26px; }
+      html.idle *, html.idle *::before, html.idle *::after { animation-play-state: paused !important; }
+      @media (prefers-reduced-motion: reduce) { .crt::before, .caret { animation: none; } }
+    </style>
+    <script>
+      window.whenSdk = function whenSdk(fn) {
+        window.versailles && typeof window.versailles.for === 'function' ? fn(window.versailles) : setTimeout(function () { whenSdk(fn); }, 50);
+      };
+      window.esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
+    </script>
+  </head>
+  <body>
+    <section id="desktop" class="tube crt">
+      <div class="panes">
+        <article class="widget pane active clock" data-id="clock">
+          <span class="ttl">[0] <b>clock</b></span>
+          <div class="big" id="clk-big" aria-hidden="true"></div>
+          <div class="under"><span class="date" id="clk-date">&nbsp;</span><span class="dim" id="clk-week"></span><span class="sec" id="clk-sec"></span></div>
+          <span class="hint">alt+space: prompt</span>
+        </article>
+
+        <article class="widget pane sysinfo" data-id="sysinfo" data-hooks="battery,network,audio,windows">
+          <span class="ttl">[1] <b>sysinfo</b></span>
+          <div class="logo" aria-hidden="true">    .   o   .
+   /\  /|\  /\
+  /  \/ | \/  \
+ |  .  .|.  .  |
+ |_____________|
+ [=============]</div>
+          <div class="facts">
+            <p class="who">you@phosphor</p>
+            <p class="rule">--------------------------</p>
+            <p><b>host</b>versailles on windows</p>
+            <p><b>desktop</b>one html file</p>
+            <p><b>up</b><span id="si-up">0m</span></p>
+            <p><b>windows</b><span id="si-wins">--</span></p>
+            <p><b>wifi</b><span id="si-wifi">--</span></p>
+            <p><b>battery</b><span id="si-bat">--</span></p>
+            <p><b>volume</b><span id="si-vol">--</span></p>
+            <p><b>theme</b>p1 phosphor</p>
+            <div class="swatch" aria-hidden="true"><i style="background:#000"></i><i style="background:#072b15"></i><i style="background:#11602e"></i><i style="background:#26b45a"></i><i style="background:#4dff88;box-shadow:0 0 12px #4dff88"></i><i style="background:#e2ffe9;box-shadow:0 0 12px #4dff88"></i></div>
+          </div>
+        </article>
+
+        <article class="widget pane top" data-id="top" data-hooks="windows">
+          <span class="ttl">[2] <b>top</b></span>
+          <div class="meters">
+            <span class="k">cpu</span><span class="meter" id="tp-cpu"></span>
+            <span class="k">mem</span><span class="meter" id="tp-mem"></span>
+            <span class="k">dsk</span><span class="meter" id="tp-dsk"></span>
+          </div>
+          <div class="spark" id="tp-spark" aria-hidden="true"></div>
+          <div class="procs" id="tp-procs"></div>
+          <span class="hint" id="tp-hint">0 windows</span>
+        </article>
+
+        <article class="widget pane np" data-id="now-playing" data-hooks="media" id="np">
+          <span class="ttl">[3] <b>now playing</b></span>
+          <div class="ascii" id="np-art" aria-hidden="true"></div>
+          <div class="meta">
+            <span class="state" id="np-state">-- stopped</span>
+            <span class="title" id="np-title">nothing playing</span>
+            <span class="artist" id="np-artist">play something in any app</span>
+            <span class="album" id="np-album">&nbsp;</span>
+            <span class="bar" id="np-bar"></span>
+            <span class="times"><span id="np-pos">0:00</span><span id="np-dur">0:00</span></span>
+            <span class="ctl"><button type="button" id="np-prev" aria-label="Previous">[|&lt;]</button><button type="button" id="np-toggle" aria-label="Play or pause">[&gt; ||]</button><button type="button" id="np-next" aria-label="Next">[&gt;|]</button></span>
+          </div>
+          <div class="spec" id="np-spec" aria-hidden="true"></div>
+        </article>
+
+        <article class="widget pane fortune" data-id="fortune" id="fortune">
+          <span class="ttl">[4] <b>fortune</b></span>
+          <span class="cmd">$ fortune | cowsay</span>
+          <div class="say" id="ft-say"></div>
+          <span class="prompt">$ <span class="caret"></span></span>
+          <span class="hint">click: another one</span>
+        </article>
+      </div>
+    </section>
+
+    <!-- ===== Status bar: a tmux-style line docked to the bottom of every monitor =====
+         Each window on this monitor is a session: * has the focus, - is minimized,
+         ! wants attention, a percentage is its taskbar progress. Click one to bring
+         it up, click the focused one to minimize it, middle-click to close it.
+         Click [phosphor] for the prompt. -->
+    <template class="spawnable" data-id="status" data-anchor="bottom" data-h="38" data-monitor="all"
+              data-hooks="windows,windows-control,battery,network,media,spawn">
+      <style>
+        .sb {
+          position: absolute; inset: 0; display: flex; align-items: center; white-space: nowrap; overflow: hidden;
+          background: var(--p1); color: var(--black); font-size: 27px; line-height: 38px; text-shadow: none;
+          box-shadow: 0 0 22px rgba(77, 255, 136, 0.55);
+        }
+        .sb::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.14) 0 1px, transparent 1px 3px); }
+        .sb button { color: var(--black); text-shadow: none; padding: 0 9px; height: 38px; line-height: 38px; }
+        .sb-sess { flex: none; background: var(--black); color: var(--p1) !important; text-shadow: var(--glow) !important; padding: 0 16px !important; }
+        .sb-wins { flex: 1; min-width: 0; display: flex; overflow: hidden; padding-left: 6px; }
+        .sb-win { flex: none; max-width: 340px; overflow: hidden; text-overflow: ellipsis; }
+        .sb-win.cur { background: var(--black); color: var(--core) !important; text-shadow: var(--glow-hot) !important; }
+        .sb-win.min { opacity: 0.6; }
+        .sb-win.att { text-decoration: underline; text-decoration-thickness: 3px; text-underline-offset: 3px; }
+        .sb.blink-off .sb-win.att { text-decoration: none; }
+        .sb-win:hover { background: var(--p2); }
+        .sb-right { flex: none; display: flex; align-items: center; }
+        .sb-right span { padding: 0 12px; }
+        .sb-right .sep { padding: 0; opacity: 0.55; }
+        .sb-np { max-width: 420px; overflow: hidden; text-overflow: ellipsis; }
+        .sb-clock { background: var(--black); color: var(--p1); text-shadow: var(--glow); padding: 0 16px !important; }
+        .sb-clock b { font-weight: 400; color: var(--core); text-shadow: var(--glow-hot); }
+      </style>
+      <div class="sb" id="sb">
+        <button type="button" class="sb-sess" id="sb-sess" aria-label="Open the prompt">[phosphor]</button>
+        <div class="sb-wins" id="sb-wins"></div>
+        <div class="sb-right">
+          <span class="sb-np" id="sb-np"></span><span class="sep" id="sb-np-sep">|</span>
+          <span id="sb-bat">bat --</span><span class="sep">|</span>
+          <span id="sb-net">net --</span>
+          <span class="sb-clock" id="sb-clock">--:--</span>
+        </div>
+      </div>
+      <script>
+        (function statusBar() {
+          var root = document.currentScript && document.currentScript.closest('.spawn-surface');
+          if (!root) return;
+          var sb = root.querySelector('#sb'), bar = root.querySelector('#sb-wins'), clock = root.querySelector('#sb-clock');
+          function pad(n) { return String(n).padStart(2, '0'); }
+          var MON = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+          function tick() {
+            var d = new Date();
+            var html = '<b>' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + '</b> ' + pad(d.getDate()) + '-' + MON[d.getMonth()];
+            if (clock.innerHTML !== html) clock.innerHTML = html;
+          }
+          tick(); setInterval(tick, 1000);
+          function bars(n) { return n == null ? '' : ['_', '▂', '▄', '▆', '█'].slice(0, n + 1).join('').slice(1) + '____'.slice(n); }
+          window.whenSdk(function (v) {
+            var me = v.for('status'), wins = me.windows;
+            root.querySelector('#sb-sess').addEventListener('click', function () { me.spawn('prompt').catch(function () {}); });
+            var previewId = null, previewTimer = 0;
+            function previewOff() { clearTimeout(previewTimer); if (previewId != null) wins.preview(null).catch(function () {}); previewId = null; }
+            bar.addEventListener('mouseleave', previewOff);
+            function render(list, here) {
+              bar.replaceChildren();
+              var n = 0;
+              list.forEach(function (w) {
+                if (here != null && w.monitor !== here) return;
+                var b = document.createElement('button');
+                b.type = 'button';
+                var cur = w.focused && !w.minimized;
+                b.className = 'sb-win' + (cur ? ' cur' : '') + (w.minimized ? ' min' : '') + (w.attention ? ' att' : '');
+                var name = String(w.app || 'app').toLowerCase().replace(/\s+/g, '-').slice(0, 14);
+                var flag = cur ? '*' : w.attention ? '!' : w.minimized ? '-' : '';
+                var p = w.progress && w.progress.value != null ? ' ' + Math.round(w.progress.value * 100) + '%' : w.progress ? ' ..' : '';
+                b.textContent = n + ':' + name + flag + p; // app names come from other apps: text only
+                b.setAttribute('aria-label', w.title);
+                b.addEventListener('click', function () { previewOff(); (cur ? wins.minimize(w.id) : wins.focus(w.id)).catch(function () {}); });
+                b.addEventListener('auxclick', function (e) { if (e.button === 1) wins.close(w.id).catch(function () {}); });
+                b.addEventListener('mouseenter', function () {
+                  clearTimeout(previewTimer);
+                  previewTimer = setTimeout(function () { previewId = w.id; wins.preview(w.id, b).catch(function () {}); }, previewId != null ? 0 : 400);
+                });
+                bar.appendChild(b);
+                if (previewId === w.id) wins.preview(w.id, b).catch(function () {});
+                n++;
+              });
+              if (previewId != null && !list.some(function (w) { return w.id === previewId; })) previewOff();
+              blink(!!bar.querySelector('.att'));
+            }
+            var blinkTimer = 0, still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            function blink(on) {
+              if (on && !still && !blinkTimer) blinkTimer = setInterval(function () { sb.classList.toggle('blink-off'); }, 600);
+              else if (!on && blinkTimer) { clearInterval(blinkTimer); blinkTimer = 0; sb.classList.remove('blink-off'); }
+            }
+            v.monitor().then(function (m) {
+              var here = m ? m.number : null;
+              return wins.track(function (list) { render(list, here); });
+            }).catch(function () {});
+            me.on('battery', function (b) {
+              var el = root.querySelector('#sb-bat');
+              if (!b || !b.present) { el.textContent = 'ac'; return; }
+              el.textContent = (b.charging ? 'chg ' : 'bat ') + b.percent + '%';
+            }).catch(function () {});
+            me.on('network', function (n) {
+              if (!n) return;
+              var el = root.querySelector('#sb-net');
+              el.textContent = !n.online ? 'offline' : n.wifi ? String(n.name || 'wifi').toLowerCase() + ' ' + bars(n.signalBars == null ? 4 : n.signalBars) : 'eth ' + String(n.name || '').toLowerCase();
+            }).catch(function () {});
+            me.media.onChange(function (i) {
+              var el = root.querySelector('#sb-np'), sep = root.querySelector('#sb-np-sep');
+              var on = i && i.host !== false && i.hasSession !== false && i.title;
+              el.hidden = sep.hidden = !on;
+              if (on) el.textContent = (i.status === 'playing' ? '♪ ' : '|| ') + String(i.title).toLowerCase();
+            }).catch(function () {});
+          });
+        })();
+      </script>
+    </template>
+
+    <!-- ===== Prompt: a terminal overlay at the top center, on Alt+Space =====
+         Type to filter. Your windows come first (Enter switches to one), then
+         commands (play, next, lock, settings, ...). Anything else: open it as
+         an app, folder or address, or search the web for it. -->
+    <template class="spawnable" data-id="prompt" data-anchor="tc" data-hotkey="Alt+Space"
+              data-w="900" data-h="520" data-hooks="hotkey,shell,windows,windows-control,media,power">
+      <style>
+        .pr {
+          position: absolute; inset: 0; display: flex; flex-direction: column;
+          background: radial-gradient(120% 100% at 50% 40%, #051a0c, #000 85%); border: 2px solid var(--p1);
+          box-shadow: 0 0 24px rgba(77, 255, 136, 0.45), inset 0 0 40px rgba(77, 255, 136, 0.08); overflow: hidden;
+        }
+        .pr::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.3) 0 1px, transparent 1px 3px), radial-gradient(130% 120% at 50% 50%, transparent 60%, rgba(0, 0, 0, 0.5)); }
+        .pr-head { flex: none; display: flex; justify-content: space-between; padding: 6px 18px 0; font-size: 24px; color: var(--p2); }
+        .pr-head b { font-weight: 400; color: var(--core); text-shadow: var(--glow-hot); }
+        .pr-line { flex: none; display: flex; align-items: center; gap: 14px; padding: 14px 22px 12px; font-size: 44px; line-height: 1; }
+        .pr-ps { color: var(--p2); white-space: nowrap; }
+        .pr-ps b { font-weight: 400; color: var(--p1); }
+        .pr-in {
+          flex: 1; min-width: 0; background: transparent; border: 0; outline: none; font: inherit; color: var(--core); text-shadow: var(--glow-hot);
+          caret-color: transparent; user-select: text;
+        }
+        .pr-field { position: relative; flex: 1; min-width: 0; display: flex; }
+        .pr-cur { position: absolute; top: 2px; width: 0.5em; height: 0.92em; background: var(--p1); box-shadow: 0 0 12px rgba(77, 255, 136, 0.9); animation: dimblink 1.06s steps(1) infinite; pointer-events: none; }
+        @keyframes dimblink { 50% { opacity: 0.3; } }
+        .pr-in::placeholder { color: var(--p3); text-shadow: none; opacity: 1; }
+        .pr-rule { flex: none; margin: 0 22px; font: 400 15px/1 var(--grid); color: var(--p3); white-space: nowrap; overflow: hidden; text-shadow: none; display: flex; gap: 10px; }
+        .pr-rule b { font-weight: 400; color: var(--p2); }
+        .pr-list { flex: 1; min-height: 0; overflow: hidden; padding: 10px 14px 0; display: flex; flex-direction: column; }
+        .pr-item { display: grid; grid-template-columns: 30px 9.4em 1fr auto; align-items: baseline; gap: 10px; padding: 1px 8px; font-size: 29px; line-height: 1.16; white-space: nowrap; cursor: pointer; }
+        .pr-item span { overflow: hidden; text-overflow: ellipsis; }
+        .pr-item .mk { color: var(--p1); }
+        .pr-item .nm { color: var(--p1); }
+        .pr-item .ds { color: var(--p2); }
+        .pr-item .kd { color: var(--p3); text-shadow: none; }
+        .pr-item mark { background: none; color: var(--core); text-shadow: var(--glow-hot); text-decoration: underline; text-underline-offset: 3px; }
+        .pr-item.on { background: var(--p1); }
+        .pr-item.on span, .pr-item.on mark { color: var(--black); text-shadow: none; }
+        .pr-foot { flex: none; display: flex; gap: 22px; padding: 8px 22px 10px; font-size: 22px; color: var(--p3); text-shadow: none; }
+        .pr-foot b { font-weight: 400; color: var(--p2); text-shadow: var(--glow); }
+        .pr-err { margin-left: auto; color: var(--core); text-shadow: var(--glow-hot); }
+      </style>
+      <div class="pr" id="pr">
+        <div class="pr-head"><span>~/<b>phosphor</b></span><span id="pr-clock"></span></div>
+        <label class="pr-line"><span class="pr-ps"><b>you</b>@phosphor ~ %</span><span class="pr-field"><input class="pr-in" id="pr-in" spellcheck="false" autocomplete="off" aria-label="Command" placeholder="  type to filter, enter to run" /><i class="pr-cur" id="pr-cur" aria-hidden="true"></i></span></label>
+        <div class="pr-rule" aria-hidden="true"><b id="pr-count">0/0</b><span>&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;</span></div>
+        <div class="pr-list" id="pr-list" role="listbox"></div>
+        <div class="pr-foot"><span><b>&uarr;&darr;</b> move</span><span><b>enter</b> run</span><span><b>tab</b> complete</span><span><b>esc</b> close</span><span class="pr-err" id="pr-err"></span></div>
+      </div>
+      <script>
+        (function prompt() {
+          var root = document.currentScript && document.currentScript.closest('.spawn-surface');
+          if (!root) return;
+          var inp = root.querySelector('#pr-in'), list = root.querySelector('#pr-list'), cur = root.querySelector('#pr-cur');
+          var count = root.querySelector('#pr-count'), err = root.querySelector('#pr-err');
+          var MAX = 9, sel = 0, shown = [], windows = [], media = null;
+          // The caret is a glowing block that follows the text.
+          var meas = document.createElement('span');
+          meas.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;font:inherit';
+          root.querySelector('.pr-field').appendChild(meas);
+          function placeCaret() { meas.textContent = inp.value.slice(0, inp.selectionStart == null ? inp.value.length : inp.selectionStart); cur.style.left = Math.min(meas.offsetWidth, inp.clientWidth - 10) + 'px'; }
+          function clock() { var d = new Date(); root.querySelector('#pr-clock').textContent = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); }
+          clock(); setInterval(clock, 5000);
+          // Fuzzy match: the query's letters in order. Returns the matched indexes or null.
+          function fuzzy(q, s) {
+            if (!q) return [];
+            var out = [], j = 0, low = s.toLowerCase();
+            for (var i = 0; i < low.length && j < q.length; i++) if (low[i] === q[j]) { out.push(i); j++; }
+            return j === q.length ? out : null;
+          }
+          function marked(s, idx) {
+            var e = window.esc;
+            if (!idx || !idx.length) return e(s);
+            var o = '', set = {}; idx.forEach(function (i) { set[i] = 1; });
+            for (var i = 0; i < s.length; i++) o += set[i] ? '<mark>' + e(s[i]) + '</mark>' : e(s[i]);
+            return o;
+          }
+          window.whenSdk(function (v) {
+            var me = v.for('prompt');
+            function close() { v.invoke('dismiss_launcher').catch(function () {}); }
+            function fail(x) { err.textContent = (x && x.message) || 'that did not work'; }
+            var commands = [
+              { nm: 'play', ds: 'play or pause the music', kd: 'media', run: function () { return me.media.playPause(); }, keep: true },
+              { nm: 'next', ds: 'next track', kd: 'media', run: function () { return me.media.next(); }, keep: true },
+              { nm: 'prev', ds: 'previous track', kd: 'media', run: function () { return me.media.previous(); }, keep: true },
+              { nm: 'files', ds: 'open your documents', kd: 'open', run: function () { return me.shell.open('shell:Personal'); } },
+              { nm: 'settings', ds: 'windows settings', kd: 'open', run: function () { return me.shell.open('ms-settings:'); } },
+              { nm: 'terminal', ds: 'a real one', kd: 'open', run: function () { return me.shell.open('wt'); } },
+              { nm: 'lock', ds: 'lock this computer', kd: 'power', run: function () { return me.power.lock(); } }
+            ];
+            function candidates(q) {
+              var out = [];
+              windows.forEach(function (w) {
+                var nm = String(w.app || 'app').toLowerCase();
+                var a = fuzzy(q, nm), b = a ? null : fuzzy(q, w.title || '');
+                if (a || b) out.push({ nm: nm, ds: w.title || '', kd: w.minimized ? 'win -' : w.focused ? 'win *' : 'win', mn: a, md: b, score: a ? 0 : 1, run: function () { return me.windows.focus(w.id); } });
+              });
+              commands.forEach(function (c) {
+                var a = fuzzy(q, c.nm);
+                if (a) out.push(Object.assign({}, c, { mn: a, score: 2 }));
+              });
+              if (q) {
+                out.push({ nm: 'open', ds: q, kd: 'shell', score: 3, run: function () { return me.shell.open(q); } });
+                out.push({ nm: 'web', ds: 'search the web for "' + q + '"', kd: 'web', score: 4, run: function () { return me.shell.open('https://duckduckgo.com/?q=' + encodeURIComponent(q)); } });
+              }
+              out.sort(function (x, y) { return x.score - y.score; });
+              return out;
+            }
+            function render() {
+              var q = inp.value.trim().toLowerCase();
+              var all = candidates(q);
+              shown = all.slice(0, MAX);
+              if (sel >= shown.length) sel = Math.max(0, shown.length - 1);
+              count.textContent = shown.length + '/' + (windows.length + commands.length);
+              list.innerHTML = shown.map(function (c, i) {
+                return '<div class="pr-item' + (i === sel ? ' on' : '') + '" data-i="' + i + '" role="option"><span class="mk">' + (i === sel ? '&gt;' : '&nbsp;') + '</span><span class="nm">' + marked(c.nm, c.mn) + '</span><span class="ds">' + marked(c.ds, c.md) + '</span><span class="kd">' + window.esc(c.kd) + '</span></div>';
+              }).join('');
+              placeCaret();
+            }
+            function run(i) {
+              var c = shown[i];
+              if (!c) return;
+              err.textContent = '';
+              c.run().then(function () { if (!c.keep) close(); }, fail);
+            }
+            list.addEventListener('click', function (e) { var it = e.target.closest('.pr-item'); if (it) run(+it.dataset.i); });
+            list.addEventListener('mousemove', function (e) { var it = e.target.closest('.pr-item'); if (it && +it.dataset.i !== sel) { sel = +it.dataset.i; render(); } });
+            inp.addEventListener('input', function () { sel = 0; err.textContent = ''; render(); });
+            inp.addEventListener('keyup', placeCaret);
+            inp.addEventListener('keydown', function (e) {
+              if (e.key === 'ArrowDown') { sel = Math.min(shown.length - 1, sel + 1); render(); e.preventDefault(); }
+              else if (e.key === 'ArrowUp') { sel = Math.max(0, sel - 1); render(); e.preventDefault(); }
+              else if (e.key === 'Tab') { if (shown[sel] && shown[sel].kd !== 'web') { inp.value = shown[sel].kd === 'shell' ? inp.value : shown[sel].nm; render(); } e.preventDefault(); }
+              else if (e.key === 'Enter') { run(sel); e.preventDefault(); }
+              else if (e.key === 'Escape') { if (inp.value) { inp.value = ''; render(); } else close(); e.preventDefault(); }
+            });
+            me.windows.track(function (l) { windows = l; render(); }).catch(function () {});
+            me.on('shown', function () { inp.value = ''; sel = 0; err.textContent = ''; render(); inp.focus(); }).catch(function () {});
+            render();
+            inp.focus();
+          });
+        })();
+      </script>
+    </template>
+
+    <div id="preview-root" hidden></div>
+
+    <script>
+      (function boot() {
+        const params = new URLSearchParams(location.search || '');
+        let m = (params.get('m') || 'desktop').trim().toLowerCase().replace(/-/g, '_');
+        if (m === 'spawnables') m = 'spawn';
+        const id = (params.get('id') || '').trim();
+        document.documentElement.dataset.mode = m;
+        document.body.dataset.mode = m;
+        const desktop = document.getElementById('desktop');
+        const preview = document.getElementById('preview-root');
+        function materialize(tpl, solo) {
+          const wrap = document.createElement('section');
+          wrap.className = 'spawn-surface' + (solo ? ' solo' : '');
+          wrap.dataset.id = tpl.getAttribute('data-id') || '';
+          const hooks = tpl.getAttribute('data-hooks');
+          if (hooks) wrap.setAttribute('data-hooks', hooks);
+          wrap.appendChild(tpl.content.cloneNode(true));
+          return wrap;
+        }
+        // Scripts cloned out of a <template> run once, when the clone enters the document.
+        function mountSpawn(tpl, solo, parent) {
+          const wrap = materialize(tpl, solo);
+          if (!solo) { wrap.style.width = /^(top|bottom)$/.test(tpl.dataset.anchor || '') ? '100%' : (tpl.dataset.w || 900) + 'px'; wrap.style.height = (tpl.dataset.h || 200) + 'px'; }
+          parent.appendChild(wrap);
+          return wrap;
+        }
+        function findSpawn(needle) {
+          const want = (needle || '').toLowerCase();
+          return Array.prototype.slice.call(document.querySelectorAll('template.spawnable')).find(function (t) {
+            return (t.getAttribute('data-id') || '').toLowerCase() === want;
+          });
+        }
+        if (m === 'desktop') return;
+        desktop.hidden = true;
+        preview.hidden = false;
+        document.body.classList.add('preview');
+        if (m === 'widgets') {
+          document.body.classList.add('preview-widgets');
+          Array.prototype.slice.call(desktop.querySelectorAll('article.widget')).forEach(function (el) { preview.appendChild(el); });
+          return;
+        }
+        desktop.remove();
+        if (m === 'spawn' && id) {
+          document.documentElement.classList.add('overlay');
+          const tpl = findSpawn(id);
+          if (!tpl) { const p = document.createElement('p'); p.className = 'unknown-spawn'; p.textContent = 'unknown spawnable: ' + id; preview.appendChild(p); return; }
+          if (!(window.__TAURI_INTERNALS__ || window.__TAURI__)) {
+            if (tpl.dataset.w && !/^(top|bottom)$/.test(tpl.dataset.anchor || '')) document.body.style.width = tpl.dataset.w + 'px';
+            if (tpl.dataset.h && !/^(left|right)$/.test(tpl.dataset.anchor || '')) document.body.style.height = tpl.dataset.h + 'px';
+          }
+          mountSpawn(tpl, true, preview);
+          return;
+        }
+        if (m === 'spawn') {
+          document.querySelectorAll('template.spawnable').forEach(function (t) { mountSpawn(t, false, preview); });
+          return;
+        }
+        const p = document.createElement('p');
+        p.className = 'unknown-spawn';
+        p.textContent = 'unknown mode: ' + m;
+        preview.appendChild(p);
+      })();
+    </script>
+    <script>
+      (function loadSdk() {
+        if (window.versailles && typeof window.versailles.invoke === 'function') return;
+        var s = document.createElement('script');
+        s.src = location.protocol === 'file:' ? '../.sdk/versailles.js' : '/files/.sdk/versailles.js';
+        document.head.appendChild(s);
+      })();
+      // Nobody at the keyboard for a minute: pause the animations (and the spectrum below).
+      window.whenSdk(function (v) {
+        v.on('idle', function () { document.documentElement.classList.add('idle'); }).catch(function () {});
+        v.on('active', function () { document.documentElement.classList.remove('idle'); }).catch(function () {});
+      });
+    </script>
+    <script>
+      (function blockClock() {
+        const big = document.getElementById('clk-big');
+        if (!big) return;
+        // 5x7 digits; every lit pixel is drawn as two full blocks, with a shaded drop shadow.
+        const F = {
+          0: ['.###.', '#...#', '#..##', '#.#.#', '##..#', '#...#', '.###.'],
+          1: ['..#..', '.##..', '..#..', '..#..', '..#..', '..#..', '.###.'],
+          2: ['.###.', '#...#', '....#', '...#.', '..#..', '.#...', '#####'],
+          3: ['#####', '...#.', '..#..', '...#.', '....#', '#...#', '.###.'],
+          4: ['...#.', '..##.', '.#.#.', '#..#.', '#####', '...#.', '...#.'],
+          5: ['#####', '#....', '####.', '....#', '....#', '#...#', '.###.'],
+          6: ['..##.', '.#...', '#....', '####.', '#...#', '#...#', '.###.'],
+          7: ['#####', '....#', '...#.', '..#..', '.#...', '.#...', '.#...'],
+          8: ['.###.', '#...#', '#...#', '.###.', '#...#', '#...#', '.###.'],
+          9: ['.###.', '#...#', '#...#', '.####', '....#', '...#.', '.##..'],
+          ':': ['.', '.', '#', '.', '#', '.', '.'],
+          ' ': ['.', '.', '.', '.', '.', '.', '.']
+        };
+        function bitmap(text) {
+          const rows = Array.from({ length: 8 }, function () { return []; });
+          text.split('').forEach(function (ch, k) {
+            const g = F[ch];
+            for (let r = 0; r < 7; r++) {
+              for (const px of g[r]) rows[r].push(px === '#');
+              if (k < text.length - 1) rows[r].push(false);
+            }
+          });
+          const w = rows[0].length + 1;
+          rows.forEach(function (r) { while (r.length < w) r.push(false); });
+          return rows;
+        }
+        const DATE = { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' };
+        let last = '';
+        function draw() {
+          const d = new Date();
+          const hh = String(d.getHours()).padStart(2, '0'), mm = String(d.getMinutes()).padStart(2, '0');
+          const text = hh + ':' + mm;
+          if (text !== last) {
+            last = text;
+            const rows = bitmap(text);
+            let html = '';
+            for (let r = 0; r < rows.length; r++) {
+              let line = '', mode = '', buf = '';
+              const flush = function () { if (buf) line += mode ? '<span class="' + mode + '">' + buf + '</span>' : buf; buf = ''; };
+              for (let c = 0; c < rows[r].length; c++) {
+                const on = rows[r][c], sh = !on && r > 0 && c > 0 && rows[r - 1][c - 1];
+                const m = on ? 'o' : sh ? 's' : '';
+                if (m !== mode) { flush(); mode = m; }
+                buf += on ? '██' : sh ? '▒▒' : '  ';
+              }
+              flush();
+              html += line + (r < rows.length - 1 ? '\n' : '');
+            }
+            big.innerHTML = html;
+          }
+          const date = d.toLocaleDateString('en-GB', DATE).toLowerCase();
+          const el = document.getElementById('clk-date'); if (el.textContent !== date) el.textContent = date;
+          const start = new Date(d.getFullYear(), 0, 1);
+          const day = Math.floor((d - start) / 864e5) + 1;
+          const wk = 'day ' + day + ' of ' + (d.getFullYear() % 4 ? 365 : 366);
+          const w = document.getElementById('clk-week'); if (w.textContent !== wk) w.textContent = wk;
+          const s = d.getSeconds();
+          document.getElementById('clk-sec').innerHTML = '<i>' + '█'.repeat(Math.floor(s / 2)) + '</i>' + '░'.repeat(30 - Math.floor(s / 2)) + ' ' + String(s).padStart(2, '0') + 's';
+        }
+        draw();
+        setInterval(draw, 500);
+      })();
+    </script>
+    <script>
+      (function sysinfo() {
+        const up = document.getElementById('si-up');
+        if (!up) return;
+        const t0 = Date.now();
+        function upt() { const m = Math.floor((Date.now() - t0) / 60000); up.textContent = (m >= 60 ? Math.floor(m / 60) + 'h ' : '') + (m % 60) + 'm (this page)'; }
+        upt(); setInterval(upt, 30000);
+        const BARS = ['▁', '▂', '▄', '▆', '█'];
+        window.whenSdk(function (v) {
+          const me = v.for('sysinfo');
+          me.on('network', function (n) {
+            if (!n) return;
+            const b = n.signalBars == null ? 4 : n.signalBars;
+            document.getElementById('si-wifi').textContent = !n.online ? 'offline' : n.wifi ? String(n.name || 'connected').toLowerCase() + '  ' + BARS.slice(1, b + 1).join('') + '▁'.repeat(4 - b) : 'wired, ' + String(n.name || '').toLowerCase();
+          }).catch(function () {});
+          me.on('battery', function (b) {
+            if (!b) return;
+            const el = document.getElementById('si-bat');
+            if (!b.present) { el.textContent = 'ac power'; return; }
+            const left = b.secondsLeft > 0 ? ' (' + Math.floor(b.secondsLeft / 3600) + 'h ' + Math.floor(b.secondsLeft % 3600 / 60) + 'm)' : '';
+            el.textContent = b.percent + '%' + (b.charging ? ' charging' : left);
+          }).catch(function () {});
+          me.windows.track(function (l) {
+            const att = l.filter(function (w) { return w.attention; }).length;
+            document.getElementById('si-wins').textContent = l.length + ' open' + (att ? ', ' + att + ' calling' : '');
+          }).catch(function () {});
+          me.on('audio', function (a) {
+            if (!a) return;
+            document.getElementById('si-vol').textContent = a.muted ? 'muted' : a.volume + '%  ' + String(a.device || '').toLowerCase();
+          }).catch(function () {});
+        });
+      })();
+    </script>
+    <script>
+      (function top() {
+        const procs = document.getElementById('tp-procs');
+        if (!procs) return;
+        const $ = function (id) { return document.getElementById(id); };
+        const SP = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+        let s = { cpu: 21, mem: 58, disk: 64 }, hist = [];
+        const GW = 72;
+        function walk(x, lo, hi, step) { return Math.max(lo, Math.min(hi, x + (Math.random() - 0.48) * step)); }
+        for (let i = 0; i < GW; i++) { s.cpu = walk(s.cpu, 8, 95, 14); hist.push(s.cpu); }
+        function meter(el, pct, label) {
+          const W = 34, on = Math.round(pct / 100 * W);
+          el.innerHTML = '<span class="br">[</span><span class="on">' + '|'.repeat(on) + '</span><span class="off">' + '.'.repeat(W - on) + '</span><span class="br">]</span> ' + label;
+        }
+        function paint() {
+          meter($('tp-cpu'), s.cpu, String(Math.round(s.cpu)).padStart(3) + '%');
+          meter($('tp-mem'), s.mem, String(Math.round(s.mem)).padStart(3) + '%');
+          meter($('tp-dsk'), s.disk, String(Math.round(s.disk)).padStart(3) + '%');
+          // A btop-style history: five rows of eighth blocks, newest on the right.
+          const H = 5, cols = hist.slice(-GW), rows = [];
+          for (let r = H - 1; r >= 0; r--) {
+            let line = '';
+            cols.forEach(function (v) { const lvl = Math.max(0, Math.min(8, Math.round((v / 100 * H - r) * 8))); line += lvl ? SP[lvl - 1] : ' '; });
+            rows.push(r < 2 ? '<span class="lo">' + line + '</span>' : line);
+          }
+          $('tp-spark').innerHTML = rows.join('\n') + '<span class="ax">cpu history</span>';
+        }
+        async function sample() {
+          let r = null;
+          try { if (window.versailles && typeof window.versailles.invoke === 'function') r = await window.versailles.invoke('sys_stats'); } catch (_) {}
+          if (r && typeof r.cpu === 'number') s = { cpu: r.cpu, mem: typeof r.mem === 'number' ? r.mem : s.mem, disk: typeof r.disk === 'number' ? r.disk : s.disk };
+          else s = { cpu: walk(s.cpu, 8, 95, 14), mem: walk(s.mem, 30, 85, 1.5), disk: s.disk };
+          hist.push(s.cpu); if (hist.length > GW) hist.shift();
+          paint();
+        }
+        paint(); setInterval(sample, 1500);
+        function row(cells, cls) {
+          return '<div class="row' + (cls ? ' ' + cls : '') + '">' + cells.map(function (c) { return '<span>' + window.esc(c) + '</span>'; }).join('') + '</div>';
+        }
+        function render(list) {
+          const head = row(['PID', 'APP', 'S', 'PROG', 'TITLE'], 'head');
+          procs.innerHTML = head + list.slice(0, 12).map(function (w) {
+            const st = w.attention ? '!' : w.minimized ? 'T' : w.focused ? 'R' : 'S';
+            const pg = w.progress ? (w.progress.value != null ? Math.round(w.progress.value * 100) + '%' : '..') : '';
+            return row([String(w.pid), String(w.app || '').toLowerCase(), st, pg, w.title || ''], (w.focused && !w.minimized ? 'sel' : '') + (w.attention ? ' att' : ''));
+          }).join('');
+          const att = list.filter(function (w) { return w.attention; }).length;
+          $('tp-hint').textContent = list.length + ' windows' + (att ? ', ' + att + ' want attention' : '');
+        }
+        render([]);
+        window.whenSdk(function (v) { v.for('top').windows.track(render).catch(function () {}); });
+      })();
+    </script>
+    <script>
+      (function nowPlaying() {
+        const shell = document.getElementById('np');
+        if (!shell || !document.body.contains(shell)) return;
+        const $ = function (id) { return document.getElementById(id); };
+        const RAMP = ' .:-=+*#%@';
+        const COLS = 46, ROWS = 28;
+        let info = null, at = 0, specTimer = 0, lastArt = null;
+        const still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        function fmt(ms) { const s = Math.max(0, Math.floor((ms || 0) / 1000)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
+        function pos() { if (!info) return 0; let p = info.positionMs || 0; if (info.status === 'playing') p += Date.now() - at; return Math.min(p, info.durationMs || p); }
+        function blankArt() {
+          // No cover: a vinyl record in ASCII.
+          const out = [];
+          for (let y = 0; y < ROWS; y++) {
+            let line = '';
+            for (let x = 0; x < COLS; x++) {
+              const dx = (x - COLS / 2 + 0.5) / (COLS / 2), dy = (y - ROWS / 2 + 0.5) / (ROWS / 2), r = Math.sqrt(dx * dx + dy * dy);
+              line += r > 0.98 ? ' ' : r < 0.12 ? ' ' : r < 0.3 ? '@' : (Math.floor(r * 18) % 2 ? ':' : '.');
+            }
+            out.push(line);
+          }
+          $('np-art').textContent = out.join('\n');
+        }
+        function drawArt(url) {
+          if (!url) { blankArt(); return; }
+          const img = new Image();
+          img.onload = function () {
+            const cv = document.createElement('canvas'); cv.width = COLS; cv.height = ROWS;
+            const g = cv.getContext('2d');
+            g.drawImage(img, 0, 0, COLS, ROWS);
+            let d;
+            try { d = g.getImageData(0, 0, COLS, ROWS).data; } catch (_) { blankArt(); return; }
+            const lum = [];
+            let lo = 1, hi = 0;
+            for (let i = 0; i < d.length; i += 4) { const l = (0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]) / 255; lum.push(l); lo = Math.min(lo, l); hi = Math.max(hi, l); }
+            const span = Math.max(0.05, hi - lo);
+            const out = [];
+            for (let y = 0; y < ROWS; y++) {
+              let line = '';
+              for (let x = 0; x < COLS; x++) { const l = (lum[y * COLS + x] - lo) / span; line += RAMP[Math.min(RAMP.length - 1, Math.floor(l * RAMP.length))]; }
+              out.push(line);
+            }
+            $('np-art').textContent = out.join('\n');
+          };
+          img.onerror = blankArt;
+          img.src = url;
+        }
+        const SPEC_W = 19, SPEC_H = 4, LV = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+        function paintSpec(playing) {
+          const t = Date.now() / 380;
+          const vals = [];
+          for (let i = 0; i < SPEC_W; i++) {
+            const shape = Math.pow(1 - i / SPEC_W, 0.7);
+            vals.push(playing ? Math.min(1, shape * (0.45 + 0.4 * Math.abs(Math.sin(t + i * 0.55)) + Math.random() * 0.3)) : 0.04);
+          }
+          const lines = [];
+          for (let r = SPEC_H - 1; r >= 0; r--) {
+            let line = '';
+            vals.forEach(function (v) { const lvl = Math.max(0, Math.min(8, Math.round((v * SPEC_H - r) * 8))); line += LV[lvl] + LV[lvl] + LV[lvl] + ' '; });
+            lines.push(r >= SPEC_H - 1 ? '<span class="pk">' + line + '</span>' : line);
+          }
+          $('np-spec').innerHTML = lines.join('\n');
+        }
+        function setSpec(playing) {
+          if (playing && !still && !specTimer) specTimer = setInterval(function () { if (!document.documentElement.classList.contains('idle')) paintSpec(true); }, 120);
+          if (!playing && specTimer) { clearInterval(specTimer); specTimer = 0; }
+          paintSpec(playing);
+        }
+        function paintTime() {
+          const p = pos(), dur = info ? info.durationMs || 0 : 0, W = 42;
+          const k = dur > 0 ? Math.min(W, Math.round(p / dur * W)) : 0;
+          $('np-bar').innerHTML = '[<span class="hot">' + '='.repeat(Math.max(0, k - 1)) + (k ? '&gt;' : '') + '</span><span class="faint">' + '-'.repeat(W - k) + '</span>]';
+          $('np-pos').textContent = fmt(p); $('np-dur').textContent = fmt(dur);
+        }
+        function render(i) {
+          const idle = !i || i.host === false || i.hasSession === false || i.status === 'no-session';
+          info = idle ? null : i; at = Date.now();
+          ['np-prev', 'np-toggle', 'np-next'].forEach(function (b) { $(b).disabled = idle; });
+          if (idle) {
+            $('np-state').textContent = '-- stopped';
+            $('np-title').textContent = 'nothing playing';
+            $('np-artist').textContent = i && i.host === false ? 'open this page in versailles' : 'play something in any app';
+            $('np-album').innerHTML = '&nbsp;';
+            if (lastArt !== '') { lastArt = ''; blankArt(); }
+            setSpec(false); paintTime();
+            return;
+          }
+          const playing = i.status === 'playing';
+          $('np-state').textContent = (playing ? '>> playing' : '|| paused') + (i.source ? ' via ' + String(i.source).toLowerCase() : '');
+          $('np-title').textContent = String(i.title || 'untitled').toLowerCase();
+          $('np-artist').textContent = String(i.artist || '').toLowerCase();
+          $('np-album').textContent = String(i.album || '').toLowerCase();
+          $('np-toggle').textContent = playing ? '[||]' : '[>]';
+          if ((i.thumbnailDataUrl || '') !== lastArt) { lastArt = i.thumbnailDataUrl || ''; drawArt(lastArt); }
+          setSpec(playing); paintTime();
+        }
+        render(null);
+        setInterval(paintTime, 1000);
+        window.whenSdk(function (v) {
+          const media = v.for('now-playing').media;
+          media.onChange(render).catch(function () {});
+          $('np-prev').addEventListener('click', function () { media.previous().catch(function () {}); });
+          $('np-next').addEventListener('click', function () { media.next().catch(function () {}); });
+          $('np-toggle').addEventListener('click', function () { media.playPause().catch(function () {}); });
+        });
+      })();
+    </script>
+    <script>
+      (function fortune() {
+        const say = document.getElementById('ft-say');
+        if (!say) return;
+        const LOCAL = [
+          ['There is no place like 127.0.0.1.', ''],
+          ['Any sufficiently advanced technology is indistinguishable from magic.', 'Arthur C. Clarke'],
+          ['Simple things should be simple, complex things should be possible.', 'Alan Kay'],
+          ['The best way to predict the future is to invent it.', 'Alan Kay'],
+          ['Your desktop is a document. Save it.', ''],
+          ['First, solve the problem. Then, write the code.', 'John Johnson']
+        ];
+        function wrap(text, w) {
+          const out = []; let line = '';
+          text.split(/\s+/).forEach(function (word) {
+            if ((line + ' ' + word).trim().length > w) { out.push(line); line = word; } else line = (line + ' ' + word).trim();
+          });
+          if (line) out.push(line);
+          return out;
+        }
+        function cowsay(text, who) {
+          const lines = wrap(text, 28);
+          if (who) lines.push('  -- ' + who);
+          const w = Math.max.apply(null, lines.map(function (l) { return l.length; }));
+          const e = window.esc;
+          let s = ' ' + '_'.repeat(w + 2) + '\n';
+          lines.forEach(function (l, i) {
+            const L = lines.length === 1 ? '<' : i === 0 ? '/' : i === lines.length - 1 ? '\\' : '|';
+            const R = lines.length === 1 ? '>' : i === 0 ? '\\' : i === lines.length - 1 ? '/' : '|';
+            s += L + ' <span class="q">' + e(l.padEnd(w)) + '</span> ' + R + '\n';
+          });
+          s += ' ' + '-'.repeat(w + 2) + '\n';
+          s += '        \\   ^__^\n         \\  (oo)\\_______\n            (__)\\       )\\/\\\n                ||----w |\n                ||     ||';
+          say.innerHTML = s;
+        }
+        let k = Math.floor(Math.random() * LOCAL.length);
+        function next() { k = (k + 1) % LOCAL.length; cowsay(LOCAL[k][0], LOCAL[k][1]); }
+        document.getElementById('fortune').addEventListener('click', next);
+        // The host's quote of the day when there is one; a local fortune otherwise.
+        fetch('/quote', { headers: { Accept: 'application/json' } })
+          .then(function (r) { return r.json(); })
+          .then(function (d) { if (!d || d.ok === false || !d.text) throw new Error(); cowsay(d.text, d.author); })
+          .catch(function () { cowsay(LOCAL[k][0], LOCAL[k][1]); });
+      })();
+    </script>
+  </body>
+</html>
